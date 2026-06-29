@@ -76,7 +76,8 @@ def _tool_catalog(toolset: list[tools.ToolDef]) -> str:
     return "\n".join(lines)
 
 
-def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool) -> str:
+def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool,
+                   workspace: str | None = None) -> str:
     catalog = _tool_catalog(toolset)
     plan_note = (
         "\n\nIMPORTANT: You are in PLAN MODE. Do NOT make changes. Use read-only tools "
@@ -85,7 +86,10 @@ def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool) 
         if plan_mode
         else ""
     )
-    return f"""You are an autonomous software engineering agent working inside a real code repository.
+    # The harness operating principles (AGENT.md) are always prepended so every
+    # executor run is governed by the constitution, regardless of model.
+    from coding_harness.principles import inject_into_prompt as inject_principles
+    base = f"""You are an autonomous software engineering agent working inside a real code repository.
 You operate by calling tools to read files, search code, make edits, and run commands/tests,
 then observing the results, until the task is complete.
 
@@ -108,6 +112,7 @@ TOOL CALLING:
 - Otherwise, emit each call on its own line as: <tool_call>{{"name": "...", "args": {{...}}}}</tool_call>
   and nothing else on that line. The harness will execute it and reply with the result.
 """
+    return inject_principles(base, workspace)
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +209,7 @@ def run_executor(
     cap = max_steps if max_steps is not None else config.MAX_TOOL_STEPS
     profile = profile or config.ACTIVE_PROFILE
 
-    system = _system_prompt(task, toolset, plan_mode=ctx.plan_mode)
+    system = _system_prompt(task, toolset, plan_mode=ctx.plan_mode, workspace=ctx.workspace)
     if system_prefix:
         system = f"{system_prefix}\n\n{system}"
 

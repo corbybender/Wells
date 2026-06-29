@@ -23,5 +23,6 @@ def architect(state: dict) -> dict:
         task_type="architecture",
         system=ARCHITECT_SYSTEM,
         chunks=chunks,
+        workspace=state.get("workspace_root"),
     )
     return {"architecture": architecture}

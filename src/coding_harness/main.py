@@ -78,6 +78,12 @@ def _print_info() -> None:
         f"  Summarize on loop  : {'on' if config.SUMMARIZE_ON_LOOP else 'off'} "
         f"(threshold {config.SUMMARIZE_THRESHOLD})"
     )
+    # Show the active principles source so users know which AGENT.md is in effect.
+    try:
+        from coding_harness import principles
+        print(f"  Principles         : {principles.source_label(config.WORKSPACE_ROOT)}")
+    except Exception:
+        pass
     print(bar)
 
 
@@ -233,6 +239,14 @@ def main() -> None:
         settings.parse_argv_settings(remaining[1:])
         _reload_module_config()
         _print_info()
+        return
+    if remaining[0] == "principles":
+        # Show which AGENT.md principles are active (and where they come from).
+        from coding_harness import principles
+        ws = config.WORKSPACE_ROOT
+        print(f"\nPrinciples source: {principles.source_label(ws)}")
+        print("-" * 60)
+        print(principles.principles_text(ws))
         return
 
     # ---- Pass 3: a goal run — separate goal args from KEY=VALUE overrides ----

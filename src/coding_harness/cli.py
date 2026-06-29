@@ -8,7 +8,6 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.styles import Style
 from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
-from rich.markdown import Markdown
 from langchain_core.callbacks import BaseCallbackHandler
 
 from coding_harness import config, settings

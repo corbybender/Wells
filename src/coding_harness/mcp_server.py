@@ -247,6 +247,18 @@ async def handle_list_tools() -> list[types.Tool]:
             "endpoint, safety policy, workspace, iteration caps, token budgets.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="get_principles",
+            description="Return the active harness operating principles (AGENT.md) that govern "
+            "every agent's behavior, regardless of which model is configured. Shows the "
+            "source file and full principle text.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                },
+            },
+        ),
     ]
     return core
 
@@ -300,6 +312,8 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             return _compress_logs(arguments)
         if name == "get_harness_info":
             return _get_harness_info(arguments)
+        if name == "get_principles":
+            return _get_principles(arguments)
         return _text_content(_format_output(error=f"Unknown tool: {name}"))
     except Exception as exc:
         return _text_content(_format_output(error=f"{type(exc).__name__}: {exc}"))
@@ -550,6 +564,11 @@ def _get_harness_info(args: dict) -> list[types.TextContent]:
         "transport": "stdio",
     }
     try:
+        from coding_harness import principles
+        info["principles_source"] = principles.source_label(WORKSPACE_ROOT)
+    except Exception:
+        pass
+    try:
         prof = providers.load_profile(config.ACTIVE_PROFILE)
         if prof:
             info["provider_kind"] = prof.kind
@@ -558,6 +577,16 @@ def _get_harness_info(args: dict) -> list[types.TextContent]:
     except Exception:
         pass
     return _text_content(_format_output(**info))
+
+
+def _get_principles(args: dict) -> list[types.TextContent]:
+    """Return the active operating principles (AGENT.md) + their source."""
+    from coding_harness import principles
+    ws = args.get("workspace") or WORKSPACE_ROOT
+    return _text_content(_format_output(
+        source=principles.source_label(ws),
+        principles=principles.principles_text(ws),
+    ))
 
 
 # ---------------------------------------------------------------------------

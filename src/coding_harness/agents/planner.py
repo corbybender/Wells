@@ -28,5 +28,6 @@ def planner(state: dict) -> dict:
         task_type="planning",
         system=PLANNER_SYSTEM,
         chunks=chunks,
+        workspace=state.get("workspace_root"),
     )
     return {"development_plan": plan}
