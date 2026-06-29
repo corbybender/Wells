@@ -35,7 +35,10 @@ from typing import Deque, Literal
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from coding_harness.config import (
+    LLM_BACKOFF_BASE,
+    LLM_MAX_RETRIES,
     _invoke_with_retry,
+    _is_transient,
     get_llm_for_task,
     model_name_for_task,
 )
@@ -402,6 +405,39 @@ _CHAT_SYSTEM = (
 )
 
 
+def _stream_with_retry(llm, messages):
+    """Stream a response with the same transient-retry policy as _invoke_with_retry.
+
+    Each retry re-runs the whole stream from the start (mid-stream resume is
+    not possible over HTTP). Yields content chunks; raises the last error if
+    every retry fails.
+    """
+    import time
+
+    last_err: Exception | None = None
+    for attempt in range(1, LLM_MAX_RETRIES + 1):
+        try:
+            collected: list[str] = []
+            for chunk in llm.stream(messages):
+                piece = chunk.content or ""
+                if piece:
+                    collected.append(piece)
+                    yield piece
+            return  # success
+        except Exception as err:
+            last_err = err
+            if not _is_transient(err) or attempt == LLM_MAX_RETRIES:
+                raise
+            backoff = min(LLM_BACKOFF_BASE**attempt, 30.0)
+            print(
+                f"[chat] transient {type(err).__name__} on stream attempt "
+                f"{attempt}/{LLM_MAX_RETRIES}; retrying in {backoff:.1f}s ..."
+            )
+            time.sleep(backoff)
+    assert last_err is not None
+    raise last_err
+
+
 def conversational_reply(
     text: str,
     memory: ConversationMemory,
@@ -421,14 +457,12 @@ def conversational_reply(
     full_text = _CHAT_SYSTEM + "\n" + text
 
     try:
-        # Stream if a callback was supplied.
+        # Stream if a callback was supplied (with transient retry).
         if on_token is not None:
             collected: list[str] = []
-            for chunk in llm.stream(messages):
-                piece = chunk.content or ""
-                if piece:
-                    collected.append(piece)
-                    on_token(piece)
+            for piece in _stream_with_retry(llm, messages):
+                collected.append(piece)
+                on_token(piece)
             content = "".join(collected).strip()
             # usage_metadata isn't reliably on the final stream chunk; estimate.
             input_tokens = estimate_tokens(full_text)
