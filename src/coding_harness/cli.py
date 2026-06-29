@@ -232,6 +232,24 @@ def _print_status_panel() -> None:
     if totals["cache_read"]:
         table.add_row("Cache hits", f"{totals['cache_read']:,}")
 
+    # Index status
+    try:
+        from coding_harness.index_tools import index_status
+
+        idx = index_status(config.WORKSPACE_ROOT)
+        if idx["available"]:
+            if idx["exists"]:
+                age = idx["age_hours"]
+                age_str = f" (updated {age:.0f}h ago)" if age is not None else ""
+                table.add_row("Index", f"{idx['total_symbols']:,} symbols, "
+                              f"{idx['total_files']:,} files{age_str}")
+            else:
+                table.add_row("Index", "[yellow]not built[/yellow]")
+        else:
+            table.add_row("Index", "[dim]not available[/dim]")
+    except Exception:
+        pass
+
     console.print(Panel(table, title="[bold]Wells Status[/bold]", border_style="blue"))
 
 
@@ -320,6 +338,31 @@ def _bottom_toolbar():
     )
 
 
+def _ensure_repo_index() -> None:
+    """Auto-detect / build repository index (silent when unavailable or disabled).
+
+    Respects INDEX_AUTO_UPDATE config. On first-run with no index, builds it
+    silently. On stale index (older than INDEX_MAX_AGE_HOURS), auto-updates.
+    When the indexer is not installed, does nothing.
+    """
+    if not config.INDEX_AUTO_UPDATE:
+        return
+    try:
+        from coding_harness.index_tools import ensure_index
+
+        max_age = float(os.environ.get("INDEX_MAX_AGE_HOURS", "24"))
+        result = ensure_index(config.WORKSPACE_ROOT, max_age_hours=max_age,
+                              auto_build=True)
+        if result.startswith("index-built"):
+            # Only print the summary line, not the full build output.
+            console.print(f"[green]{result[:120]}[/green]")
+        elif result.startswith("index-failed"):
+            console.print(f"[yellow]Index: {result}[/yellow]")
+        # Everything else (ready, skipped, unavailable) is silent.
+    except Exception:
+        pass
+
+
 def run_repl() -> None:
     # Auto-setup on first run
     try:
@@ -330,6 +373,9 @@ def run_repl() -> None:
 
     if not _ensure_model_configured():
         return
+
+    # Auto-detect / build repository index (silent when unavailable).
+    _ensure_repo_index()
 
     print_welcome()
 
