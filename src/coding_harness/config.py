@@ -9,6 +9,7 @@ summarization, workspace, safety policy) that the rest of the harness reads.
 
 import os
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
@@ -50,10 +51,13 @@ def _configure_ca_bundle() -> None:
 
 
 _configure_ca_bundle()
-# Load .env from current directory or parent directories (standard dotenv behavior).
-# This allows .env to be in the project root (e.g., q:\payload\nopayload\.env)
-# when wells is installed there, regardless of where the source code lives.
-load_dotenv()
+# Load .env from the Wells package directory (where it's installed).
+# When wells is installed at Q:\payload\nopayload\Wells-Coding-Harness,
+# config.py is at Wells-Coding-Harness/src/coding_harness/config.py,
+# so go up 3 levels to reach Wells-Coding-Harness/.env
+_wells_root = Path(__file__).parent.parent.parent
+_env_path = _wells_root / ".env"
+load_dotenv(_env_path)
 
 from coding_harness import providers  # noqa: E402 (must run after load_dotenv)
 from coding_harness.tokens import TokenBudget  # noqa: E402
