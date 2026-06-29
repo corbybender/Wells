@@ -276,10 +276,27 @@ def update_env_file(path: Path, changes: dict[str, str]) -> tuple[bool, list[str
 
 
 def current_value(setting: Setting) -> str:
-    """Live value: env var if set, else the configured default."""
+    """Live value: env var if set, else the configured default.
+
+    For the 'zai' profile, also checks legacy ZAI_* variable names for backwards compatibility.
+    """
     v = os.environ.get(setting.key)
     if v is not None and v.strip() != "":
         return v
+
+    # Fallback to legacy ZAI_* names for the zai profile
+    if "zai" in setting.key.lower():
+        legacy_map = {
+            "API_KEY_zai": "ZAI_API_KEY",
+            "BASE_URL_zai": "ZAI_ENDPOINT",
+            "MODEL_zai": "ZAI_MODEL",
+        }
+        legacy_key = legacy_map.get(setting.key)
+        if legacy_key:
+            v = os.environ.get(legacy_key)
+            if v is not None and v.strip() != "":
+                return v
+
     return setting.default
 
 
