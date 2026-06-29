@@ -120,6 +120,27 @@ wells "your goal"                        # from any directory
 wells --workspace /path/to/project "goal"
 ```
 
+**Note:** During installation, `uv` may show a warning about hardlinks across filesystems:
+```
+WARN: Hardlink or symlink copy required, try setting UV_LINK_MODE=copy
+```
+
+This is harmless and cosmetic. It happens when `uv` tries to link package files across different filesystems (e.g., C: and D: drives on Windows, or different mount points on Linux). To suppress the warning, set the environment variable before install:
+
+```bash
+# Windows (PowerShell)
+$env:UV_LINK_MODE = "copy"
+uv tool install Wells-Coding-Harness
+
+# Windows (cmd)
+set UV_LINK_MODE=copy && uv tool install Wells-Coding-Harness
+
+# macOS / Linux
+UV_LINK_MODE=copy uv tool install Wells-Coding-Harness
+```
+
+Once installed, the harness itself handles this automatically — you won't see the warning again.
+
 ### Manual setup (any option)
 
 ```bash

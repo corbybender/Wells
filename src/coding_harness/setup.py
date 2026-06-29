@@ -14,6 +14,7 @@ def _ensure_rust_installed() -> bool:
     """Check if Rust is installed; if not, install it via rustup.
 
     Returns True if Rust is available (already or after install).
+    Raises if install fails (not silent degradation).
     """
     # Check if rustc exists
     try:
@@ -31,71 +32,70 @@ def _ensure_rust_installed() -> bool:
     # Rust not found; try to install via rustup
     console.print("[cyan]Installing Rust toolchain (needed for indexer)...[/cyan]")
 
-    try:
-        # Windows
-        if sys.platform == "win32":
-            console.print("[cyan]Downloading rustup installer...[/cyan]")
-            result = subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; "
-                    "Invoke-WebRequest -Uri 'https://win.rustup.rs' -OutFile 'rustup-init.exe'; "
-                    ".\\rustup-init.exe -y",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            if result.returncode != 0:
-                console.print(
-                    f"[yellow]Rust install failed. Install manually: https://rustup.rs[/yellow]"
-                )
-                return False
-        else:
-            # macOS/Linux
-            console.print("[cyan]Downloading rustup...[/cyan]")
-            result = subprocess.run(
-                [
-                    "sh",
-                    "-c",
-                    "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            if result.returncode != 0:
-                console.print(
-                    f"[yellow]Rust install failed. Install manually: https://rustup.rs[/yellow]"
-                )
-                return False
-
-        # Verify installation
+    # Windows
+    if sys.platform == "win32":
+        console.print("[cyan]Downloading rustup installer...[/cyan]")
         result = subprocess.run(
-            ["rustc", "--version"],
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; "
+                "Invoke-WebRequest -Uri 'https://win.rustup.rs' -OutFile 'rustup-init.exe'; "
+                ".\\rustup-init.exe -y",
+            ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=300,
         )
-        if result.returncode == 0:
-            console.print("[green]✓ Rust installed successfully[/green]")
-            return True
-        else:
-            console.print("[yellow]Rust installed but verification failed[/yellow]")
-            return False
+        if result.returncode != 0:
+            err_msg = result.stderr or result.stdout or "(no output)"
+            raise RuntimeError(
+                f"Rust installation failed:\n{err_msg}\n\n"
+                "Install manually from: https://rustup.rs"
+            )
+    else:
+        # macOS/Linux
+        console.print("[cyan]Downloading rustup...[/cyan]")
+        result = subprocess.run(
+            [
+                "sh",
+                "-c",
+                "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr or result.stdout or "(no output)"
+            raise RuntimeError(
+                f"Rust installation failed:\n{err_msg}\n\n"
+                "Install manually from: https://rustup.rs"
+            )
 
-    except Exception as e:
-        console.print(f"[yellow]Could not install Rust: {e}[/yellow]")
-        console.print("[yellow]Install manually from: https://rustup.rs[/yellow]")
-        return False
+    # Verify installation
+    result = subprocess.run(
+        ["rustc", "--version"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if result.returncode == 0:
+        console.print("[green]✓ Rust installed successfully[/green]")
+        return True
+    else:
+        raise RuntimeError(
+            "Rust installed but rustc verification failed. "
+            "Check installation: rustup.rs"
+        )
 
 
 def _ensure_indexer_built() -> bool:
-    """Build wells-index if not already installed. Silent on failure.
+    """Build wells-index if not already installed.
 
     Returns True if indexer is available (either already installed or successfully built).
+    Raises with diagnostic error if build fails.
     """
     try:
         import wells_index  # noqa: F401
@@ -108,45 +108,53 @@ def _ensure_indexer_built() -> bool:
     indexer_dir = wells_root / "wells-index"
 
     if not indexer_dir.exists():
-        return False
-
-    try:
-        # Try maturin develop (preferred)
-        result = subprocess.run(
-            ["maturin", "develop"],
-            cwd=str(indexer_dir),
-            capture_output=True,
-            text=True,
-            timeout=600,
+        raise RuntimeError(
+            f"wells-index source not found at {indexer_dir}. "
+            "This should not happen if Wells is properly installed."
         )
 
-        if result.returncode == 0:
-            try:
-                import wells_index  # noqa: F401
-                return True
-            except ImportError:
-                pass
+    # Try maturin develop (preferred)
+    console.print("[cyan]Building wells-index from source (requires Rust)...[/cyan]")
+    result = subprocess.run(
+        ["maturin", "develop"],
+        cwd=str(indexer_dir),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
 
-        # Fallback: use uv pip (if available in uv tool context)
-        result = subprocess.run(
-            ["uv", "pip", "install", "-e", str(indexer_dir)],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+    if result.returncode == 0:
+        try:
+            import wells_index  # noqa: F401
+            console.print("[green]✓ wells-index built successfully[/green]")
+            return True
+        except ImportError:
+            pass
 
-        if result.returncode == 0:
-            try:
-                import wells_index  # noqa: F401
-                return True
-            except ImportError:
-                pass
+    # Fallback: use uv pip
+    console.print("[cyan]Trying fallback: uv pip install -e wells-index...[/cyan]")
+    result = subprocess.run(
+        ["uv", "pip", "install", "-e", str(indexer_dir)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
 
-        return False
+    if result.returncode == 0:
+        try:
+            import wells_index  # noqa: F401
+            console.print("[green]✓ wells-index installed successfully[/green]")
+            return True
+        except ImportError:
+            pass
 
-    except Exception:
-        # Silent failure
-        return False
+    # Both methods failed — show diagnostic error
+    maturin_err = result.stderr or result.stdout or "(no output)"
+    raise RuntimeError(
+        f"Failed to build wells-index.\n\n"
+        f"Error:\n{maturin_err}\n\n"
+        f"Ensure Rust is installed (https://rustup.rs) and try again."
+    )
 
 
 def _prompt_for_workspace() -> str | None:
@@ -198,7 +206,7 @@ def _auto_index_workspace(workspace: str) -> bool:
 def first_run_setup() -> None:
     """Run setup on first use: install Rust, build indexer, ask for workspace, auto-index.
 
-    Silently degrades if any step fails. System works without indexer (grep fallback).
+    Shows diagnostic errors; system still works without indexer (grep fallback).
     """
     try:
         from coding_harness import config
@@ -208,9 +216,19 @@ def first_run_setup() -> None:
             # Workspace already configured
             return
 
-        # Try to build indexer (silently, no error messages)
-        if not _ensure_indexer_built():
-            # Indexer build failed, but system still works with grep
+        # Try to build indexer
+        try:
+            _ensure_rust_installed()
+        except RuntimeError as e:
+            console.print(f"[yellow]Warning: Rust installation skipped.\n{e}[/yellow]")
+            console.print("[yellow]Indexer will not be available; falling back to grep.[/yellow]\n")
+            return
+
+        try:
+            _ensure_indexer_built()
+        except RuntimeError as e:
+            console.print(f"[yellow]Warning: Indexer build failed.\n{e}[/yellow]")
+            console.print("[yellow]Falling back to grep for code search.[/yellow]\n")
             return
 
         # Prompt for workspace (only if indexer succeeded)
@@ -223,12 +241,13 @@ def first_run_setup() -> None:
             from coding_harness import settings
             settings.update_env_file(Path(".env"), {"WORKSPACE_ROOT": workspace})
             os.environ["WORKSPACE_ROOT"] = workspace
-        except Exception:
-            pass
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not save workspace to .env: {e}[/yellow]")
 
         # Auto-index
         _auto_index_workspace(workspace)
         console.print()
-    except Exception:
-        # Silent failure - system continues with grep fallback
-        pass
+    except Exception as e:
+        # Unexpected error — show it
+        console.print(f"[yellow]Unexpected error during setup: {e}[/yellow]")
+        console.print("[yellow]Continuing with indexer unavailable.[/yellow]\n")
