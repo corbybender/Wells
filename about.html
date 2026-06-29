@@ -362,14 +362,15 @@
     <table>
       <thead><tr><th>Command</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>coding-harness "&lt;goal&gt;"</code></td><td>Run the full harness on a goal</td></tr>
+        <tr><td><code>coding-harness</code></td><td>Launch the interactive chat REPL</td></tr>
+        <tr><td><code>coding-harness "&lt;goal&gt;"</code></td><td>Run the full harness on a goal (single-shot)</td></tr>
         <tr><td><code>coding-harness --plan "&lt;goal&gt;"</code></td><td>Plan mode: plan edits without applying them</td></tr>
         <tr><td><code>coding-harness config</code></td><td>Interactive settings menu (all 22 settings, persists to .env)</td></tr>
         <tr><td><code>coding-harness info</code></td><td>Show effective configuration</td></tr>
         <tr><td><code>coding-harness "&lt;goal&gt;" MAX_ITERATIONS=5</code></td><td>Inline setting override</td></tr>
       </tbody>
     </table>
-    <p style="margin-top: 14px;">Running <code class="inline">coding-harness</code> with no arguments opens the settings menu, so you can configure providers, set the workspace root, and pick a safety policy all in one place.</p>
+    <p style="margin-top: 14px;">Running <code class="inline">coding-harness</code> with no arguments opens a rich, interactive chat REPL (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Inside the REPL, you can type your goals naturally or use slash commands (<code class="inline">/help</code>, <code class="inline">/config</code>, <code class="inline">/info</code>, <code class="inline">/plan</code>, <code class="inline">/quit</code>).</p>
   </section>
 
   <div class="note">

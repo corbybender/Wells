@@ -126,6 +126,9 @@ SHELL_TIMEOUT: float = float(os.getenv("SHELL_TIMEOUT", "120"))
 # (produces a diff / step list only). Useful for review-first workflows.
 PLAN_MODE: bool = os.getenv("PLAN_MODE", "0") not in ("0", "false", "no", "")
 
+# Stream output to the console during generation if the model supports it.
+STREAM_OUTPUT: bool = os.getenv("STREAM_OUTPUT", "1") not in ("0", "false", "no", "")
+
 # Commands blocked from run_command regardless of safety policy (regex patterns,
 # ``|``-separated — each piece is compiled independently).
 BLOCKED_COMMANDS: tuple[str, ...] = tuple(
