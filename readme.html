@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wells Coding Harness &mdash; README</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
+    --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --orange: #d29922; --red: #f85149; --purple: #bc8cff; --teal: #39d0d8;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .hero { background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a2233 100%); border-bottom: 1px solid var(--border); padding: 48px 40px; text-align: center; }
+  .hero h1 { font-size: 2.4em; background: linear-gradient(90deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 10px; }
+  .hero p { color: var(--muted); font-size: 1.1em; max-width: 760px; margin: 0 auto; }
+  .hero .badges { margin-top: 18px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .hero .badge { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; font-size: 0.82em; color: var(--teal); }
+  .container { max-width: 980px; margin: 0 auto; padding: 36px 24px 60px; }
+  section { margin-bottom: 44px; scroll-margin-top: 20px; }
+  h2 { font-size: 1.5em; color: var(--text); margin-bottom: 14px; padding-bottom: 6px; border-bottom: 2px solid var(--border); }
+  h3 { font-size: 1.15em; color: var(--accent); margin: 22px 0 10px; }
+  p { margin-bottom: 12px; }
+  ul, ol { margin: 0 0 14px 22px; }
+  li { margin-bottom: 6px; }
+  strong { color: #fff; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: 'SF Mono', Consolas, 'Liberation Mono', monospace; font-size: 0.88em; }
+  p code, li code, td code { background: var(--panel2); padding: 2px 7px; border-radius: 4px; color: var(--teal); }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 12px 0; }
+  pre code { color: var(--text); background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.92em; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--accent); font-size: 0.8em; text-transform: uppercase; letter-spacing: .5px; }
+  tr:hover td { background: var(--panel); }
+  .note { background: rgba(88,166,255,.06); border: 1px solid rgba(88,166,255,.3); border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 0.94em; }
+  .warn { background: rgba(210,153,34,.06); border: 1px solid rgba(210,153,34,.3); border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 0.94em; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 24px; margin-bottom: 36px; }
+  .toc h3 { margin: 0 0 10px; color: var(--text); font-size: 1em; }
+  .toc ol { margin: 0; columns: 2; -webkit-columns: 2; }
+  .toc li { margin-bottom: 4px; font-size: 0.92em; }
+  .file-tree { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; font-family: 'SF Mono', monospace; font-size: 0.85em; line-height: 1.5; overflow-x: auto; }
+  .file-tree .c { color: var(--muted); }
+  .file-tree .f { color: var(--teal); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 11px; font-family: monospace; font-size: 0.82em; color: var(--teal); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  footer { text-align: center; padding: 24px; color: var(--muted); border-top: 1px solid var(--border); font-size: 0.85em; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>coding-harness</h1>
+  <p>A local, <strong>model-agnostic agentic coding harness</strong>. Give it a development goal and it runs an orchestration loop of planner &rarr; architect &rarr; coder &rarr; tester &rarr; reviewer &rarr; finisher, where the coder/tester/reviewer are autonomous tool-using agents that actually read files, make edits, run tests, and verify their own work.</p>
+  <div class="badges">
+    <span class="badge">Z.ai GLM</span>
+    <span class="badge">OpenAI</span>
+    <span class="badge">Anthropic</span>
+    <span class="badge">Ollama</span>
+    <span class="badge">OpenRouter</span>
+    <span class="badge">Any OpenAI-compatible</span>
+  </div>
+</div>
+
+<div class="container">
+
+  <nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#what">What it does</a></li>
+      <li><a href="#providers">Provider profiles</a></li>
+      <li><a href="#quick">Quick start</a></li>
+      <li><a href="#cli">CLI</a></li>
+      <li><a href="#safety">Safety model</a></li>
+      <li><a href="#structure">Project structure</a></li>
+      <li><a href="#config">Configuration reference</a></li>
+      <li><a href="#mcp">MCP server</a></li>
+      <li><a href="#tokens">Token optimization</a></li>
+      <li><a href="#tests">Tests</a></li>
+      <li><a href="#roadmap">Roadmap</a></li>
+    </ol>
+  </nav>
+
+  <section id="what">
+    <h2>What it does</h2>
+    <pre><code>START &rarr; planner &rarr; architect &rarr; coder &rarr; tester &rarr; reviewer &rarr; decision
+         ^                                           |
+         |____ summarizer &larr; (if INCOMPLETE) _______|
+                                                     |
+                                          finisher (memory + git/PR) &rarr; END</code></pre>
+    <ul>
+      <li><strong>Planner / architect</strong> turn the goal into a plan + architecture (reads <code>AGENTS.md</code> project memory).</li>
+      <li><strong>Coder</strong> is an agentic loop: it uses <code>read_file</code> / <code>glob</code> / <code>grep</code> / <code>write_file</code> / <code>edit_file</code> / <code>run_command</code> / <code>run_tests</code> / <code>spawn_subagent</code> to actually implement the goal in your workspace, then verifies its work.</li>
+      <li><strong>Tester</strong> runs the real test suite and reports pass/fail with file:line refs.</li>
+      <li><strong>Reviewer</strong> independently re-checks the work (reads changed files, re-runs tests) and emits <code>COMPLETE</code> / <code>INCOMPLETE</code>.</li>
+      <li>On <code>INCOMPLETE</code>, the <strong>summarizer</strong> condenses durable context and the loop returns to the coder (bounded by <code>MAX_ITERATIONS</code>).</li>
+      <li><strong>Finisher</strong> writes a lesson to <code>AGENTS.md</code> (so the harness learns across runs) and optionally creates a <code>wells/&lt;slug&gt;</code> branch + commit + PR.</li>
+    </ul>
+    <p>Everything goes through a <strong>token-optimization layer</strong> (estimator + calibration, per-category context trimming, log compression, rolling summaries, model router, cache-friendly prompts) and a <strong>workspace confinement + safety policy</strong> layer.</p>
+  </section>
+
+  <section id="providers">
+    <h2>Provider profiles (model-agnostic)</h2>
+    <p>Models are configured as named <strong>profiles</strong>. Any number can coexist; one is <em>active</em>, one optionally <em>cheap</em> (used for summarization/compression).</p>
+    <table>
+      <thead><tr><th>Profile name</th><th>Provider kind</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>zai</code> (default)</td><td><code>openai</code> (OpenAI-compatible)</td><td>Z.ai GLM via the <strong>coding endpoint</strong> <code>/api/coding/paas/v4/</code>. Backward-compatible with legacy <code>ZAI_*</code> vars.</td></tr>
+        <tr><td><code>openai</code></td><td><code>openai</code></td><td>OpenAI directly</td></tr>
+        <tr><td><code>openrouter</code></td><td><code>openai</code></td><td>OpenRouter (hundreds of models)</td></tr>
+        <tr><td><code>anthropic</code></td><td><code>anthropic</code></td><td>Requires <code>pip install langchain-anthropic</code></td></tr>
+        <tr><td><code>ollama</code></td><td><code>ollama</code></td><td>Local models; requires <code>pip install langchain-ollama</code></td></tr>
+        <tr><td><code>local</code></td><td><code>openai</code></td><td>Any local vLLM / Ollama OpenAI shim</td></tr>
+        <tr><td><code>together</code> / <code>groq</code> / <code>fireworks</code> / <code>deepseek</code> / <code>mistral</code></td><td><code>openai</code></td><td>One-line setup</td></tr>
+        <tr><td><code>google</code> / <code>bedrock</code> / <code>azure</code></td><td>provider-specific</td><td>Optional provider packages</td></tr>
+      </tbody>
+    </table>
+    <p>A profile is configured with three env vars:</p>
+    <pre><code>MODEL_&lt;name&gt;=&lt;model-id&gt;            # required
+API_KEY_&lt;name&gt;=&lt;key&gt;               # if the provider needs one
+BASE_URL_&lt;name&gt;=&lt;url&gt;              # for OpenAI-compatible endpoints</code></pre>
+    <p>Select which profiles exist and which is active:</p>
+    <pre><code>MODEL_PROFILES=zai,openrouter,local
+MODEL_PROFILE=openrouter           # the active profile
+MODEL_PROFILE_CHEAP=zai            # optional: cheaper model for subtasks</code></pre>
+    <p>Optional provider packages are imported lazily &mdash; the harness runs out-of-the-box with only <code>langchain-openai</code> (the OpenAI-compatible path covers Z.ai, OpenAI, OpenRouter, Together, Groq, Fireworks, local vLLM, Ollama's OpenAI shim, &hellip;).</p>
+  </section>
+
+  <section id="quick">
+    <h2>Quick start</h2>
+    <p>Requires <a href="https://docs.astral.sh/uv/">uv</a> and Python &ge; 3.12.</p>
+    <pre><code>uv sync                          # install dependencies
+cp .env.example .env             # then edit .env
+coding-harness config            # interactive settings menu (recommended)</code></pre>
+    <p>Or skip the menu and edit <code>.env</code> directly. Then run a task:</p>
+    <pre><code>coding-harness "Add a JWT auth middleware to the Express app"</code></pre>
+  </section>
+
+  <section id="cli">
+    <h2>CLI</h2>
+    <pre><code>coding-harness "&lt;goal&gt;"                    # run the full harness
+coding-harness --plan "&lt;goal&gt;"             # plan mode: plan edits, don't apply
+coding-harness config                      # interactive settings menu
+coding-harness info                        # show effective configuration
+coding-harness "&lt;goal&gt;" MAX_ITERATIONS=5   # inline setting override</code></pre>
+    <p>Running <code>coding-harness</code> with no arguments opens the settings menu.</p>
+
+    <h3>Interactive settings menu</h3>
+    <p><code>coding-harness config</code> shows every setting grouped (Providers, Run, Tokens, LLM) and lets you change any value by number/name, switch or add provider profiles, and persist to <code>.env</code> &mdash; all in one place. Changes apply live and are written back comment-preserving.</p>
+    <pre><code>================================================================
+ Wells harness &mdash; current settings
+================================================================
+[Providers]
+  MODEL_PROFILE                openrouter
+  ...
+&gt; p) Switch / edit provider profile (fast path)
+&gt; +) Add a new provider profile
+&gt; MAX_ITERATIONS        edit by env-var name
+&gt; s) Save &amp; exit     q) Quit without saving     w) Write .env now</code></pre>
+  </section>
+
+  <section id="safety">
+    <h2>Safety model</h2>
+    <p>The agent operates inside a <strong>workspace root</strong> (path escapes blocked) and a <strong>safety policy</strong> for writes and shell commands:</p>
+    <table>
+      <thead><tr><th><code>HARNESS_SAFETY</code></th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td><code>auto</code> (default)</td><td>Execute immediately, confined to <code>WORKSPACE_ROOT</code>. Destructive commands (<code>rm -rf /</code>, <code>mkfs</code>, &hellip;) are always blocked.</td></tr>
+        <tr><td><code>approve</code></td><td>Require an approval callback; degrades to dry-run when no callback is wired.</td></tr>
+        <tr><td><code>dryrun</code></td><td>Never execute &mdash; describe what <em>would</em> happen. Truly side-effect free.</td></tr>
+      </tbody>
+    </table>
+    <p><code>PLAN_MODE=1</code> forces all mutating tools to simulate (reads still work), so you can preview exactly what the agent would change.</p>
+  </section>
+
+  <section id="structure">
+    <h2>Project structure</h2>
+    <div class="file-tree"><span class="c">src/coding_harness/</span>
+<span class="f">&#9500;&#9472;&#9472; main.py</span>            <span class="c"># CLI entry: run / config / info</span>
+<span class="f">&#9500;&#9472;&#9472; settings.py</span>        <span class="c"># interactive settings menu + .env persistence</span>
+<span class="f">&#9500;&#9472;&#9472; config.py</span>          <span class="c"># env vars, budgets, workspace/safety knobs</span>
+<span class="f">&#9500;&#9472;&#9472; providers.py</span>       <span class="c"># named provider profiles &rarr; chat-model factory (Layer 0)</span>
+<span class="f">&#9500;&#9472;&#9472; state.py</span>           <span class="c"># TypedDict LangGraph state</span>
+<span class="f">&#9500;&#9472;&#9472; graph.py</span>           <span class="c"># LangGraph workflow (planner&rarr;&hellip;&rarr;reviewer&rarr;finisher)</span>
+<span class="f">&#9500;&#9472;&#9472; runtime.py</span>         <span class="c"># run_step(): LLM call + usage capture (reasoning nodes)</span>
+<span class="f">&#9500;&#9472;&#9472; executor.py</span>        <span class="c"># agentic tool-calling loop (Layer 2) &mdash; native + text fallback</span>
+<span class="f">&#9500;&#9472;&#9472; tools.py</span>           <span class="c"># repo tools: read/list/glob/grep/write/edit/shell/subagent</span>
+<span class="f">&#9500;&#9472;&#9472; safety.py</span>          <span class="c"># workspace confinement + auto/approve/dryrun gate</span>
+<span class="f">&#9500;&#9472;&#9472; subagents.py</span>       <span class="c"># parallel research/fix subagents (Layer 3)</span>
+<span class="f">&#9500;&#9472;&#9472; memory.py</span>          <span class="c"># AGENTS.md project memory (Layer 3)</span>
+<span class="f">&#9500;&#9472;&#9472; gitops.py</span>          <span class="c"># branch/commit/diff/PR via git + gh (Layer 3)</span>
+<span class="f">&#9500;&#9472;&#9472; finisher.py</span>        <span class="c"># post-run memory write-back + git/PR node</span>
+<span class="f">&#9500;&#9472;&#9472; tokens.py</span>          <span class="c"># token estimation, ledger, usage report</span>
+<span class="f">&#9500;&#9472;&#9472; context.py</span>         <span class="c"># categorized, budget-trimmed prompt assembly</span>
+<span class="f">&#9500;&#9472;&#9472; compress.py</span>        <span class="c"># log/output compressor</span>
+<span class="f">&#9500;&#9472;&#9472; summarize.py</span>       <span class="c"># rolling task-state summarizer</span>
+<span class="f">&#9500;&#9472;&#9472; mcp_server.py</span>      <span class="c"># MCP server exposing all capabilities</span>
+<span class="f">&#9492;&#9472;&#9472; agents/</span>            <span class="c"># planner / architect / coder / tester / reviewer</span></div>
+  </section>
+
+  <section id="config">
+    <h2>Configuration reference</h2>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>MODEL_PROFILES</code></td><td><code>zai</code></td><td>Comma-separated list of configured profile names</td></tr>
+        <tr><td><code>MODEL_PROFILE</code></td><td><code>zai</code></td><td>Active profile for main reasoning/coding</td></tr>
+        <tr><td><code>MODEL_PROFILE_CHEAP</code></td><td><em>(blank)</em></td><td>Profile for low-stakes subtasks (defaults to active)</td></tr>
+        <tr><td><code>MODEL_&lt;name&gt;</code></td><td>&mdash;</td><td>Model id for profile <code>&lt;name&gt;</code></td></tr>
+        <tr><td><code>API_KEY_&lt;name&gt;</code></td><td>&mdash;</td><td>API key for profile <code>&lt;name&gt;</code></td></tr>
+        <tr><td><code>BASE_URL_&lt;name&gt;</code></td><td>&mdash;</td><td>OpenAI-compatible base URL for profile <code>&lt;name&gt;</code></td></tr>
+        <tr><td><code>WORKSPACE_ROOT</code></td><td><code>cwd</code></td><td>Directory the agent is confined to</td></tr>
+        <tr><td><code>HARNESS_SAFETY</code></td><td><code>auto</code></td><td><code>auto</code> / <code>approve</code> / <code>dryrun</code></td></tr>
+        <tr><td><code>PLAN_MODE</code></td><td><code>0</code></td><td>When on, coder plans but does not apply edits</td></tr>
+        <tr><td><code>MAX_ITERATIONS</code></td><td><code>3</code></td><td>Max coder&harr;reviewer loops</td></tr>
+        <tr><td><code>MAX_TOOL_STEPS</code></td><td><code>25</code></td><td>Max tool-call rounds per executor run</td></tr>
+        <tr><td><code>SHELL_TIMEOUT</code></td><td><code>120</code></td><td>Max seconds for a single shell command</td></tr>
+        <tr><td><code>TOKEN_BUDGET_MAX_INPUT</code></td><td><code>24000</code></td><td>Input budget per call (above this, trims)</td></tr>
+        <tr><td><code>SUMMARIZE_ON_LOOP</code></td><td><code>1</code></td><td>Replace durable context with a summary on loop iterations</td></tr>
+        <tr><td><code>SUMMARIZE_THRESHOLD</code></td><td><code>1500</code></td><td>Tokens above which durable context is summarized</td></tr>
+        <tr><td><code>LLM_TIMEOUT</code></td><td><code>180</code></td><td>Per-call timeout</td></tr>
+        <tr><td><code>LLM_MAX_RETRIES</code></td><td><code>5</code></td><td>Retry attempts for transient errors</td></tr>
+        <tr><td><code>WELLS_OPEN_PR</code></td><td><code>0</code></td><td>When <code>1</code>, the finisher pushes + opens a PR via <code>gh</code></td></tr>
+        <tr><td><code>BLOCKED_COMMANDS</code></td><td><em>(see source)</em></td><td><code>|</code>-separated regex patterns always refused</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Legacy <code>ZAI_*</code> variables</h3>
+    <p>Existing <code>.env</code> files using <code>ZAI_API_KEY</code> / <code>ZAI_MODEL</code> / <code>ZAI_ENDPOINT</code> keep working unchanged &mdash; they seed the built-in <code>zai</code> profile. Explicit <code>MODEL_zai</code> / <code>BASE_URL_zai</code> / <code>API_KEY_zai</code> vars take precedence.</p>
+  </section>
+
+  <section id="mcp">
+    <h2>MCP server</h2>
+    <p>The harness exposes its capabilities as a <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server over stdio, so external agent clients (Claude Code, OpenCode, Codex CLIs, Gemini CLI, &hellip;) can invoke the harness.</p>
+    <pre><code>coding-harness-mcp          # console script
+python -m coding_harness    # same thing</code></pre>
+
+    <h3>Exposed tools (12)</h3>
+    <table>
+      <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>run_agent_task</code></td><td>Full harness loop (planner&rarr;&hellip;&rarr;reviewer&rarr;finisher) with workspace + safety overrides</td></tr>
+        <tr><td><code>plan_task</code></td><td>Planner + architect only (fast)</td></tr>
+        <tr><td><code>review_code</code></td><td>Reviewer only on provided context</td></tr>
+        <tr><td><code>run_executor</code></td><td>Single autonomous executor loop for an arbitrary task</td></tr>
+        <tr><td><code>spawn_subagent</code></td><td>Focused research (read-only) or fix subagent</td></tr>
+        <tr><td><code>search_repo</code></td><td>Glob + grep search (read-only)</td></tr>
+        <tr><td><code>read_file</code></td><td>Read a workspace file (read-only)</td></tr>
+        <tr><td><code>run_command</code></td><td>Run a shell command (confined, blocklisted, gated)</td></tr>
+        <tr><td><code>git_status</code></td><td>Git status + diff stat (read-only)</td></tr>
+        <tr><td><code>get_memory</code></td><td>Read project memory (<code>AGENTS.md</code>)</td></tr>
+        <tr><td><code>compress_logs</code></td><td>Compress log output (ANSI/dup/tail)</td></tr>
+        <tr><td><code>get_harness_info</code></td><td>Effective configuration</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Client configuration</h3>
+    <pre><code>{
+  "mcpServers": {
+    "coding-harness": { "command": "coding-harness-mcp", "args": [] }
+  }
+}</code></pre>
+  </section>
+
+  <section id="tokens">
+    <h2>Token optimization</h2>
+    <table>
+      <thead><tr><th>Component</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Estimator</strong></td><td>tiktoken-based, auto-calibrated against actual API responses</td></tr>
+        <tr><td><strong>TokenLedger</strong></td><td>Per-step actuals (input/output/reasoning/cache_read) from <code>usage_metadata</code></td></tr>
+        <tr><td><strong>Token Usage Report</strong></td><td>End-of-run report with per-step table + category breakdown + savings</td></tr>
+        <tr><td><strong>ContextManager</strong></td><td>Categorized chunks, stable-prefix ordering, priority budget trimming</td></tr>
+        <tr><td><strong>Compressor</strong></td><td>ANSI strip, duplicate/blank collapse, tail-window, traceback preserve</td></tr>
+        <tr><td><strong>Summarizer</strong></td><td>Rolling task-state summary on loop iterations (threshold-guarded)</td></tr>
+        <tr><td><strong>Model Router</strong></td><td>Cheaper model for summarization/compression via <code>MODEL_PROFILE_CHEAP</code></td></tr>
+        <tr><td><strong>Prompt-Cache Prefix</strong></td><td><code>SystemMessage</code> + deterministic chunk order (cache-friendly)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="tests">
+    <h2>Tests</h2>
+    <pre><code>uv run python -m pytest tests/ -v</code></pre>
+    <p>The suite covers provider-profile resolution, the coding-endpoint precedence, tool confinement + every safety mode, the agentic executor loop (with a mock model so it runs without API credits), MCP tool registration, and the settings-menu <code>.env</code> persistence.</p>
+  </section>
+
+  <section id="roadmap">
+    <h2>Roadmap</h2>
+    <ul>
+      <li>Async task tracking for MCP <code>run_agent_task</code> (return a task ID, poll later).</li>
+      <li>Per-call ledger isolation for concurrent MCP requests.</li>
+      <li>Embedding-based code retrieval (replace full-repo injection for large repos).</li>
+      <li>Streaming executor output for interactive UIs.</li>
+    </ul>
+  </section>
+
+  <div class="note">
+    <strong>Bottom line:</strong> Wells gives you a Claude-Code-class agent experience driven by <em>whatever model you have access to</em> &mdash; local or cloud, cheap or premium &mdash; with safety rails, token efficiency, and project memory that compounds over time. See the <a href="about.html">visual overview</a> for diagrams.
+  </div>
+
+</div>
+
+<footer>
+  Wells Coding Harness &middot; model-agnostic agentic coding &middot; <a href="about.html" style="color: var(--accent);">Visual overview</a>
+</footer>
+
+</body>
+</html>
