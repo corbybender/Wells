@@ -11,7 +11,7 @@ from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 from langchain_core.callbacks import BaseCallbackHandler
 
-from coding_harness import config, settings
+from coding_harness import chat, config, settings
 from coding_harness.graph import build_graph
 from coding_harness.tokens import LEDGER
 from coding_harness.main import _print_final_summary, _print_info, _reload_module_config
@@ -53,6 +53,26 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "/status",
         "Show status panel",
         "Print working dir, model, and token usage/savings.",
+    ),
+    (
+        "/chat",
+        "Force chat mode (next message)",
+        "Answer your next message directly without the agent loop.",
+    ),
+    (
+        "/task",
+        "Force task mode (next message)",
+        "Run your next message through the full agent loop.",
+    ),
+    (
+        "/clear",
+        "Clear conversation history",
+        "Forget prior chat context (keeps agent-run summary).",
+    ),
+    (
+        "/index",
+        "Manage repository index",
+        "Build/update repo index (wells-index). Subcommands: /index (build), /index status, /index clear.",
     ),
 ]
 
@@ -96,7 +116,8 @@ def print_welcome() -> None:
         f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})"
     )
     console.print(
-        "Type your goal, [bold]/[/bold] for commands, or [bold]/help[/bold] for details."
+        "Ask a question (auto chat) or give a task (auto agent). "
+        "Type [bold]/[/bold] for commands."
     )
 
 
@@ -129,6 +150,15 @@ def handle_slash_command(command: str) -> bool:
         _handle_working_dir(arg)
     elif cmd == "/status":
         _print_status_panel()
+    elif cmd == "/chat":
+        _set_force_mode("chat")
+    elif cmd == "/task":
+        _set_force_mode("task")
+    elif cmd == "/clear":
+        _REPL_STATE["memory"].clear()
+        console.print("[green]Conversation history cleared.[/green]")
+    elif cmd == "/index":
+        _handle_index(arg)
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         console.print("[dim]Type / for a list of commands.[/dim]")
@@ -205,6 +235,48 @@ def _print_status_panel() -> None:
     console.print(Panel(table, title="[bold]Wells Status[/bold]", border_style="blue"))
 
 
+def _handle_index(arg: str) -> None:
+    """Handle /index command (build, status, clear)."""
+    from coding_harness import index_tools
+    from coding_harness.tools import ToolContext
+
+    if not index_tools.INDEXER_AVAILABLE:
+        console.print(
+            "[red]Error: Index engine not available. Install: pip install wells-index[/red]"
+        )
+        return
+
+    ctx = ToolContext(workspace=config.WORKSPACE_ROOT)
+
+    if not arg or arg in ("build", "update"):
+        console.print("[cyan]Indexing repository...[/cyan]")
+        result = index_tools.index_workspace(ctx)
+        if result.ok:
+            console.print(f"[green]{result.output}[/green]")
+        else:
+            console.print(f"[red]Error: {result.error or result.output}[/red]")
+    elif arg == "status":
+        console.print("[cyan]Repository index statistics:[/cyan]")
+        result = index_tools.list_symbols(ctx, "")
+        if result.ok:
+            console.print(result.output)
+        else:
+            console.print(f"[red]Error: {result.error or result.output}[/red]")
+    elif arg == "clear":
+        console.print("[cyan]Clearing index...[/cyan]")
+        try:
+            from wells_index import IndexEngine
+
+            engine = IndexEngine(config.WORKSPACE_ROOT)
+            engine.clear()
+            console.print("[green]Index cleared.[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: Could not clear index: {e}[/red]")
+    else:
+        console.print(f"[red]Unknown /index subcommand: {arg}[/red]")
+        console.print("[dim]Usage: /index [build|status|clear][/dim]")
+
+
 def _bottom_toolbar():
     """Persistent status bar shown beneath the prompt (like opencode's panel).
 
@@ -229,10 +301,22 @@ def _bottom_toolbar():
         wd = "..." + wd[-29:]
 
     saved_str = f" | saved: {saved:,}" if saved else ""
+
+    # Show forced mode if active.
+    force = _REPL_STATE.get("force_mode")
+    mode_str = ""
+    if force == "chat":
+        mode_str = '<style fg="#ffaa00">| FORCE:chat</style>'
+    elif force == "task":
+        mode_str = '<style fg="#ff44ff">| FORCE:task</style>'
+    else:
+        mode_str = '<style fg="#666666">| auto</style>'
+
     return HTML(
         f'<style fg="#888888">{wd}</style>'
         f' <style fg="#00aa00">| {model}</style>'
         f' <style fg="#5588ff">| tokens: {used:,}{saved_str}</style>'
+        f" {mode_str}"
     )
 
 
@@ -241,6 +325,12 @@ def run_repl() -> None:
         return
 
     print_welcome()
+
+    # Session-scoped state shared with slash commands and the router.
+    _REPL_STATE["memory"] = chat.ConversationMemory()
+    _REPL_STATE["force_mode"] = None  # "chat" | "task" | None (auto)
+    _REPL_STATE["last_state"] = {}
+
     session = PromptSession(
         completer=SlashCompleter(),
         bottom_toolbar=_bottom_toolbar,
@@ -279,33 +369,114 @@ def run_repl() -> None:
                 break
             continue
 
-        # Update goal
-        agent_state["goal"] = text
-        agent_state["iteration"] = 0
-        LEDGER.reset()
+        # ---- Route: chat vs task -----------------------------------------
+        force = _REPL_STATE.get("force_mode")
+        if force:
+            intent = force
+            _REPL_STATE["force_mode"] = None  # one-shot override
+        else:
+            intent = chat.classify_intent(text)
 
-        console.print(f"\n[bold cyan]Executing:[/bold cyan] {text}\n")
+        if intent == "chat":
+            _run_chat(text, callbacks)
+        else:
+            _run_task(text, agent_state, app, callbacks)
+            # Feed the agent's result back into the conversation memory so
+            # follow-up questions ("did it work?") have context.
+            _REPL_STATE["memory"].set_run_summary(
+                _summarize_run(_REPL_STATE.get("last_state", {}))
+            )
 
-        try:
-            # We use stream to get node updates
-            for update in app.stream(
-                agent_state, config={"callbacks": callbacks}, stream_mode="updates"
-            ):
-                for node_name, node_state in update.items():
-                    console.print(
-                        f"\n[bold magenta]>> {node_name.upper()} <<[/bold magenta]"
-                    )
-                    if not config.STREAM_OUTPUT:
-                        console.print(f"Completed step: {node_name}")
 
-                    # Merge node_state back into our persistent agent_state
-                    for k, v in node_state.items():
-                        agent_state[k] = v
+def _run_chat(text: str, callbacks) -> None:
+    """Answer ``text`` directly without the agent loop (streamed)."""
+    console.print()  # blank line before streamed output
+    try:
+        chat.conversational_reply(
+            text,
+            _REPL_STATE["memory"],
+            on_token=_stream_token if config.STREAM_OUTPUT else None,
+        )
+    except Exception as e:
+        console.print(f"\n[bold red]Error during chat:[/bold red] {e}")
+    console.print()
 
-            _print_final_summary(agent_state)
-            console.print("\n" + LEDGER.format_report())
-        except Exception as e:
-            console.print(f"\n[bold red]Error during execution:[/bold red] {e}")
+
+def _stream_token(token: str) -> None:
+    sys.stdout.write(token)
+    sys.stdout.flush()
+
+
+def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
+    """Run ``text`` through the full agentic graph."""
+    # Update goal
+    agent_state["goal"] = text
+    agent_state["iteration"] = 0
+    LEDGER.reset()
+
+    console.print(f"\n[bold cyan]Executing:[/bold cyan] {text}\n")
+
+    try:
+        # We use stream to get node updates
+        for update in app.stream(
+            agent_state, config={"callbacks": callbacks}, stream_mode="updates"
+        ):
+            for node_name, node_state in update.items():
+                console.print(
+                    f"\n[bold magenta]>> {node_name.upper()} <<[/bold magenta]"
+                )
+                if not config.STREAM_OUTPUT:
+                    console.print(f"Completed step: {node_name}")
+
+                # Merge node_state back into our persistent agent_state
+                for k, v in node_state.items():
+                    agent_state[k] = v
+
+        _REPL_STATE["last_state"] = dict(agent_state)
+        _print_final_summary(agent_state)
+        console.print("\n" + LEDGER.format_report())
+    except Exception as e:
+        console.print(f"\n[bold red]Error during execution:[/bold red] {e}")
+
+
+def _summarize_run(state: dict) -> str:
+    """Compact summary of the last agentic run for chat context."""
+    if not state:
+        return ""
+    status = "COMPLETE" if state.get("review_complete") else "INCOMPLETE"
+    review = (state.get("review_result") or "").strip()
+    steps = (state.get("implementation_steps") or "").strip()
+    parts = [
+        f"Goal: {state.get('goal', '')}",
+        f"Status: {status}",
+        f"Iterations: {state.get('iteration', 0)}",
+    ]
+    if steps:
+        parts.append(f"Implementation:\n{steps[:600]}")
+    if review:
+        parts.append(f"Review:\n{review[:600]}")
+    return "\n".join(parts)
+
+
+# Session-scoped state for the REPL (memory, force-mode, last agent state).
+_REPL_STATE: dict = {
+    "memory": chat.ConversationMemory(),
+    "force_mode": None,
+    "last_state": {},
+}
+
+
+def _set_force_mode(mode: str) -> None:
+    _REPL_STATE["force_mode"] = mode
+    label = (
+        "[bold cyan]chat[/bold cyan]"
+        if mode == "chat"
+        else "[bold magenta]task[/bold magenta]"
+    )
+    console.print(
+        f"Next message will be handled in {label} mode "
+        f"[dim](auto-routing resumes after)[/dim]."
+    )
 
 
 def _ensure_model_configured() -> bool:
