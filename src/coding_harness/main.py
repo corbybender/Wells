@@ -193,11 +193,10 @@ def main() -> None:
         _reload_module_config()
 
     if not goal_args:
-        # No goal given — launch the menu so the user can configure & then run.
+        # No goal given — launch the interactive REPL.
         if not overrides and not plan_flag:
-            print("No goal provided. Opening the settings menu.")
-            print('(Run `coding-harness "<your goal>"` to start a task.)\n')
-            settings.interactive_menu(Path(".env"))
+            from coding_harness.cli import run_repl
+            run_repl()
         else:
             _print_usage()
         return

@@ -90,14 +90,15 @@ coding-harness "Add a JWT auth middleware to the Express app"
 ## CLI
 
 ```
-coding-harness "<goal>"                    # run the full harness
+coding-harness                             # launch the interactive chat REPL
+coding-harness "<goal>"                    # run the full harness (single-shot)
 coding-harness --plan "<goal>"             # plan mode: plan edits, don't apply
 coding-harness config                      # interactive settings menu
 coding-harness info                        # show effective configuration
 coding-harness "<goal>" MAX_ITERATIONS=5   # inline setting override
 ```
 
-Running `coding-harness` with no arguments opens the settings menu.
+Running `coding-harness` with no arguments opens a rich, interactive chat REPL (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Inside the REPL, you can type your goals naturally or use slash commands (`/help`, `/config`, `/info`, `/plan`, `/quit`).
 
 ### Interactive settings menu
 
@@ -256,4 +257,3 @@ settings-menu `.env` persistence.
 - Async task tracking for MCP `run_agent_task` (return a task ID, poll later).
 - Per-call ledger isolation for concurrent MCP requests.
 - Embedding-based code retrieval (replace full-repo injection for large repos).
-- Streaming executor output for interactive UIs.
