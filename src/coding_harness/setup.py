@@ -99,6 +99,7 @@ def _ensure_indexer_built() -> bool:
     """
     try:
         import wells_index  # noqa: F401
+        console.print("[green]✓ Indexer already available[/green]")
         return True
     except ImportError:
         pass
@@ -108,37 +109,62 @@ def _ensure_indexer_built() -> bool:
     indexer_dir = wells_root / "wells-index"
 
     if not indexer_dir.exists():
-        console.print("[yellow]wells-index source not found. Indexer unavailable.[/yellow]")
+        console.print("[red]ERROR: wells-index source not found at {indexer_dir}[/red]")
         return False
 
     console.print("[cyan]Building indexer (first time only, this may take a minute)...[/cyan]")
+
     try:
-        # Use maturin develop for faster, in-place build
+        # Install maturin first
+        console.print("[dim]Installing maturin...[/dim]")
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "maturin"],
+            [sys.executable, "-m", "pip", "install", "-q", "maturin"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,
         )
+        if result.returncode != 0:
+            console.print(f"[red]Failed to install maturin: {result.stderr[:200]}[/red]")
+            return False
 
+        # Build with maturin (show output for debugging)
+        console.print("[dim]Compiling Rust extension...[/dim]")
         result = subprocess.run(
-            ["maturin", "develop"],
+            ["maturin", "develop", "-q"],
             cwd=str(indexer_dir),
-            capture_output=True,
+            env={**os.environ, "UV_LINK_MODE": "copy"},
             text=True,
             timeout=600,
         )
 
         if result.returncode != 0:
-            console.print(
-                f"[yellow]Indexer build failed. Skipping.\n{result.stderr[:500]}[/yellow]"
+            console.print(f"[red]Indexer build failed with exit code {result.returncode}[/red]")
+            console.print("[yellow]Trying alternative build method...[/yellow]")
+            # Try pip install -e as fallback
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", str(indexer_dir)],
+                capture_output=True,
+                text=True,
+                timeout=600,
             )
+            if result.returncode != 0:
+                console.print(f"[red]Build failed: {result.stderr[:500]}[/red]")
+                return False
+
+        # Verify it worked
+        try:
+            import wells_index  # noqa: F401
+            console.print("[green]✓ Indexer built and installed successfully[/green]")
+            return True
+        except ImportError:
+            console.print("[red]Build succeeded but indexer still not importable[/red]")
             return False
 
-        console.print("[green]✓ Indexer built successfully[/green]")
-        return True
+    except subprocess.TimeoutExpired:
+        console.print("[red]Indexer build timed out (>10min)[/red]")
+        return False
     except Exception as e:
-        console.print(f"[yellow]Could not build indexer: {e}[/yellow]")
+        console.print(f"[red]Error building indexer: {e}[/red]")
         return False
 
 

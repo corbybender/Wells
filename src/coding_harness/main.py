@@ -215,12 +215,17 @@ def _print_usage() -> None:
 
 
 def main() -> None:
+    # Suppress uv hardlink warning (filesystem compatibility)
+    os.environ.setdefault("UV_LINK_MODE", "copy")
+
     # Auto-setup on first run (build indexer, prompt for workspace, index)
     try:
         from coding_harness import setup
         setup.first_run_setup()
-    except Exception:
-        pass  # Setup is optional; continue even if it fails
+    except Exception as e:
+        # Setup is optional; continue even if it fails
+        if os.environ.get("DEBUG"):
+            print(f"Setup error (non-fatal): {e}")
 
     argv = list(sys.argv[1:])
 
