@@ -2,9 +2,11 @@
 
 Usage:
     coding-harness "<your development goal>"        # run the harness
+    coding-harness --workspace /path "fix the bug"  # run against another project
     coding-harness config                           # interactive settings menu
     coding-harness info                             # show effective config
     coding-harness --plan "<goal>"                  # plan mode (no edits)
+    coding-harness --version                        # show version
     coding-harness "<goal>" MAX_ITERATIONS=5        # inline setting overrides
 """
 
@@ -14,7 +16,7 @@ import os
 import sys
 from pathlib import Path
 
-from coding_harness import config, settings
+from coding_harness import __version__, config, settings
 
 
 def _print_section(title: str, body: str) -> None:
@@ -77,10 +79,6 @@ def _print_info() -> None:
         f"(threshold {config.SUMMARIZE_THRESHOLD})"
     )
     print(bar)
-
-
-def _print_usage() -> None:
-    print(__doc__)
 
 
 def _run_goal(goal: str) -> None:
@@ -152,53 +150,103 @@ def _reload_module_config() -> None:
     importlib.reload(config)
 
 
+def _print_usage() -> None:
+    print(__doc__)
+    print(
+        "\nFlags:\n"
+        "  -w, --workspace PATH   operate on PATH instead of the current dir\n"
+        "  -s, --safety MODE      auto | approve | dryrun\n"
+        "      --plan             plan mode (describe edits, don't apply)\n"
+        "      --version          show version and exit\n"
+        "  -h, --help             show this help\n"
+    )
+
+
 def main() -> None:
     argv = list(sys.argv[1:])
 
-    # Subcommands.
-    if argv and argv[0] in ("-h", "--help", "help"):
+    # --version short-circuits everything.
+    if "--version" in argv or "-V" in argv:
+        print(f"wells {__version__}")
+        return
+
+    # ---- Pass 1: strip global flags (--workspace, --safety, --plan) ----
+    # We pull these out FIRST so a subcommand like `info` or `config` can appear
+    # after them (e.g. `--workspace /path info`) without being mistaken for a goal.
+    workspace_override: str | None = None
+    safety_override: str | None = None
+    plan_flag = False
+    remaining: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-w", "--workspace"):
+            i += 1
+            if i < len(argv):
+                workspace_override = argv[i]
+            else:
+                print("ERROR: --workspace requires a PATH argument")
+                sys.exit(2)
+        elif a.startswith("--workspace="):
+            workspace_override = a.split("=", 1)[1]
+        elif a in ("-s", "--safety"):
+            i += 1
+            if i < len(argv):
+                safety_override = argv[i]
+            else:
+                print("ERROR: --safety requires a MODE argument")
+                sys.exit(2)
+        elif a.startswith("--safety="):
+            safety_override = a.split("=", 1)[1]
+        elif a == "--plan":
+            plan_flag = True
+        else:
+            remaining.append(a)
+        i += 1
+
+    # ---- Apply workspace/safety/plan overrides to the environment ----
+    # We do NOT os.chdir() — that would break `uv run`'s project detection.
+    # The harness passes workspace_root into the graph state, and the tool layer
+    # uses it as the cwd for every subprocess it spawns.
+    if workspace_override:
+        ws = str(Path(workspace_override).resolve())
+        if not Path(ws).is_dir():
+            print(f"ERROR: workspace path does not exist or is not a directory: {ws}")
+            sys.exit(2)
+        os.environ["WORKSPACE_ROOT"] = ws
+    if safety_override:
+        os.environ["HARNESS_SAFETY"] = safety_override
+    if plan_flag:
+        os.environ["PLAN_MODE"] = "1"
+    if workspace_override or safety_override or plan_flag:
+        _reload_module_config()
+
+    # ---- Pass 2: subcommand detection on what's left ----
+    if not remaining or remaining[0] in ("-h", "--help", "help"):
         _print_usage()
         return
-    if argv and argv[0] == "config":
+    if remaining[0] == "config":
         settings.interactive_menu(Path(".env"))
         return
-    if argv and argv[0] == "info":
+    if remaining[0] == "info":
         # Apply any inline KEY=VALUE overrides first, then show.
-        settings.parse_argv_settings(argv[1:])
+        settings.parse_argv_settings(remaining[1:])
         _reload_module_config()
         _print_info()
         return
 
-    # Goal run: pull out --plan flag and KEY=VALUE overrides.
-    plan_flag = False
-    positional: list[str] = []
-    for a in argv:
-        if a == "--plan":
-            plan_flag = True
-        elif "=" in a and a.split("=", 1)[0].replace("_", "").isalnum():
-            # Looks like an ENV override; defer to settings parser.
-            positional.append(a)
-        else:
-            positional.append(a)
-
-    # Separate goal args from KEY=VALUE overrides.
-    overrides = [a for a in positional if _looks_like_override(a)]
-    goal_args = [a for a in positional if not _looks_like_override(a)]
+    # ---- Pass 3: a goal run — separate goal args from KEY=VALUE overrides ----
+    overrides = [a for a in remaining if _looks_like_override(a)]
+    goal_args = [a for a in remaining if not _looks_like_override(a)]
 
     if overrides:
         settings.parse_argv_settings(overrides)
         _reload_module_config()
-    if plan_flag:
-        os.environ["PLAN_MODE"] = "1"
-        _reload_module_config()
 
     if not goal_args:
         # No goal given — launch the interactive REPL.
-        if not overrides and not plan_flag:
-            from coding_harness.cli import run_repl
-            run_repl()
-        else:
-            _print_usage()
+        from coding_harness.cli import run_repl
+        run_repl()
         return
 
     goal = " ".join(goal_args).strip()

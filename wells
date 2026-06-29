@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Wells launcher — runs the harness from the cloned repo, no install needed.
+#
+# Usage:
+#   ./wells "<your goal>"                 # run on this repo
+#   ./wells --workspace /path "fix bug"   # run against another project
+#   ./wells config                        # interactive settings menu
+#   ./wells info                          # show configuration
+#
+# This is just a thin wrapper around `uv run coding-harness` so the venv is
+# created automatically and the right entry point is used. Once you run it
+# once, `uv` caches the environment and subsequent runs are fast.
+
+set -e
+
+# Resolve the directory this script lives in (the repo root), independent of CWD.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Make sure dependencies are installed (no-op if already done; fast after first run).
+uv sync --quiet 2>/dev/null || uv sync
+
+# Forward all arguments to the harness.
+exec uv run coding-harness "$@"
