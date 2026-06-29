@@ -11,12 +11,24 @@ When wells-index is NOT installed, INDEX_TOOLS is an empty list and the harness
 gracefully falls back to grep/glob for code search.
 """
 
-try:
-    from wells_index import IndexEngine
-    INDEXER_AVAILABLE = True
-except ImportError:
-    INDEXER_AVAILABLE = False
-    IndexEngine = None  # type: ignore
+def _try_load_indexer():
+    """Try to load indexer; if not available, try to build it."""
+    try:
+        from wells_index import IndexEngine
+        return True, IndexEngine
+    except ImportError:
+        # Try to build indexer on demand
+        try:
+            from coding_harness import setup as _setup_module
+            if _setup_module._ensure_indexer_built():
+                from wells_index import IndexEngine
+                return True, IndexEngine
+        except Exception:
+            pass
+    return False, None
+
+
+INDEXER_AVAILABLE, IndexEngine = _try_load_indexer()
 
 
 from typing import Any, Dict, Optional
