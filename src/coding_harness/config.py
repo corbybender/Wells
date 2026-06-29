@@ -1,8 +1,14 @@
-"""Configuration: loads credentials/settings from the environment and exposes an LLM client."""
+"""Configuration: loads credentials/settings from the environment and exposes an LLM client.
+
+Provider/model selection is delegated to :mod:`coding_harness.providers`, which
+supports multiple named provider profiles (Z.ai, OpenAI, Anthropic, Ollama,
+...) selected via env vars. This module re-exports the legacy ``ZAI_*`` names
+for backwards compatibility and keeps the tuning knobs (retries, budgets,
+summarization, workspace, safety policy) that the rest of the harness reads.
+"""
 
 import os
 import time
-from functools import lru_cache
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
@@ -46,14 +52,29 @@ def _configure_ca_bundle() -> None:
 _configure_ca_bundle()
 load_dotenv()
 
-from coding_harness.tokens import TokenBudget
+from coding_harness import providers  # noqa: E402 (must run after load_dotenv)
+from coding_harness.tokens import TokenBudget  # noqa: E402
 
+# ---------------------------------------------------------------------------
+# Backwards-compatible legacy ZAI_* names.
+# These are now *seeds* for the built-in ``zai`` provider profile. New code
+# should read ACTIVE_PROFILE / CHEAP_PROFILE and call get_llm_for_task.
+# ---------------------------------------------------------------------------
 ZAI_API_KEY: str = os.getenv("ZAI_API_KEY", "").strip()
 ZAI_ENDPOINT: str = os.getenv("ZAI_ENDPOINT", "https://api.z.ai/api/paas/v4/").strip()
 ZAI_MODEL: str = os.getenv("ZAI_MODEL", "glm-5.2").strip()
-# Optional cheaper/faster model for low-stakes subtasks (summarization, log
-# compression, classification). Defaults to the main model when unset.
 ZAI_MODEL_CHEAP: str = os.getenv("ZAI_MODEL_CHEAP", "").strip()
+
+# ---------------------------------------------------------------------------
+# Model selection (new). MODEL_PROFILES lists available profiles (default
+# ``zai``); MODEL_PROFILE selects the active one; MODEL_PROFILE_CHEAP selects
+# the low-stakes model (defaults to the active profile when unset/missing).
+# ---------------------------------------------------------------------------
+MODEL_PROFILES: str = os.getenv("MODEL_PROFILES", "zai").strip() or "zai"
+ACTIVE_PROFILE: str = os.getenv("MODEL_PROFILE", "").strip() or "zai"
+CHEAP_PROFILE: str = os.getenv("MODEL_PROFILE_CHEAP", "").strip()
+# Shown in logs/reports; falls back to the active profile's resolved model.
+ACTIVE_MODEL_LABEL: str = os.getenv("ACTIVE_MODEL_LABEL", "").strip()
 
 MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "3"))
 
@@ -77,43 +98,85 @@ SUMMARIZE_ON_LOOP: bool = os.getenv("SUMMARIZE_ON_LOOP", "1") not in ("0", "fals
 SUMMARIZE_THRESHOLD: int = int(os.getenv("SUMMARIZE_THRESHOLD", "1500"))
 
 # Task types routed to the cheaper model (Phase 5: model router).
-CHEAP_TASKS = {"summarization", "compression", "classification", "validation", "query_rewrite"}
+CHEAP_TASKS = {
+    "summarization",
+    "compression",
+    "classification",
+    "validation",
+    "query_rewrite",
+}
+
+# --- Agentic execution configuration (Layer 1/2) -------------------------
+# Workspace root: tools are confined to this directory (prevents path escapes).
+WORKSPACE_ROOT: str = os.getenv("WORKSPACE_ROOT", os.getcwd()).strip() or os.getcwd()
+
+# Safety policy for writes/shell. One of: auto | approve | dryrun.
+#   auto    - execute immediately, confined to WORKSPACE_ROOT
+#   approve - require an approval callback (caller-provided); dry-run otherwise
+#   dryrun  - never execute, just describe what would happen
+HARNESS_SAFETY: str = os.getenv("HARNESS_SAFETY", "auto").strip().lower() or "auto"
+
+# Max tool-call steps in a single executor run before the loop is forced to stop.
+MAX_TOOL_STEPS: int = int(os.getenv("MAX_TOOL_STEPS", "25"))
+
+# Max seconds for a single shell command run by the harness.
+SHELL_TIMEOUT: float = float(os.getenv("SHELL_TIMEOUT", "120"))
+
+# Plan mode: when true, the coder plans edits but does not apply them
+# (produces a diff / step list only). Useful for review-first workflows.
+PLAN_MODE: bool = os.getenv("PLAN_MODE", "0") not in ("0", "false", "no", "")
+
+# Commands blocked from run_command regardless of safety policy (regex patterns,
+# ``|``-separated — each piece is compiled independently).
+BLOCKED_COMMANDS: tuple[str, ...] = tuple(
+    s.strip()
+    for s in os.getenv(
+        "BLOCKED_COMMANDS",
+        r"rm\s+-rf\s+/|mkfs|dd\s+if=|:\(\)\s*\{|shutdown|reboot",
+    ).split("|")
+    if s.strip()
+)
+
+
+def active_profile_name() -> str:
+    """Name of the currently active provider profile."""
+    return ACTIVE_PROFILE
+
+
+def cheap_profile_name() -> str:
+    """Name of the cheap provider profile (falls back to active when unset/missing)."""
+    if CHEAP_PROFILE and CHEAP_PROFILE in MODEL_PROFILES.split(","):
+        return CHEAP_PROFILE
+    return ACTIVE_PROFILE
 
 
 def model_name_for_task(task_type: str) -> str:
-    """Pick the model for a task type. Cheap subtasks use ZAI_MODEL_CHEAP if set."""
-    if task_type in CHEAP_TASKS and ZAI_MODEL_CHEAP:
-        return ZAI_MODEL_CHEAP
-    return ZAI_MODEL
+    """Pick the model *label* for a task type.
 
-
-@lru_cache(maxsize=8)
-def _client_for(model: str, temperature: float):
-    from langchain_openai import ChatOpenAI
-
-    if not ZAI_API_KEY:
-        raise RuntimeError(
-            "ZAI_API_KEY is not set. Copy .env.example to .env and add your Z.ai API key."
-        )
-
-    return ChatOpenAI(
-        model=model,
-        api_key=ZAI_API_KEY,
-        base_url=ZAI_ENDPOINT,
-        temperature=temperature,
-        timeout=LLM_TIMEOUT,
-        max_retries=0,
-    )
+    Cheap subtasks use the cheap profile's model when configured, else the main
+    profile's model. Returns the human label (e.g. ``zai:glm-5.2``).
+    """
+    name = cheap_profile_name() if task_type in CHEAP_TASKS else ACTIVE_PROFILE
+    profile = providers.load_profile(name)
+    if profile is None:
+        profile = providers.load_profile(ACTIVE_PROFILE)
+    if profile is None:
+        # Ultimate fallback: legacy ZAI_MODEL value so old configs keep working.
+        return ACTIVE_MODEL_LABEL or ZAI_MODEL or "glm-5.2"
+    return profile.label()
 
 
 def get_llm(temperature: float = 0.3):
-    """Cached ChatOpenAI client for the main model."""
-    return _client_for(ZAI_MODEL, temperature)
+    """Cached chat-model client for the active provider profile."""
+    return providers.get_chat_model(
+        ACTIVE_PROFILE, temperature=temperature, timeout=LLM_TIMEOUT
+    )
 
 
 def get_llm_for_task(task_type: str, temperature: float = 0.3):
-    """Cached ChatOpenAI client selected by the model router for ``task_type``."""
-    return _client_for(model_name_for_task(task_type), temperature)
+    """Cached chat-model client selected by the model router for ``task_type``."""
+    name = cheap_profile_name() if task_type in CHEAP_TASKS else ACTIVE_PROFILE
+    return providers.get_chat_model(name, temperature=temperature, timeout=LLM_TIMEOUT)
 
 
 def _is_transient(err: Exception) -> bool:
@@ -151,7 +214,7 @@ def _invoke_with_retry(llm, messages):
             last_err = err
             if not _is_transient(err) or attempt == LLM_MAX_RETRIES:
                 break
-            backoff = min(LLM_BACKOFF_BASE ** attempt, 30.0)
+            backoff = min(LLM_BACKOFF_BASE**attempt, 30.0)
             print(
                 f"[llm] transient {type(err).__name__} on attempt {attempt}/"
                 f"{LLM_MAX_RETRIES}; retrying in {backoff:.1f}s ..."

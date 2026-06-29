@@ -1,65 +1,94 @@
-"""Coder: produces concrete implementation steps (and, later, real edits).
+"""Coder: makes real edits to the workspace via the agentic executor.
 
-In v1 the coder does NOT touch files; it describes the changes to make.
-Each run increments ``iteration`` so the graph can enforce the loop cap.
+In v1 the coder only *described* changes. Now it drives the tool-calling
+executor (:mod:`coding_harness.executor`) to actually read, edit, create files
+and run lint/build inside the workspace — confined by the safety policy.
 
-Token optimization:
-  * On loop iterations (>=2) it sends a compact task summary instead of re-sending
-    the full plan + architecture verbatim, and reports the tokens that saved.
-  * The latest review feedback (the actionable signal) is compressed and sent
-    verbatim under ``tool_outputs`` -- never summarized away.
+Behaviour by mode:
+  * ``plan_mode`` on  -> the executor runs read-only and describes the edits it
+    *would* make (mutating tools simulate). The returned summary is the plan.
+  * otherwise         -> the executor applies edits, runs verification commands,
+    and returns a summary of what changed + the verification result.
+
+On loop iterations (>=2) the coder is seeded with the compressed review feedback
+so it addresses the reviewer's specific concerns rather than starting over.
 """
 
-from coding_harness.compress import compress_output
-from coding_harness.runtime import run_step
-from coding_harness.state import AgentState
-from coding_harness.tokens import estimate_tokens
-
-CODER_SYSTEM = """You are a senior software engineer.
-Given the goal, plan, and architecture, produce precise, ordered implementation steps.
-Describe exactly which files to create/modify and what each change does.
-Output:
-1. An ordered list of implementation steps (file path -> change).
-2. A short "code_changes" section with representative snippets/pseudocode."""
+from coding_harness import memory
+from coding_harness.executor import run_executor
+from coding_harness.tools import ToolContext
 
 
-def coder(state: AgentState) -> dict:
-    iteration = state.get("iteration", 0) + 1
-    print(f"[coder] iteration {iteration} - producing implementation steps ...")
+CODER_TASK_TEMPLATE = """Implement the following development goal in the workspace at {workspace}.
 
-    plan = state.get("development_plan", "")
-    architecture = state.get("architecture", "")
+GOAL:
+{goal}
+
+ARCHITECTURE / PLAN CONTEXT:
+{context}
+
+REVIEW FEEDBACK TO ADDRESS (if any):
+{feedback}
+
+{memory}
+
+Use the available tools to read the relevant files, make the necessary edits,
+then verify your work (re-read changed files, run lint/build/tests). When done,
+reply with a concise summary of every file you changed and the verification
+result. Do not call tools further once you are done.
+"""
+
+
+def _build_context_block(state: dict) -> str:
+    """Compact durable context: prefer the rolling summary on loop iterations."""
+    iteration = state.get("iteration", 0)
     task_summary = state.get("task_summary", "")
-    durable_tokens = estimate_tokens(plan) + estimate_tokens(architecture)
+    if iteration >= 1 and task_summary:
+        return task_summary
+    plan = state.get("development_plan", "")
+    arch = state.get("architecture", "")
+    parts = []
+    if plan:
+        parts.append(f"Development plan:\n{plan}")
+    if arch:
+        parts.append(f"Architecture:\n{arch}")
+    return "\n\n".join(parts) or "(none)"
 
-    chunks = {"user_request": f"Goal:\n{state['goal']}"}
-    saved_by_summary = 0
 
-    if iteration > 1 and task_summary:
-        # Reuse the (verbatim-or-condensed) summary instead of the full plan/arch.
-        chunks["task_state_summary"] = task_summary
-        saved_by_summary = max(0, durable_tokens - estimate_tokens(task_summary))
-    elif plan or architecture:
-        # First iteration: send the durable design context verbatim.
-        chunks["retrieved_code"] = f"Development plan:\n{plan}\n\nArchitecture:\n{architecture}"
+def coder(state: dict) -> dict:
+    iteration = state.get("iteration", 0) + 1
+    print(f"[coder] iteration {iteration} - driving executor to implement the goal ...")
 
-    review = state.get("review_result", "")
-    if review:
-        chunks["tool_outputs"] = f"Previous review feedback to address:\n{compress_output(review)}"
-
-    text, _ = run_step(
-        step="coder",
-        task_type="coding",
-        system=CODER_SYSTEM,
-        chunks=chunks,
-        saved_by_summary=saved_by_summary,
+    ctx = ToolContext.from_state(state)
+    feedback = state.get("review_result", "") or "(none)"
+    mem_slice = memory.load(ctx.workspace).section_for_context(max_chars=2000)
+    mem_block = (
+        f"PROJECT MEMORY (AGENTS.md — established facts about this repo):\n{mem_slice}"
+        if mem_slice
+        else ""
+    )
+    task = CODER_TASK_TEMPLATE.format(
+        workspace=ctx.workspace,
+        goal=state.get("goal", ""),
+        context=_build_context_block(state),
+        feedback=feedback,
+        memory=mem_block,
     )
 
-    # TODO: replace this text output with real file edits using an
-    # OpenHands / tool-calling integration (create/edit/write operations).
-    # TODO: optionally run shell commands (lint/build) and feed results back.
+    result = run_executor(
+        task=task,
+        ctx=ctx,
+        step_label=f"coder-{iteration}",
+        seed_messages=list(state.get("executor_messages") or []) or None,
+    )
+
+    print(
+        f"[coder] executor done: {result.steps_taken} steps, reason={result.stopped_reason}"
+    )
+
     return {
-        "implementation_steps": text,
-        "code_changes": text,
+        "implementation_steps": result.summary,
+        "code_changes": result.summary,
         "iteration": iteration,
+        "executor_messages": result.messages,
     }

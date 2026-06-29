@@ -1,0 +1,609 @@
+"""Repo tools: read/list/glob/grep + write/edit + shell/tests.
+
+This is the layer that makes the harness *act*. Every tool is a small, typed
+function that goes through :mod:`coding_harness.safety` (path confinement +
+safety gate) before touching the filesystem or running a command. Tools are
+described as (name, description, JSON schema, handler) triples so they can be
+bound to any chat model that supports tool calling, and dispatched uniformly
+from the agentic executor loop in :mod:`coding_harness.executor`.
+
+Design notes:
+  * Tools are stateless; runtime context (workspace, safety, approver) lives in
+    :class:`ToolContext`, passed to every call. This keeps tools trivial to test.
+  * Reads/searches are always allowed (they cannot mutate state). Only write and
+    shell tools are gated by the safety policy.
+  * Tool outputs are plain strings, compressed via the harness compressor before
+    being fed back to the model (the executor handles that).
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from coding_harness import safety
+from coding_harness.compress import compress_output
+
+
+# ---------------------------------------------------------------------------
+# Tool context
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ToolContext:
+    """Runtime context threaded through every tool call."""
+
+    workspace: str
+    safety: str = "auto"
+    approver: safety.Approver = None
+    shell_timeout: float = 120.0
+    # Max bytes/lines a read tool returns before truncating (keeps context small).
+    read_max_lines: int = 2000
+    # In plan mode, write/shell tools describe instead of executing.
+    plan_mode: bool = False
+
+    @classmethod
+    def from_state(cls, state: dict) -> "ToolContext":
+        """Build a ToolContext from a (Typed)dict agent state."""
+        return cls(
+            workspace=state.get("workspace_root")
+            or os.environ.get("WORKSPACE_ROOT")
+            or os.getcwd(),
+            safety=state.get("safety") or safety.policy(),
+            shell_timeout=float(os.environ.get("SHELL_TIMEOUT", "120")),
+            plan_mode=bool(state.get("plan_mode")),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tool descriptor
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ToolDef:
+    """A tool: name, description, JSON schema, and handler."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[..., "ToolResult"]
+    # If True, the tool mutates state and is subject to the safety gate.
+    mutating: bool = False
+
+
+@dataclass
+class ToolResult:
+    """Standard tool return value."""
+
+    ok: bool
+    output: str
+    error: str = ""
+    # True when the tool described an action without performing it (dry-run / plan).
+    simulated: bool = False
+
+    def to_model_text(self, *, compress: bool = True) -> str:
+        """Render as compact text for the model (optionally compressed)."""
+        prefix = "[DRY-RUN] " if self.simulated else ("[ERROR] " if not self.ok else "")
+        body = self.error if not self.ok and self.error else self.output
+        if compress and len(body.splitlines()) > 40:
+            body = compress_output(body)
+        return f"{prefix}{body}"
+
+
+# ---------------------------------------------------------------------------
+# Read-only tools
+# ---------------------------------------------------------------------------
+
+
+def _read_file(
+    ctx: ToolContext, path: str, *, offset: int = 1, limit: int | None = None
+) -> ToolResult:
+    """Read a text file (1-indexed line numbers, like the harness Read tool)."""
+    try:
+        resolved = safety.resolve_path(path, ctx.workspace)
+    except (safety.PathEscapeError, ValueError) as e:
+        return ToolResult(False, "", str(e))
+    if not resolved.exists():
+        return ToolResult(False, "", f"File not found: {path}")
+    if resolved.is_dir():
+        return ToolResult(False, "", f"Path is a directory, not a file: {path}")
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return ToolResult(False, "", f"Could not read {path}: {e}")
+
+    lines = text.splitlines()
+    max_lines = ctx.read_max_lines
+    effective_limit = limit if limit is not None else max_lines
+    start = max(1, offset) - 1
+    end = start + effective_limit
+    selected = lines[start:end]
+    numbered = "\n".join(f"{i}: {ln}" for i, ln in enumerate(selected, start=start + 1))
+    if len(lines) > end:
+        numbered += f"\n({len(lines) - end} more lines; use offset to continue)"
+    return ToolResult(True, numbered)
+
+
+def _list_dir(ctx: ToolContext, path: str = ".") -> ToolResult:
+    """List directory entries (dirs get a trailing slash)."""
+    try:
+        resolved = safety.resolve_path(path, ctx.workspace)
+    except (safety.PathEscapeError, ValueError) as e:
+        return ToolResult(False, "", str(e))
+    if not resolved.exists():
+        return ToolResult(False, "", f"Not found: {path}")
+    if not resolved.is_dir():
+        return ToolResult(False, "", f"Not a directory: {path}")
+    rows = []
+    try:
+        for entry in sorted(
+            resolved.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
+        ):
+            if entry.name in (".git", "__pycache__", ".venv", "node_modules"):
+                continue
+            tag = "/" if entry.is_dir() else ""
+            rows.append(f"{entry.name}{tag}")
+    except Exception as e:
+        return ToolResult(False, "", f"Could not list {path}: {e}")
+    return ToolResult(True, "\n".join(rows) or "(empty directory)")
+
+
+def _glob_tool(ctx: ToolContext, pattern: str, path: str = ".") -> ToolResult:
+    """Find files matching a glob pattern (recursive)."""
+    try:
+        root = safety.resolve_path(path, ctx.workspace)
+    except (safety.PathEscapeError, ValueError) as e:
+        return ToolResult(False, "", str(e))
+    if not root.exists():
+        return ToolResult(False, "", f"Not found: {path}")
+    matches = []
+    for p in root.rglob(pattern):
+        # Keep paths relative to workspace for readability + confinement.
+        try:
+            rel = p.relative_to(ctx.workspace if False else root)
+        except ValueError:
+            rel = p
+        # Skip noisy dirs.
+        if any(
+            part in (".git", "__pycache__", ".venv", "node_modules") for part in p.parts
+        ):
+            continue
+        matches.append(str(rel))
+        if len(matches) >= 200:
+            matches.append("... (truncated at 200 matches)")
+            break
+    matches.sort()
+    return ToolResult(True, "\n".join(matches) or "(no matches)")
+
+
+def _grep_tool(
+    ctx: ToolContext, pattern: str, path: str = ".", include: str = ""
+) -> ToolResult:
+    """Search file contents for a regex; returns file:line matches."""
+    try:
+        root = safety.resolve_path(path, ctx.workspace)
+    except (safety.PathEscapeError, ValueError) as e:
+        return ToolResult(False, "", str(e))
+    if not root.exists():
+        return ToolResult(False, "", f"Not found: {path}")
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return ToolResult(False, "", f"Bad regex {pattern!r}: {e}")
+
+    files = [root] if root.is_file() else [p for p in root.rglob("*") if p.is_file()]
+    out: list[str] = []
+    for f in files:
+        if any(
+            part in (".git", "__pycache__", ".venv", "node_modules") for part in f.parts
+        ):
+            continue
+        if include and not fnmatch.fnmatch(f.name, include):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if regex.search(line):
+                try:
+                    rel = f.relative_to(root)
+                except ValueError:
+                    rel = f
+                out.append(f"{rel}:{i}: {line.strip()}")
+                if len(out) >= 100:
+                    out.append("... (truncated at 100 matches)")
+                    return ToolResult(True, "\n".join(out))
+    return ToolResult(True, "\n".join(out) or "(no matches)")
+
+
+# ---------------------------------------------------------------------------
+# Mutating tools (gated by safety policy)
+# ---------------------------------------------------------------------------
+
+
+def _write_file(ctx: ToolContext, path: str, content: str) -> ToolResult:
+    """Create or overwrite a file with ``content``."""
+    try:
+        resolved = safety.resolve_path(path, ctx.workspace)
+    except (safety.PathEscapeError, ValueError) as e:
+        return ToolResult(False, "", str(e))
+
+    detail = f"write {len(content)} chars to {path}"
+    if ctx.plan_mode:
+        return ToolResult(True, f"[plan] would {detail}", simulated=True)
+    decision = safety.gate(
+        "write_file", detail, safety=ctx.safety, approver=ctx.approver
+    )
+    if not decision.allowed:
+        return ToolResult(True, decision.reason, simulated=decision.simulated)
+
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(content, encoding="utf-8")
+    return ToolResult(True, f"Wrote {len(content)} chars to {path}")
+
+
+def _edit_file(
+    ctx: ToolContext,
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> ToolResult:
+    """Replace ``old_string`` with ``new_string`` in ``path`` (str_replace edit).
+
+    Mirrors the semantics of the harness's own Edit tool: fails if old_string is
+    absent, or if it matches more than once without ``replace_all``.
+    """
+    try:
+        resolved = safety.resolve_path(path, ctx.workspace)
+    except (safety.PathEscapeError, ValueError) as e:
+        return ToolResult(False, "", str(e))
+    if not resolved.exists():
+        return ToolResult(False, "", f"File not found: {path}")
+    if not old_string:
+        return ToolResult(
+            False, "", "old_string is required (use write_file for new files)"
+        )
+
+    text = resolved.read_text(encoding="utf-8", errors="replace")
+    count = text.count(old_string)
+    if count == 0:
+        return ToolResult(False, "", f"old_string not found in {path}")
+    if count > 1 and not replace_all:
+        return ToolResult(
+            False,
+            "",
+            f"old_string matches {count} times in {path}; "
+            "pass replace_all=true or provide a more specific old_string",
+        )
+
+    detail = (
+        f"replace 1 occurrence in {path}"
+        if count == 1
+        else f"replace all {count} occurrences in {path}"
+    )
+    if ctx.plan_mode:
+        return ToolResult(True, f"[plan] would {detail}", simulated=True)
+    decision = safety.gate(
+        "edit_file", detail, safety=ctx.safety, approver=ctx.approver
+    )
+    if not decision.allowed:
+        return ToolResult(True, decision.reason, simulated=decision.simulated)
+
+    new_text = (
+        text.replace(old_string, new_string)
+        if replace_all
+        else text.replace(old_string, new_string, 1)
+    )
+    resolved.write_text(new_text, encoding="utf-8")
+    return ToolResult(True, f"Edited {path} ({detail})")
+
+
+def _run_command(ctx: ToolContext, command: str) -> ToolResult:
+    """Run a shell command in the workspace; return compressed stdout+stderr."""
+    if not command or not command.strip():
+        return ToolResult(False, "", "command is required")
+    try:
+        safety.screen_command(command)
+    except safety.BlockedCommandError as e:
+        return ToolResult(False, "", str(e))
+
+    if ctx.plan_mode:
+        return ToolResult(True, f"[plan] would run: {command}", simulated=True)
+    decision = safety.gate(
+        "run_command", command, safety=ctx.safety, approver=ctx.approver
+    )
+    if not decision.allowed:
+        return ToolResult(True, decision.reason, simulated=decision.simulated)
+
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=ctx.workspace,
+            capture_output=True,
+            text=True,
+            timeout=ctx.shell_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return ToolResult(
+            False, "", f"Command timed out after {ctx.shell_timeout}s: {command}"
+        )
+    except Exception as e:
+        return ToolResult(False, "", f"Command failed: {e}")
+
+    combined = proc.stdout or ""
+    if proc.stderr:
+        combined += ("\n" if combined else "") + f"[stderr]\n{proc.stderr}"
+    combined = combined or "(no output)"
+    combined = f"$ {command}\n[exit {proc.returncode}]\n{combined}"
+    return ToolResult(
+        proc.returncode == 0,
+        combined,
+        "" if proc.returncode == 0 else f"exit {proc.returncode}",
+    )
+
+
+def _run_tests(ctx: ToolContext, command: str = "") -> ToolResult:
+    """Run the project test suite. Defaults to detecting pytest/uv."""
+    cmd = command.strip() or _autodetect_test_command(ctx)
+    result = _run_command(ctx, cmd)
+    # Re-label the action for the model's benefit.
+    if result.ok:
+        result = ToolResult(
+            True, result.output.replace("[exit 0]", "[tests passed]"), ""
+        )
+    return result
+
+
+def _autodetect_test_command(ctx: ToolContext) -> str:
+    """Pick a sensible default test command based on repo layout."""
+    root = Path(ctx.workspace)
+    if (root / "pyproject.toml").exists() and (root / ".venv").exists():
+        return "uv run python -m pytest -q"
+    if (root / "pyproject.toml").exists():
+        return "python -m pytest -q"
+    if (root / "package.json").exists():
+        return "npm test --silent"
+    if (root / "Cargo.toml").exists():
+        return "cargo test"
+    if (root / "go.mod").exists():
+        return "go test ./..."
+    return "python -m pytest -q"
+
+
+def _spawn_subagent(
+    ctx: ToolContext, task: str, role: str = "research", max_steps: int = 8
+) -> ToolResult:
+    """Spawn a focused subagent (research/fix) and return its report.
+
+    Research subagents are read-only; fix subagents may edit. The subagent runs
+    in the same workspace with the same safety policy, and returns a compact
+    summary the parent can act on. Lets the model delegate parallel investigation
+    or scoped edits without bloating its own context.
+    """
+    if not task or not task.strip():
+        return ToolResult(False, "", "task is required")
+    # Local import to avoid a circular dependency at module load time.
+    from coding_harness import subagents
+
+    role = (role or "research").strip().lower()
+    name = f"{role}-{abs(hash(task)) % 10000}"
+    if role == "fix":
+        spec = subagents.fix_subagent(name, task, max_steps=max_steps)
+    else:
+        spec = subagents.research_subagent(name, task, max_steps=max_steps)
+    report = subagents.run_subagent(spec, ctx)
+    return ToolResult(
+        report.ok, report.as_context_block(), "" if report.ok else report.error
+    )
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+READ_TOOLS: list[ToolDef] = [
+    ToolDef(
+        name="read_file",
+        description="Read a text file with 1-indexed line numbers. Use offset/limit for large files.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to workspace root",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "1-indexed line to start at",
+                    "default": 1,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max lines to return",
+                    "default": 2000,
+                },
+            },
+            "required": ["path"],
+        },
+        handler=_read_file,
+    ),
+    ToolDef(
+        name="list_dir",
+        description="List entries in a directory (dirs get a trailing slash).",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string", "default": "."}},
+        },
+        handler=_list_dir,
+    ),
+    ToolDef(
+        name="glob",
+        description="Find files matching a glob pattern (recursive).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern, e.g. **/*.py",
+                },
+                "path": {"type": "string", "default": "."},
+            },
+            "required": ["pattern"],
+        },
+        handler=_glob_tool,
+    ),
+    ToolDef(
+        name="grep",
+        description="Search file contents for a regex; returns file:line: match lines.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Python regex"},
+                "path": {"type": "string", "default": "."},
+                "include": {
+                    "type": "string",
+                    "description": "Filename glob filter, e.g. *.py",
+                },
+            },
+            "required": ["pattern"],
+        },
+        handler=_grep_tool,
+    ),
+]
+
+WRITE_TOOLS: list[ToolDef] = [
+    ToolDef(
+        name="write_file",
+        description="Create or overwrite a file. Creates parent directories.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string", "description": "Full file contents"},
+            },
+            "required": ["path", "content"],
+        },
+        handler=_write_file,
+        mutating=True,
+    ),
+    ToolDef(
+        name="edit_file",
+        description="Replace old_string with new_string in a file. Fails if old_string is "
+        "absent or matches multiple times (unless replace_all=true).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "old_string": {"type": "string"},
+                "new_string": {"type": "string"},
+                "replace_all": {"type": "boolean", "default": False},
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+        handler=_edit_file,
+        mutating=True,
+    ),
+]
+
+EXEC_TOOLS: list[ToolDef] = [
+    ToolDef(
+        name="run_command",
+        description="Run a shell command in the workspace (cwd = workspace root). Returns "
+        "stdout/stderr (compressed) and exit code.",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+        handler=_run_command,
+        mutating=True,
+    ),
+    ToolDef(
+        name="run_tests",
+        description="Run the project test suite. Auto-detects pytest/npm/cargo/go if command omitted.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Override test command"}
+            },
+        },
+        handler=_run_tests,
+        mutating=True,
+    ),
+    ToolDef(
+        name="spawn_subagent",
+        description="Spawn a focused subagent for a research or fix task and return its summary. "
+        "Research subagents are read-only; fix subagents may edit. Use this to delegate "
+        "parallel investigation or scoped edits without bloating your own context.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Focused task for the subagent",
+                },
+                "role": {
+                    "type": "string",
+                    "enum": ["research", "fix"],
+                    "default": "research",
+                },
+                "max_steps": {"type": "integer", "default": 8},
+            },
+            "required": ["task"],
+        },
+        handler=_spawn_subagent,
+        mutating=False,  # the subagent's own writes go through its own safety gate
+    ),
+]
+
+ALL_TOOLS: list[ToolDef] = READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS
+
+_TOOLS_BY_NAME: dict[str, ToolDef] = {t.name: t for t in ALL_TOOLS}
+
+
+def get_tool(name: str) -> ToolDef | None:
+    return _TOOLS_BY_NAME.get(name)
+
+
+def registry(*, include_mutating: bool = True) -> list[ToolDef]:
+    """Return the available tools. Pass include_mutating=False for a read-only set."""
+    return ALL_TOOLS if include_mutating else READ_TOOLS
+
+
+def langchain_tool_schemas(tools: list[ToolDef] | None = None) -> list[dict]:
+    """Render tools as LangChain/JSON tool schemas for ``model.bind_tools([...])``."""
+    tools = tools or ALL_TOOLS
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema,
+            },
+        }
+        for t in tools
+    ]
+
+
+def dispatch(name: str, args: dict, ctx: ToolContext) -> ToolResult:
+    """Look up ``name`` and run it with ``args`` under ``ctx``."""
+    tool = _TOOLS_BY_NAME.get(name)
+    if tool is None:
+        return ToolResult(False, "", f"Unknown tool: {name}")
+    try:
+        return tool.handler(ctx, **(args or {}))
+    except TypeError as e:
+        return ToolResult(False, "", f"Bad arguments for {name}: {e}")
+    except Exception as e:
+        return ToolResult(False, "", f"{name} failed: {type(e).__name__}: {e}")

@@ -1,22 +1,20 @@
-"""Entry point for the agentic coding harness.
+"""Entry point for the Wells agentic coding harness.
 
 Usage:
-    coding-harness "Build a Payload CMS HTML-to-schema converter"
+    coding-harness "<your development goal>"        # run the harness
+    coding-harness config                           # interactive settings menu
+    coding-harness info                             # show effective config
+    coding-harness --plan "<goal>"                  # plan mode (no edits)
+    coding-harness "<goal>" MAX_ITERATIONS=5        # inline setting overrides
 """
 
-import sys
+from __future__ import annotations
 
-from coding_harness.config import (
-    MAX_ITERATIONS,
-    SUMMARIZE_ON_LOOP,
-    SUMMARIZE_THRESHOLD,
-    ZAI_API_KEY,
-    ZAI_ENDPOINT,
-    ZAI_MODEL,
-    ZAI_MODEL_CHEAP,
-)
-from coding_harness.graph import build_graph
-from coding_harness.tokens import LEDGER
+import os
+import sys
+from pathlib import Path
+
+from coding_harness import config, settings
 
 
 def _print_section(title: str, body: str) -> None:
@@ -33,34 +31,72 @@ def _print_final_summary(state: dict) -> None:
 
     status = "COMPLETE" if state.get("review_complete") else "INCOMPLETE"
     summary = (
-        f"Goal: {state['goal']}\n"
+        f"Goal: {state.get('goal', '')}\n"
         f"Status: {status}\n"
         f"Iterations used: {state.get('iteration', 0)} / "
-        f"{state.get('max_iterations', MAX_ITERATIONS)}\n"
-        f"Model: {ZAI_MODEL} @ {ZAI_ENDPOINT}"
+        f"{state.get('max_iterations', config.MAX_ITERATIONS)}\n"
+        f"Model: {config.model_name_for_task('coding')}"
     )
-    # TODO: turn the summary into a GitHub PR description / issue comment.
     _print_section("FINAL SUMMARY", summary)
 
 
-def main() -> None:
-    if len(sys.argv) < 2 or not sys.argv[1].strip():
-        print('Usage: coding-harness "<your development goal>"')
-        sys.exit(1)
+def _print_info() -> None:
+    """Print the effective configuration (resolved profiles + run knobs)."""
+    from coding_harness import providers
 
-    goal = sys.argv[1].strip()
+    bar = "=" * 64
+    print(f"\n{bar}\n Wells harness — effective configuration\n{bar}")
+    print(f"  Active profile : {config.ACTIVE_PROFILE}")
+    try:
+        prof = providers.load_profile(config.ACTIVE_PROFILE)
+        print(f"  Model          : {prof.label() if prof else '(not configured)'}")
+        if prof:
+            print(f"  Provider kind  : {prof.kind}")
+            print(f"  Base URL       : {prof.base_url or '(provider default)'}")
+            print(f"  API key set    : {bool(prof.api_key)}")
+    except Exception as e:
+        print(f"  Model          : (error resolving: {e})")
 
-    if not ZAI_API_KEY:
-        print("ERROR: ZAI_API_KEY is not set. Copy .env.example to .env and add your key.")
+    cheap = config.cheap_profile_name()
+    if cheap != config.ACTIVE_PROFILE:
+        cprof = providers.load_profile(cheap)
+        print(f"  Cheap profile  : {cheap} -> {cprof.label() if cprof else '?'}")
+
+    print(f"\n  Available profiles : {config.MODEL_PROFILES}")
+    print(f"  Workspace root     : {config.WORKSPACE_ROOT}")
+    print(f"  Safety policy      : {config.HARNESS_SAFETY}")
+    print(f"  Plan mode          : {'on' if config.PLAN_MODE else 'off'}")
+    print(f"  Max iterations     : {config.MAX_ITERATIONS}")
+    print(f"  Max tool steps     : {config.MAX_TOOL_STEPS}")
+    print(
+        f"  Token budget/call  : {config.BUDGET.max_input_tokens} "
+        f"(reserved out {config.BUDGET.reserved_output_tokens})"
+    )
+    print(
+        f"  Summarize on loop  : {'on' if config.SUMMARIZE_ON_LOOP else 'off'} "
+        f"(threshold {config.SUMMARIZE_THRESHOLD})"
+    )
+    print(bar)
+
+
+def _print_usage() -> None:
+    print(__doc__)
+
+
+def _run_goal(goal: str) -> None:
+    """Build and invoke the harness graph for ``goal``."""
+    from coding_harness.graph import build_graph
+    from coding_harness.tokens import LEDGER
+
+    if not _ensure_model_configured():
         sys.exit(1)
 
     LEDGER.reset()
-
-    print(f"Model: {ZAI_MODEL} @ {ZAI_ENDPOINT}")
-    if ZAI_MODEL_CHEAP:
-        print(f"Cheap model (summarize/compress): {ZAI_MODEL_CHEAP}")
-    print(f"Loop summarization: {'on (threshold ' + str(SUMMARIZE_THRESHOLD) + ' tok)' if SUMMARIZE_ON_LOOP else 'off'}")
-    print(f"Max coder<->reviewer iterations: {MAX_ITERATIONS}")
+    print(f"Model: {config.model_name_for_task('coding')}")
+    print(f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})")
+    if config.PLAN_MODE:
+        print("Plan mode: ON (coder will plan edits without applying them)")
+    print(f"Max coder<->reviewer iterations: {config.MAX_ITERATIONS}")
     print(f"Goal: {goal}")
     print("-" * 70)
 
@@ -68,13 +104,114 @@ def main() -> None:
     initial_state = {
         "goal": goal,
         "iteration": 0,
-        "max_iterations": MAX_ITERATIONS,
+        "max_iterations": config.MAX_ITERATIONS,
+        "workspace_root": config.WORKSPACE_ROOT,
+        "safety": config.HARNESS_SAFETY,
+        "plan_mode": config.PLAN_MODE,
         "messages": [],
     }
 
     final_state = app.invoke(initial_state)
     _print_final_summary(final_state)
     print("\n" + LEDGER.format_report())
+
+
+def _ensure_model_configured() -> bool:
+    """Check the active profile resolves + the provider package is installed."""
+    from coding_harness import providers
+
+    try:
+        prof = providers.load_profile(config.ACTIVE_PROFILE)
+    except Exception:
+        prof = None
+    if prof is None or not prof.model:
+        print(
+            f"ERROR: active profile {config.ACTIVE_PROFILE!r} has no model configured."
+        )
+        print(
+            "Run `coding-harness config` to set it up, or set "
+            f"MODEL_{config.ACTIVE_PROFILE}=<model> in your environment."
+        )
+        return False
+    try:
+        providers.get_chat_model(config.ACTIVE_PROFILE)
+        return True
+    except RuntimeError as e:
+        print(f"ERROR: {e}")
+        return False
+
+
+def _reload_module_config() -> None:
+    """Re-import config values that may have changed via the menu/overrides.
+
+    Several modules captured values at import time; after the menu mutates the
+    environment we refresh the ones that matter for a run.
+    """
+    import importlib
+
+    importlib.reload(config)
+
+
+def main() -> None:
+    argv = list(sys.argv[1:])
+
+    # Subcommands.
+    if argv and argv[0] in ("-h", "--help", "help"):
+        _print_usage()
+        return
+    if argv and argv[0] == "config":
+        settings.interactive_menu(Path(".env"))
+        return
+    if argv and argv[0] == "info":
+        # Apply any inline KEY=VALUE overrides first, then show.
+        settings.parse_argv_settings(argv[1:])
+        _reload_module_config()
+        _print_info()
+        return
+
+    # Goal run: pull out --plan flag and KEY=VALUE overrides.
+    plan_flag = False
+    positional: list[str] = []
+    for a in argv:
+        if a == "--plan":
+            plan_flag = True
+        elif "=" in a and a.split("=", 1)[0].replace("_", "").isalnum():
+            # Looks like an ENV override; defer to settings parser.
+            positional.append(a)
+        else:
+            positional.append(a)
+
+    # Separate goal args from KEY=VALUE overrides.
+    overrides = [a for a in positional if _looks_like_override(a)]
+    goal_args = [a for a in positional if not _looks_like_override(a)]
+
+    if overrides:
+        settings.parse_argv_settings(overrides)
+        _reload_module_config()
+    if plan_flag:
+        os.environ["PLAN_MODE"] = "1"
+        _reload_module_config()
+
+    if not goal_args:
+        # No goal given — launch the menu so the user can configure & then run.
+        if not overrides and not plan_flag:
+            print("No goal provided. Opening the settings menu.")
+            print('(Run `coding-harness "<your goal>"` to start a task.)\n')
+            settings.interactive_menu(Path(".env"))
+        else:
+            _print_usage()
+        return
+
+    goal = " ".join(goal_args).strip()
+    _run_goal(goal)
+
+
+def _looks_like_override(arg: str) -> bool:
+    """True if ``arg`` looks like ``KEY=VALUE`` (a settings override, not a goal)."""
+    if "=" not in arg:
+        return False
+    key = arg.split("=", 1)[0]
+    return key.isidentifier() or key.replace("_", "").isalnum()
 
 
 if __name__ == "__main__":
