@@ -46,6 +46,7 @@ EXPECTED_TOOLS = {
     "run_command",
     "git_status",
     "get_memory",
+    "get_principles",
     "compress_logs",
     "get_harness_info",
 }

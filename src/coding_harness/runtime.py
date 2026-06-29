@@ -22,6 +22,7 @@ from coding_harness.config import (
     model_name_for_task,
 )
 from coding_harness.context import ContextManager
+from coding_harness.principles import inject_into_prompt as inject_principles
 from coding_harness.tokens import LEDGER, calibrate, estimate_tokens
 
 
@@ -33,10 +34,17 @@ def run_step(
     chunks: dict,
     budget=None,
     saved_by_summary: int = 0,
+    workspace: str | None = None,
 ) -> tuple[str, object]:
-    """Run one agent step and return ``(response_text, ContextReport)``."""
+    """Run one agent step and return ``(response_text, ContextReport)``.
+
+    The harness operating principles (AGENT.md) are always prepended to the
+    system prompt, so every agent — regardless of which model is configured —
+    is governed by the same behavioral constitution.
+    """
     cm = ContextManager(budget or BUDGET)
     body, report = cm.build_context(chunks)
+    system = inject_principles(system, workspace)
 
     messages = [SystemMessage(content=system), HumanMessage(content=body)]
     llm = get_llm_for_task(task_type)

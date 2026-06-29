@@ -140,6 +140,7 @@ wells --safety dryrun "goal"              # force dry-run (preview only)
 wells --plan "<goal>"                     # plan mode: plan edits, don't apply
 wells config                              # interactive settings menu
 wells info                                # show effective configuration
+wells principles                          # show active operating principles (AGENT.md)
 wells --version                           # show version
 wells "<goal>" MAX_ITERATIONS=5           # inline setting override
 ```
@@ -186,6 +187,39 @@ The agent operates inside a **workspace root** (path escapes blocked) and a
 
 `PLAN_MODE=1` forces all mutating tools to simulate (reads still work), so you
 can preview exactly what the agent would change.
+
+## Behavioral principles (AGENT.md)
+
+Every agent in the harness — regardless of which model you've configured — is
+governed by the same behavioral constitution: the **operating principles** in
+`AGENT.md`. These 11 rules (Think Before Coding, Simplicity First, Surgical
+Changes, Goal-Driven Execution, Deterministic First, Budget Everything, Verify
+Before Trust, Fail Loud, Isolate Side Effects, Check Before Declaring Done,
+Evidence Over Confidence) are **always injected** into every agent's system
+prompt, so the harness behaves consistently whether you drive it with GLM, GPT,
+Claude, Gemini, or a local model.
+
+This is distinct from per-project `AGENTS.md` memory:
+
+| | `AGENT.md` (bundled) | `AGENTS.md` (per-project) |
+|---|---|---|
+| **Purpose** | Behavioral rules — *how* the agent works | Project knowledge — *what* it knows about this repo |
+| **Scope** | Every run, every agent, every project | One project; accumulates over runs |
+| **Ship location** | Inside the harness package | The workspace root |
+| **Who writes it** | The harness authors (you can override) | The harness finisher + you |
+
+### Override precedence (highest first)
+
+1. **`WELLS_PRINCIPLES` env var** — point at any file path. Use this for
+   organization-wide principles across all projects.
+2. **`AGENT.md` in the workspace root** — lets a team customize the rules for
+   one project. Version-controlled with that project.
+3. **The bundled `AGENT.md`** — the default constitution shipped with the
+   harness. Always present as a baseline.
+
+Inspect the active principles with `wells principles` or the MCP
+`get_principles` tool. Override by dropping an `AGENT.md` in your project root
+or setting `WELLS_PRINCIPLES=/path/to/your-rules.md`.
 
 ## Project structure
 
