@@ -75,30 +75,83 @@ OpenRouter, Together, Groq, Fireworks, local vLLM, Ollama's OpenAI shim, …).
 
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.12.
 
+### Option A — Cloned standalone (no install needed)
+
+After `git clone`, use the launcher script at the repo root. It handles the
+venv automatically — no `cd`, no `uv run`, no install step:
+
 ```bash
-uv sync                          # install dependencies
-cp .env.example .env             # then edit .env
-coding-harness config            # interactive settings menu (recommended)
+git clone https://github.com/corbybender/Wells-Coding-Harness.git
+cd Wells-Coding-Harness
+
+./wells config          # first run: set up your provider (interactive menu)
+./wells info            # show effective configuration
+./wells "your goal"     # run the harness on THIS repo
 ```
 
-Or skip the menu and edit `.env` directly. Then run a task:
+Windows: use `wells.bat` instead of `./wells`.
+
+### Option B — Drive a DIFFERENT project (embedding)
+
+Wells can operate on any project, not just itself. Clone it anywhere, then
+point it at your project with `--workspace`:
 
 ```bash
-coding-harness "Add a JWT auth middleware to the Express app"
+# From your project root, with Wells cloned as a subfolder:
+./Wells-Coding-Harness/wells --workspace . "add JWT auth to the Express app"
+
+# Or an absolute path:
+./Wells-Coding-Harness/wells --workspace /home/me/myapp "fix the failing tests"
+
+# Preview only (plan mode — describe edits without applying):
+./Wells-Coding-Harness/wells --workspace . --plan "refactor the data layer"
+```
+
+All file operations, shell commands, and tests run inside the `--workspace`
+directory; Wells' own source is never touched.
+
+### Option C — Global install (available everywhere)
+
+Install once, then `wells` (or `coding-harness`) is on your PATH:
+
+```bash
+uv tool install Wells-Coding-Harness    # or: pipx install .
+wells "your goal"                        # from any directory
+wells --workspace /path/to/project "goal"
+```
+
+### Manual setup (any option)
+
+```bash
+cp .env.example .env             # then edit .env with your API key
+# or run the interactive menu:
+./wells config
 ```
 
 ## CLI
 
+Both `wells` and `coding-harness` work identically (they're the same entry point).
+
 ```
-coding-harness                             # launch the interactive chat REPL
-coding-harness "<goal>"                    # run the full harness (single-shot)
-coding-harness --plan "<goal>"             # plan mode: plan edits, don't apply
-coding-harness config                      # interactive settings menu
-coding-harness info                        # show effective configuration
-coding-harness "<goal>" MAX_ITERATIONS=5   # inline setting override
+wells                                     # launch the interactive chat REPL
+wells "<goal>"                            # run the full harness (single-shot)
+wells --workspace /path "fix the bug"     # run against another project
+wells --safety dryrun "goal"              # force dry-run (preview only)
+wells --plan "<goal>"                     # plan mode: plan edits, don't apply
+wells config                              # interactive settings menu
+wells info                                # show effective configuration
+wells --version                           # show version
+wells "<goal>" MAX_ITERATIONS=5           # inline setting override
 ```
 
-Running `coding-harness` with no arguments opens a rich, interactive chat REPL (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Inside the REPL, you can type your goals naturally or use slash commands (`/help`, `/config`, `/info`, `/plan`, `/quit`).
+Flags can be combined and work with subcommands:
+
+```
+wells --workspace . --safety approve info   # show config for THIS dir, approve mode
+wells --workspace ../other-repo config      # edit settings (writes .env in repo root)
+```
+
+Running `wells` with no arguments opens a rich, interactive chat REPL (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Inside the REPL, you can type your goals naturally or use slash commands (`/help`, `/config`, `/info`, `/plan`, `/quit`).
 
 ### Interactive settings menu
 

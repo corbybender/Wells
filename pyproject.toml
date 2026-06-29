@@ -1,7 +1,7 @@
 [project]
 name = "coding-harness"
-version = "0.1.0"
-description = "A LangGraph-based agentic coding harness (planner/architect/coder/tester/reviewer) over the Z.ai OpenAI-compatible API."
+version = "0.2.0"
+description = "Wells — a model-agnostic agentic coding harness (planner/architect/coder/tester/reviewer) that actually edits files and runs tests."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,6 +16,8 @@ dependencies = [
 [project.scripts]
 coding-harness = "coding_harness.main:main"
 coding-harness-mcp = "coding_harness.mcp_server:main"
+wells = "coding_harness.main:main"
+wells-mcp = "coding_harness.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
