@@ -30,6 +30,16 @@ from coding_harness import safety
 from coding_harness.compress import compress_output
 
 
+def _get_index_tools() -> list:
+    """Lazy import of index tools (avoids tools <-> index_tools circular import)."""
+    try:
+        from coding_harness.index_tools import INDEX_TOOLS
+
+        return INDEX_TOOLS
+    except Exception:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Tool context
 # ---------------------------------------------------------------------------
@@ -479,7 +489,7 @@ READ_TOOLS: list[ToolDef] = [
         },
         handler=_grep_tool,
     ),
-]
+] + _get_index_tools()
 
 WRITE_TOOLS: list[ToolDef] = [
     ToolDef(
