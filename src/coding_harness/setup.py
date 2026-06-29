@@ -1,4 +1,4 @@
-"""Auto-setup on first run: build indexer, prompt for workspace, auto-index."""
+"""Auto-setup on first run: install Rust, build indexer, prompt for workspace, auto-index."""
 
 import os
 import subprocess
@@ -8,6 +8,88 @@ from pathlib import Path
 from rich.console import Console
 
 console = Console()
+
+
+def _ensure_rust_installed() -> bool:
+    """Check if Rust is installed; if not, install it via rustup.
+
+    Returns True if Rust is available (already or after install).
+    """
+    # Check if rustc exists
+    try:
+        result = subprocess.run(
+            ["rustc", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return True
+    except FileNotFoundError:
+        pass
+
+    # Rust not found; try to install via rustup
+    console.print("[cyan]Installing Rust toolchain (needed for indexer)...[/cyan]")
+
+    try:
+        # Windows
+        if sys.platform == "win32":
+            console.print("[cyan]Downloading rustup installer...[/cyan]")
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; "
+                    "Invoke-WebRequest -Uri 'https://win.rustup.rs' -OutFile 'rustup-init.exe'; "
+                    ".\\rustup-init.exe -y",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                console.print(
+                    f"[yellow]Rust install failed. Install manually: https://rustup.rs[/yellow]"
+                )
+                return False
+        else:
+            # macOS/Linux
+            console.print("[cyan]Downloading rustup...[/cyan]")
+            result = subprocess.run(
+                [
+                    "sh",
+                    "-c",
+                    "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                console.print(
+                    f"[yellow]Rust install failed. Install manually: https://rustup.rs[/yellow]"
+                )
+                return False
+
+        # Verify installation
+        result = subprocess.run(
+            ["rustc", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            console.print("[green]✓ Rust installed successfully[/green]")
+            return True
+        else:
+            console.print("[yellow]Rust installed but verification failed[/yellow]")
+            return False
+
+    except Exception as e:
+        console.print(f"[yellow]Could not install Rust: {e}[/yellow]")
+        console.print("[yellow]Install manually from: https://rustup.rs[/yellow]")
+        return False
 
 
 def _ensure_indexer_built() -> bool:
@@ -107,12 +189,18 @@ def _auto_index_workspace(workspace: str) -> bool:
 
 
 def first_run_setup() -> None:
-    """Run setup on first use: build indexer, ask for workspace, auto-index."""
+    """Run setup on first use: install Rust, build indexer, ask for workspace, auto-index."""
     from coding_harness import config
 
     # Check if already set up (workspace defined, indexer available)
     if config.WORKSPACE_ROOT != os.getcwd():
         # Workspace already configured
+        return
+
+    # Ensure Rust is installed
+    rust_ok = _ensure_rust_installed()
+    if not rust_ok:
+        console.print("[yellow]Rust toolchain required. Skipping indexer setup.[/yellow]")
         return
 
     # Try to build indexer
