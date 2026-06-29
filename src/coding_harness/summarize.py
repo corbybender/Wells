@@ -16,7 +16,6 @@ from coding_harness.config import (
     SUMMARIZE_ON_LOOP,
     SUMMARIZE_THRESHOLD,
 )
-from coding_harness.state import AgentState
 from coding_harness.tokens import estimate_tokens
 
 SUMMARY_SYSTEM = (
@@ -37,7 +36,7 @@ SUMMARY_SCHEMA = """## Task State Summary
 """
 
 
-def _durable_context(state: AgentState) -> str:
+def _durable_context(state: dict) -> str:
     plan = state.get("development_plan", "")
     arch = state.get("architecture", "")
     parts = []
@@ -48,12 +47,12 @@ def _durable_context(state: AgentState) -> str:
     return "\n\n".join(parts)
 
 
-def should_summarize(state: AgentState) -> bool:
+def should_summarize(state: dict) -> bool:
     """True if the durable context is large enough that summarizing is worth it."""
     return estimate_tokens(_durable_context(state)) > SUMMARIZE_THRESHOLD
 
 
-def summarizer_node(state: AgentState) -> dict:
+def summarizer_node(state: dict) -> dict:
     """Graph node: produce a task_summary used by later coder iterations.
 
     - summarization disabled -> empty summary (coder falls back to verbatim).

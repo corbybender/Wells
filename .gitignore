@@ -11,3 +11,9 @@ wheels/
 
 # Environment files
 .env
+
+# Local model caches
+.fastembed_cache/
+
+# Windows reserved-name artifact
+nul

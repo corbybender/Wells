@@ -9,7 +9,7 @@ estimates track the provider's actual tokenization over a run.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 try:
     import tiktoken

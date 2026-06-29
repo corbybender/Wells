@@ -1,4 +1,4 @@
-"""MCP server interface for the coding-agent harness.
+"""MCP server interface for the Wells coding-agent harness.
 
 Exposes the harness capabilities as Model Context Protocol tools so external
 agent clients (Claude Code, OpenCode, Codex-style CLIs, Gemini CLI, etc.) can
@@ -9,9 +9,9 @@ Start the server:
     coding-harness-mcp          # console script
     python -m coding_harness.mcp_server
 
-Or (via a subcommand added to the main CLI):
-
-    coding-harness mcp serve    # if enabled in a future iteration
+The MCP layer is deliberately thin: every tool delegates to the existing
+harness core (graph, agents, executor, tools, gitops, memory). No orchestration
+logic is duplicated here.
 """
 
 from __future__ import annotations
@@ -25,19 +25,18 @@ import mcp.server.models
 import mcp.server.stdio
 import mcp.types as types
 
-from coding_harness.agents.architect import architect
-from coding_harness.agents.planner import planner
-from coding_harness.agents.reviewer import reviewer  # for review_code
+from coding_harness import config, gitops, memory
 from coding_harness.compress import compress_output
 from coding_harness.config import (
+    HARNESS_SAFETY,
     MAX_ITERATIONS,
-    ZAI_API_KEY,
-    ZAI_ENDPOINT,
-    ZAI_MODEL,
-    ZAI_MODEL_CHEAP,
+    MAX_TOOL_STEPS,
+    PLAN_MODE,
+    WORKSPACE_ROOT,
 )
 from coding_harness.graph import build_graph
 from coding_harness.tokens import LEDGER
+from coding_harness.tools import ToolContext, dispatch, registry
 
 server = mcp.server.Server("coding-harness")
 
@@ -46,26 +45,37 @@ server = mcp.server.Server("coding-harness")
 # Tool definitions
 # ---------------------------------------------------------------------------
 
+
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
-    return [
+    core = [
         types.Tool(
             name="run_agent_task",
-            description="Run the full coding-agent harness with a software development goal. "
-                        "Executes the planner -> architect -> coder -> tester -> reviewer loop "
-                        "(up to max_iterations). Returns the full plan, architecture, "
-                        "implementation steps, test plan, review, and a final summary.",
+            description="Run the full Wells harness: planner -> architect -> coder -> tester -> "
+            "reviewer (up to max_iterations), then finalize (memory + optional git/PR). "
+            "The coder/tester/reviewer are autonomous tool-using agents that actually "
+            "edit files and run tests in the workspace.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "goal": {
                         "type": "string",
-                        "description": "Your software development goal",
+                        "description": "Software development goal",
                     },
-                    "max_iterations": {
-                        "type": "integer",
-                        "description": "Max coder<->reviewer loops (default 3)",
-                        "default": 3,
+                    "workspace": {
+                        "type": "string",
+                        "description": f"Workspace root (default {WORKSPACE_ROOT})",
+                    },
+                    "max_iterations": {"type": "integer", "default": MAX_ITERATIONS},
+                    "safety": {
+                        "type": "string",
+                        "enum": ["auto", "approve", "dryrun"],
+                        "default": HARNESS_SAFETY,
+                    },
+                    "plan_mode": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, plan edits without applying",
                     },
                 },
                 "required": ["goal"],
@@ -73,96 +83,194 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="plan_task",
-            description="Run only the planner and architect stages. Fast — produces a "
-                        "development plan and architecture proposal without executing the "
-                        "full coder/tester/reviewer loop.",
+            description="Run only the planner and architect stages (fast). Reads AGENTS.md memory. "
+            "Returns a development plan + architecture proposal.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "goal": {
-                        "type": "string",
-                        "description": "Your software development goal",
-                    },
+                    "goal": {"type": "string"},
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
                 },
                 "required": ["goal"],
             },
         ),
         types.Tool(
             name="review_code",
-            description="Run the reviewer on provided implementation context. "
-                        "Returns a DECISION (COMPLETE/INCOMPLETE) and detailed review.",
+            description="Run the reviewer on provided implementation context. Returns DECISION "
+            "(COMPLETE/INCOMPLETE) + detailed review.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "goal": {
-                        "type": "string",
-                        "description": "Original development goal",
-                    },
-                    "plan": {
-                        "type": "string",
-                        "description": "Development plan",
-                    },
-                    "architecture": {
-                        "type": "string",
-                        "description": "Architecture proposal",
-                    },
-                    "implementation_steps": {
-                        "type": "string",
-                        "description": "Implementation steps / pseudo-code",
-                    },
-                    "test_plan": {
-                        "type": "string",
-                        "description": "Test plan",
-                    },
+                    "goal": {"type": "string"},
+                    "plan": {"type": "string"},
+                    "architecture": {"type": "string"},
+                    "implementation_steps": {"type": "string"},
+                    "test_plan": {"type": "string"},
                 },
                 "required": ["goal", "implementation_steps"],
             },
         ),
         types.Tool(
-            name="compress_logs",
-            description="Compress a shell/test/build log blob for compact display. "
-                        "Strips ANSI codes, deduplicates lines, collapses blank runs, "
-                        "preserves tracebacks and error lines.",
+            name="run_executor",
+            description="Run a single autonomous executor loop for an arbitrary task in the workspace. "
+            "This is the claude-like agent: it can read/edit files and run commands via the "
+            "safety policy. Returns the model's final summary.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "text": {
+                    "task": {
                         "type": "string",
-                        "description": "Raw log / output text to compress",
+                        "description": "What the executor should accomplish",
                     },
-                    "tail_lines": {
-                        "type": "integer",
-                        "description": "Max lines to keep (default 160)",
-                        "default": 160,
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                    "max_steps": {"type": "integer", "default": MAX_TOOL_STEPS},
+                    "safety": {
+                        "type": "string",
+                        "enum": ["auto", "approve", "dryrun"],
+                        "default": HARNESS_SAFETY,
                     },
+                    "plan_mode": {"type": "boolean", "default": False},
+                    "read_only": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Restrict to read tools",
+                    },
+                },
+                "required": ["task"],
+            },
+        ),
+        types.Tool(
+            name="spawn_subagent",
+            description="Spawn a focused research (read-only) or fix (can-edit) subagent for a scoped "
+            "task. Returns a compact summary the caller can merge.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "role": {
+                        "type": "string",
+                        "enum": ["research", "fix"],
+                        "default": "research",
+                    },
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                    "max_steps": {"type": "integer", "default": 8},
+                },
+                "required": ["task"],
+            },
+        ),
+        types.Tool(
+            name="search_repo",
+            description="Search a workspace via glob and/or grep. Read-only, always allowed.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "glob": {
+                        "type": "string",
+                        "description": "Filename glob, e.g. **/*.py",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Content regex (optional)",
+                    },
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                    "path": {"type": "string", "default": "."},
+                },
+            },
+        ),
+        types.Tool(
+            name="read_file",
+            description="Read a file from the workspace (with line numbers). Read-only.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                    "offset": {"type": "integer", "default": 1},
+                    "limit": {"type": "integer", "default": 2000},
+                },
+                "required": ["path"],
+            },
+        ),
+        types.Tool(
+            name="run_command",
+            description="Run a shell command in the workspace (confined, blocklisted, safety-gated). "
+            "Returns compressed stdout/stderr + exit code.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                    "safety": {
+                        "type": "string",
+                        "enum": ["auto", "approve", "dryrun"],
+                        "default": HARNESS_SAFETY,
+                    },
+                },
+                "required": ["command"],
+            },
+        ),
+        types.Tool(
+            name="git_status",
+            description="Return git status + a short diff stat for the workspace (read-only).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                },
+            },
+        ),
+        types.Tool(
+            name="get_memory",
+            description="Read the project memory (AGENTS.md) accumulated across runs.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                },
+            },
+        ),
+        types.Tool(
+            name="compress_logs",
+            description="Compress a shell/test/build log blob (strips ANSI, dedupes, preserves errors).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "tail_lines": {"type": "integer", "default": 160},
                 },
                 "required": ["text"],
             },
         ),
         types.Tool(
             name="get_harness_info",
-            description="Return information about the harness configuration, including "
-                        "the active model, endpoint, iteration cap, and token-optimisation "
-                        "settings.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
+            description="Return the effective harness configuration: active profile, model, "
+            "endpoint, safety policy, workspace, iteration caps, token budgets.",
+            inputSchema={"type": "object", "properties": {}},
         ),
     ]
+    return core
 
 
 # ---------------------------------------------------------------------------
-# Tool implementations
+# Tool dispatch
 # ---------------------------------------------------------------------------
+
 
 def _format_output(**fields: Any) -> str:
-    """Return a compact, structured text blob (JSON-like) for the client."""
     return json.dumps(fields, indent=2, default=str)
 
 
 def _text_content(text: str) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=text)]
+
+
+def _ctx(args: dict) -> ToolContext:
+    """Build a ToolContext from MCP args (workspace/safety/plan_mode overrides)."""
+    return ToolContext(
+        workspace=args.get("workspace") or WORKSPACE_ROOT,
+        safety=args.get("safety") or HARNESS_SAFETY,
+        plan_mode=bool(args.get("plan_mode", PLAN_MODE)),
+    )
 
 
 @server.call_tool()
@@ -174,20 +282,37 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             return await _plan_task(arguments)
         if name == "review_code":
             return await _review_code(arguments)
+        if name == "run_executor":
+            return await _run_executor(arguments)
+        if name == "spawn_subagent":
+            return await _spawn_subagent(arguments)
+        if name == "search_repo":
+            return _search_repo(arguments)
+        if name == "read_file":
+            return _read_file(arguments)
+        if name == "run_command":
+            return _run_command(arguments)
+        if name == "git_status":
+            return _git_status(arguments)
+        if name == "get_memory":
+            return _get_memory(arguments)
         if name == "compress_logs":
             return _compress_logs(arguments)
         if name == "get_harness_info":
             return _get_harness_info(arguments)
-        return _text_content(_format_output(
-            error=f"Unknown tool: {name}"
-        ))
+        return _text_content(_format_output(error=f"Unknown tool: {name}"))
     except Exception as exc:
         return _text_content(_format_output(error=f"{type(exc).__name__}: {exc}"))
 
 
-# -- run_agent_task ---------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
 
-def _run_graph_sync(goal: str, max_iters: int) -> dict:
+
+def _run_graph_sync(
+    goal: str, max_iters: int, workspace: str, safety: str, plan_mode: bool
+) -> dict:
     """Build + invoke the harness graph synchronously (runs in a thread)."""
     LEDGER.reset()
     app = build_graph()
@@ -195,6 +320,9 @@ def _run_graph_sync(goal: str, max_iters: int) -> dict:
         "goal": goal,
         "iteration": 0,
         "max_iterations": max_iters,
+        "workspace_root": workspace,
+        "safety": safety,
+        "plan_mode": plan_mode,
         "messages": [],
     }
     return app.invoke(initial)
@@ -203,107 +331,239 @@ def _run_graph_sync(goal: str, max_iters: int) -> dict:
 async def _run_agent_task(args: dict) -> list[types.TextContent]:
     goal = args["goal"]
     max_iters = args.get("max_iterations", MAX_ITERATIONS)
+    workspace = args.get("workspace") or WORKSPACE_ROOT
+    safety = args.get("safety") or HARNESS_SAFETY
+    plan_mode = bool(args.get("plan_mode", False))
 
-    final_state = await asyncio.to_thread(_run_graph_sync, goal, max_iters)
+    final = await asyncio.to_thread(
+        _run_graph_sync, goal, max_iters, workspace, safety, plan_mode
+    )
 
-    status = "COMPLETE" if final_state.get("review_complete") else "INCOMPLETE"
-    extra = {}
-    if final_state.get("development_plan"):
-        extra["development_plan"] = final_state["development_plan"]
-    if final_state.get("architecture"):
-        extra["architecture"] = final_state["architecture"]
-    if final_state.get("implementation_steps"):
-        extra["implementation_steps"] = final_state["implementation_steps"]
-    if final_state.get("test_plan"):
-        extra["test_plan"] = final_state["test_plan"]
-    if final_state.get("review_result"):
-        extra["review_result"] = final_state["review_result"]
-    extra["iterations_used"] = final_state.get("iteration", 0)
-    extra["max_iterations"] = final_state.get("max_iterations", max_iters)
+    status = "COMPLETE" if final.get("review_complete") else "INCOMPLETE"
+    extra: dict[str, Any] = {"status": status}
+    for k in (
+        "development_plan",
+        "architecture",
+        "implementation_steps",
+        "test_plan",
+        "review_result",
+        "git_summary",
+        "pr_url",
+        "memory_written",
+    ):
+        if final.get(k):
+            extra[k] = final[k]
+    extra["iterations_used"] = final.get("iteration", 0)
+    extra["max_iterations"] = final.get("max_iterations", max_iters)
+    extra["token_usage"] = LEDGER.totals()
+    return _text_content(_format_output(**extra))
 
-    return _text_content(_format_output(status=status, **extra))
-
-
-# -- plan_task --------------------------------------------------------------
 
 async def _plan_task(args: dict) -> list[types.TextContent]:
-    goal = args["goal"]
+    from coding_harness.agents.architect import architect
+    from coding_harness.agents.planner import planner
 
-    state: dict = {"goal": goal, "iteration": 0, "max_iterations": 1, "messages": []}
+    workspace = args.get("workspace") or WORKSPACE_ROOT
+    state: dict = {
+        "goal": args["goal"],
+        "iteration": 0,
+        "max_iterations": 1,
+        "workspace_root": workspace,
+        "safety": "dryrun",
+        "messages": [],
+    }
 
     def _run() -> dict:
+        LEDGER.reset()
         state.update(planner(state))
         if state.get("development_plan"):
             state.update(architect(state))
         return state
 
     final = await asyncio.to_thread(_run)
-    return _text_content(_format_output(
-        development_plan=final.get("development_plan", ""),
-        architecture=final.get("architecture", ""),
-    ))
+    return _text_content(
+        _format_output(
+            development_plan=final.get("development_plan", ""),
+            architecture=final.get("architecture", ""),
+        )
+    )
 
-
-# -- review_code ------------------------------------------------------------
 
 async def _review_code(args: dict) -> list[types.TextContent]:
-    goal = args["goal"]
-    plan = args.get("plan", "")
-    architecture = args.get("architecture", "")
-    implementation_steps = args["implementation_steps"]
-    test_plan = args.get("test_plan", "")
+    from coding_harness.agents.reviewer import reviewer
 
     state: dict = {
-        "goal": goal,
-        "development_plan": plan,
-        "architecture": architecture,
-        "implementation_steps": implementation_steps,
-        "test_plan": test_plan,
+        "goal": args["goal"],
+        "development_plan": args.get("plan", ""),
+        "architecture": args.get("architecture", ""),
+        "implementation_steps": args["implementation_steps"],
+        "test_plan": args.get("test_plan", ""),
         "iteration": 1,
         "max_iterations": 1,
+        "workspace_root": WORKSPACE_ROOT,
+        "safety": "dryrun",
         "messages": [],
     }
-
-    def _run() -> dict:
-        state.update(reviewer(state))
-        return state
-
-    final = await asyncio.to_thread(_run)
-    return _text_content(_format_output(
-        review_result=final.get("review_result", ""),
-        review_complete=final.get("review_complete", False),
-    ))
+    final = await asyncio.to_thread(lambda: reviewer(state))
+    return _text_content(
+        _format_output(
+            review_result=final.get("review_result", ""),
+            review_complete=final.get("review_complete", False),
+        )
+    )
 
 
-# -- compress_logs ----------------------------------------------------------
+async def _run_executor(args: dict) -> list[types.TextContent]:
+    from coding_harness.executor import run_executor
+
+    ctx = _ctx(args)
+    toolset = registry(include_mutating=False) if args.get("read_only") else None
+    result = await asyncio.to_thread(
+        lambda: run_executor(
+            task=args["task"],
+            ctx=ctx,
+            toolset=toolset,
+            max_steps=args.get("max_steps", MAX_TOOL_STEPS),
+        )
+    )
+    return _text_content(
+        _format_output(
+            summary=result.summary,
+            steps_taken=result.steps_taken,
+            stopped_reason=result.stopped_reason,
+            tool_calls=[
+                {k: v for k, v in c.items() if k != "output_preview"}
+                for c in result.tool_calls
+            ],
+            token_usage=LEDGER.totals(),
+        )
+    )
+
+
+async def _spawn_subagent(args: dict) -> list[types.TextContent]:
+    from coding_harness import subagents
+
+    ctx = _ctx(args)
+    role = args.get("role", "research")
+    task = args["task"]
+    max_steps = args.get("max_steps", 8)
+    spec = (subagents.fix_subagent if role == "fix" else subagents.research_subagent)(
+        "mcp", task, max_steps=max_steps
+    )
+    report = await asyncio.to_thread(lambda: subagents.run_subagent(spec, ctx))
+    return _text_content(
+        _format_output(
+            name=report.name,
+            ok=report.ok,
+            steps_taken=report.steps_taken,
+            summary=report.summary,
+        )
+    )
+
+
+def _search_repo(args: dict) -> list[types.TextContent]:
+    ctx = _ctx(args)
+    out: list[str] = []
+    if args.get("glob"):
+        r = dispatch(
+            "glob", {"pattern": args["glob"], "path": args.get("path", ".")}, ctx
+        )
+        out.append(f"-- glob {args['glob']} --\n{r.output if r.ok else r.error}")
+    if args.get("pattern"):
+        r = dispatch(
+            "grep", {"pattern": args["pattern"], "path": args.get("path", ".")}, ctx
+        )
+        out.append(f"-- grep {args['pattern']!r} --\n{r.output if r.ok else r.error}")
+    if not out:
+        return _text_content(_format_output(error="Provide `glob` and/or `pattern`"))
+    return _text_content("\n\n".join(out))
+
+
+def _read_file(args: dict) -> list[types.TextContent]:
+    ctx = _ctx(args)
+    r = dispatch(
+        "read_file",
+        {
+            "path": args["path"],
+            "offset": args.get("offset", 1),
+            "limit": args.get("limit", 2000),
+        },
+        ctx,
+    )
+    return _text_content(r.output if r.ok else _format_output(error=r.error))
+
+
+def _run_command(args: dict) -> list[types.TextContent]:
+    ctx = _ctx(args)
+    r = dispatch("run_command", {"command": args["command"]}, ctx)
+    return _text_content(
+        r.output if r.ok else _format_output(error=r.error, output=r.output)
+    )
+
+
+def _git_status(args: dict) -> list[types.TextContent]:
+    ctx = _ctx(args)
+    status = gitops._run(ctx, "git status --short --branch")
+    diff = gitops.diff_summary(ctx)
+    return _text_content(
+        _format_output(
+            status=status[1].strip() if status[0] else "(not a git repo)",
+            diff_stat=diff.strip(),
+        )
+    )
+
+
+def _get_memory(args: dict) -> list[types.TextContent]:
+    mem = memory.load(args.get("workspace") or WORKSPACE_ROOT)
+    return _text_content(
+        _format_output(
+            exists=mem.exists,
+            path=str(mem.path) if mem.path else "",
+            memory=mem.section_for_context(max_chars=8000) or "(empty)",
+        )
+    )
+
 
 def _compress_logs(args: dict) -> list[types.TextContent]:
-    text = args["text"]
-    tail_lines = args.get("tail_lines", 160)
-    result = compress_output(text, tail_lines=tail_lines)
-    return _text_content(result)
+    return _text_content(
+        compress_output(args["text"], tail_lines=args.get("tail_lines", 160))
+    )
 
-
-# -- get_harness_info -------------------------------------------------------
 
 def _get_harness_info(args: dict) -> list[types.TextContent]:
-    info = {
+    from coding_harness import providers
+
+    info: dict[str, Any] = {
         "package": "coding-harness",
-        "version": "0.1.0",
-        "model": ZAI_MODEL,
-        "endpoint": ZAI_ENDPOINT,
-        "cheap_model": ZAI_MODEL_CHEAP or "(same as main model)",
+        "version": "0.2.0",
+        "active_profile": config.ACTIVE_PROFILE,
+        "model": config.model_name_for_task("coding"),
+        "available_profiles": config.MODEL_PROFILES,
+        "workspace_root": WORKSPACE_ROOT,
+        "safety_policy": HARNESS_SAFETY,
+        "plan_mode": PLAN_MODE,
         "max_iterations": MAX_ITERATIONS,
-        "api_key_configured": bool(ZAI_API_KEY),
+        "max_tool_steps": MAX_TOOL_STEPS,
+        "token_budget_max_input": config.BUDGET.max_input_tokens,
+        "summarize_on_loop": config.SUMMARIZE_ON_LOOP,
+        "api_key_configured": False,
         "transport": "stdio",
-        # TODO: expose token-opt settings once they land in config module-level consts.
     }
+    try:
+        prof = providers.load_profile(config.ACTIVE_PROFILE)
+        if prof:
+            info["provider_kind"] = prof.kind
+            info["base_url"] = prof.base_url or "(provider default)"
+            info["api_key_configured"] = bool(prof.api_key)
+    except Exception:
+        pass
     return _text_content(_format_output(**info))
 
 
 # ---------------------------------------------------------------------------
 # Server entry point
 # ---------------------------------------------------------------------------
+
 
 async def start_server() -> None:
     """Run the MCP server over stdio transport."""
@@ -313,14 +573,13 @@ async def start_server() -> None:
             write_stream,
             mcp.server.models.InitializationOptions(
                 server_name="coding-harness",
-                server_version="0.1.0",
+                server_version="0.2.0",
                 capabilities=types.ServerCapabilities(),
             ),
         )
 
 
 def main() -> None:
-    """Console-entrypoint and ``python -m`` entry point."""
     asyncio.run(start_server())
 
 
