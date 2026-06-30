@@ -418,7 +418,7 @@ class ConversationMemory:
 # Conversational reply
 # ---------------------------------------------------------------------------
 
-_CHAT_SYSTEM = (
+_CHAT_SYSTEM_BASE = (
     "You are Wells, a concise, helpful coding assistant chatting with the user "
     "in an interactive REPL. Answer the user's question directly and briefly. "
     "You are NOT in agentic mode — do not claim to run tools or edit files. "
@@ -427,6 +427,42 @@ _CHAT_SYSTEM = (
     "/task command so the full agent loop can run. Be honest about what the "
     "last agent run did or did not accomplish based on the provided context."
 )
+
+
+def _build_chat_system() -> str:
+    """Build the chat system prompt with live workspace and index context."""
+    try:
+        from coding_harness import config as _cfg
+        workspace = _cfg.WORKSPACE_ROOT
+    except Exception:
+        workspace = ""
+
+    lines = [_CHAT_SYSTEM_BASE, "", f"Workspace: {workspace}"]
+
+    try:
+        from coding_harness.index_tools import INDEXER_AVAILABLE, index_status
+        if INDEXER_AVAILABLE:
+            status = index_status(workspace)
+            if status.get("exists"):
+                age = status.get("age_hours")
+                age_str = f", last updated {age:.1f}h ago" if age is not None else ""
+                lines.append(
+                    f"Repository index: BUILT — {status['total_files']} files, "
+                    f"{status['total_symbols']} symbols indexed{age_str}. "
+                    "The agent (task mode) can query it with find_symbol, "
+                    "find_references, find_callers, and search_symbols tools."
+                )
+            else:
+                lines.append(
+                    "Repository index: NOT YET BUILT. "
+                    "User can run /index to build it."
+                )
+        else:
+            lines.append("Repository index: not available (wells-index not installed).")
+    except Exception:
+        pass
+
+    return "\n".join(lines)
 
 
 def _stream_with_retry(llm, messages):
@@ -474,11 +510,12 @@ def conversational_reply(
     :data:`LEDGER` under the ``chat`` step. ``on_token(token)`` is called for
     each streamed token (if the model streams).
     """
-    messages = memory.as_messages(_CHAT_SYSTEM)
+    system_prompt = _build_chat_system()
+    messages = memory.as_messages(system_prompt)
     messages.append(HumanMessage(content=text))
     llm = get_llm_for_task("chat")
     model = model_name_for_task("chat")
-    full_text = _CHAT_SYSTEM + "\n" + text
+    full_text = system_prompt + "\n" + text
 
     try:
         # Stream if a callback was supplied (with transient retry).
