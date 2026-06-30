@@ -219,12 +219,14 @@ def _invoke_with_retry(llm, messages):
     backoff loop so progress is logged and transient TLS/429 errors are survived.
     Raises the last error if every retry fails.
     """
+    from coding_harness.logger import log_error, log_path
     last_err: Exception | None = None
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         try:
             return llm.invoke(messages)
         except Exception as err:
             last_err = err
+            log_error(f"LLM invoke attempt {attempt}/{LLM_MAX_RETRIES}: {type(err).__name__}: {err}", err)
             if not _is_transient(err) or attempt == LLM_MAX_RETRIES:
                 break
             backoff = min(LLM_BACKOFF_BASE**attempt, 30.0)
@@ -234,6 +236,7 @@ def _invoke_with_retry(llm, messages):
             )
             time.sleep(backoff)
     assert last_err is not None
+    print(f"[llm] all retries failed. Full error logged to: {log_path()}")
     raise last_err
 
 

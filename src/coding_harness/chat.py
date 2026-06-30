@@ -483,10 +483,13 @@ def conversational_reply(
             ) or 0
         calibrate(full_text, input_tokens)
     except Exception as err:
+        from coding_harness.logger import log_error, log_path
+        log_error(f"conversational_reply failed: {type(err).__name__}: {err}", err)
         content = f"(chat call failed: {type(err).__name__}: {str(err)[:160]})"
         input_tokens = estimate_tokens(full_text)
         output_tokens = reasoning_tokens = cache_read_tokens = 0
         print(f"[chat] {content}")
+        print(f"[chat] Full error logged to: {log_path()}")
 
     LEDGER.record(
         step="chat",
