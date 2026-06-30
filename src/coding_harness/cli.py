@@ -271,6 +271,11 @@ def _handle_index(arg: str) -> None:
         result = index_tools.index_workspace(ctx)
         if result.ok:
             console.print(f"[green]{result.output}[/green]")
+            # Record in memory so the AI knows about it in follow-up chat.
+            _REPL_STATE["memory"].set_run_summary(
+                f"User ran /index on workspace {config.WORKSPACE_ROOT}.\n"
+                + result.output.strip()
+            )
         else:
             console.print(f"[red]Error: {result.error or result.output}[/red]")
     elif arg == "status":
