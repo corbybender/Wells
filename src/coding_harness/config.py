@@ -16,16 +16,26 @@ from langchain_core.messages import HumanMessage
 
 
 def _configure_ca_bundle() -> None:
-    """Point OpenSSL at a usable CA bundle.
+    """Inject system CA certs into Python's SSL layer.
 
-    On Windows, Python's OpenSSL doesn't use the Windows certificate store by
-    default, so HTTPS calls can fail with certificate errors. We use certifi's
-    bundle which ships with pip and always works cross-platform.
+    uv's bundled Python doesn't use the Windows certificate store by default.
+    truststore patches ssl.SSLContext to use the OS native trust store (Windows
+    Cert Store / macOS Keychain / Linux system bundle), which always has the
+    right issuer chain for commercial APIs like Z.ai.
     """
+    # Try truststore first: patches ssl.SSLContext to use OS native cert store.
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+        return
+    except Exception:
+        pass
+
+    # Already set — respect it (e.g. corporate proxy cert bundle).
     if os.environ.get("SSL_CERT_FILE"):
         return
 
-    # On Linux/macOS try system bundles first.
+    # On Linux/macOS try system bundles next.
     candidates = [
         "/etc/ssl/certs/ca-certificates.crt",  # Debian/Ubuntu/WSL
         "/etc/pki/tls/certs/ca-bundle.crt",  # RHEL/Fedora
@@ -38,7 +48,7 @@ def _configure_ca_bundle() -> None:
             os.environ.setdefault("CURL_CA_BUNDLE", path)
             return
 
-    # Always fall back to certifi (works on Windows + any platform).
+    # Last resort: certifi's bundled CA certs.
     try:
         import certifi
         bundle = certifi.where()
