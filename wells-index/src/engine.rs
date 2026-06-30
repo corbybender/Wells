@@ -39,6 +39,9 @@ impl IndexEngine {
         let mut symbols_extracted = 0;
         let mut edges_extracted = 0;
 
+        // All writes go in one transaction — turns thousands of disk syncs into one.
+        self.store.begin()?;
+
         // Scan workspace for source files
         for entry in WalkDir::new(&self.workspace)
             .into_iter()
@@ -93,6 +96,11 @@ impl IndexEngine {
                     }
                 }
             }
+        }
+
+        if let Err(e) = self.store.commit() {
+            let _ = self.store.rollback();
+            return Err(e);
         }
 
         let duration = start.elapsed();
