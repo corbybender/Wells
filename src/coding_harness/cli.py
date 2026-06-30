@@ -267,11 +267,27 @@ def _handle_index(arg: str) -> None:
     ctx = ToolContext(workspace=config.WORKSPACE_ROOT)
 
     if not arg or arg in ("build", "update"):
-        console.print("[cyan]Indexing repository...[/cyan]")
-        result = index_tools.index_workspace(ctx)
+        import concurrent.futures
+        import time
+        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Indexing repository...", total=None)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(index_tools.index_workspace, ctx)
+                while not future.done():
+                    time.sleep(0.1)
+                result = future.result()
+            progress.update(task, description="Done indexing")
+
         if result.ok:
             console.print(f"[green]{result.output}[/green]")
-            # Record in memory so the AI knows about it in follow-up chat.
             _REPL_STATE["memory"].set_run_summary(
                 f"User ran /index on workspace {config.WORKSPACE_ROOT}.\n"
                 + result.output.strip()

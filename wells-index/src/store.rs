@@ -10,9 +10,30 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
-        // TODO: Handle LZ4 decompression if path.lz4 exists
         let conn = Connection::open(path)?;
+        // WAL mode + relaxed sync = dramatically faster batch writes.
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA cache_size=10000;
+             PRAGMA temp_store=MEMORY;",
+        )?;
         Ok(Store { conn })
+    }
+
+    pub fn begin(&self) -> anyhow::Result<()> {
+        self.conn.execute_batch("BEGIN")?;
+        Ok(())
+    }
+
+    pub fn commit(&self) -> anyhow::Result<()> {
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    pub fn rollback(&self) -> anyhow::Result<()> {
+        let _ = self.conn.execute_batch("ROLLBACK");
+        Ok(())
     }
 
     pub fn create_schema(&self) -> anyhow::Result<()> {
