@@ -445,11 +445,13 @@ def _run_chat(text: str, callbacks) -> None:
     """Answer ``text`` directly without the agent loop (streamed)."""
     console.print()  # blank line before streamed output
     try:
-        chat.conversational_reply(
+        reply = chat.conversational_reply(
             text,
             _REPL_STATE["memory"],
             on_token=_stream_token if config.STREAM_OUTPUT else None,
         )
+        if not config.STREAM_OUTPUT and reply:
+            console.print(reply)
     except Exception as e:
         from coding_harness.logger import log_error, log_path
         log_error(f"_run_chat failed: {type(e).__name__}: {e}", e)
