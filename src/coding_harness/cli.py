@@ -266,25 +266,24 @@ def _handle_index(arg: str) -> None:
 
     ctx = ToolContext(workspace=config.WORKSPACE_ROOT)
 
-    if not arg or arg in ("build", "update"):
-        import concurrent.futures
-        import time
-        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+    force = arg == "force"
+    if not arg or arg in ("build", "update") or force:
+        import time as _time
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Indexing repository...", total=None)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(index_tools.index_workspace, ctx)
-                while not future.done():
-                    time.sleep(0.1)
-                result = future.result()
-            progress.update(task, description="Done indexing")
+        if force:
+            # Delete the DB so next run re-parses every file from scratch.
+            import shutil
+            db_path = Path(config.WORKSPACE_ROOT) / ".wells_index"
+            if db_path.exists():
+                shutil.rmtree(db_path)
+            console.print("[yellow]Index cleared — rebuilding from scratch...[/yellow]")
+
+        t0 = _time.time()
+        with console.status("[cyan]Indexing repository...[/cyan]", spinner="dots"):
+            result = index_tools.index_workspace(ctx)
+        elapsed = _time.time() - t0
+        mins, secs = divmod(int(elapsed), 60)
+        console.print(f"[dim]Done in {mins:02d}:{secs:02d}[/dim]")
 
         if result.ok:
             console.print(f"[green]{result.output}[/green]")
@@ -313,7 +312,7 @@ def _handle_index(arg: str) -> None:
             console.print(f"[red]Error: Could not clear index: {e}[/red]")
     else:
         console.print(f"[red]Unknown /index subcommand: {arg}[/red]")
-        console.print("[dim]Usage: /index [build|status|clear][/dim]")
+        console.print("[dim]Usage: /index [build|update|force|status|clear][/dim]")
 
 
 def _bottom_toolbar():
