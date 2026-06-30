@@ -451,9 +451,10 @@ def _run_chat(text: str, callbacks) -> None:
             on_token=_stream_token if config.STREAM_OUTPUT else None,
         )
     except Exception as e:
-        import traceback
-        console.print(f"\n[bold red]Error during chat:[/bold red] {type(e).__name__}: {e}")
-        console.print(traceback.format_exc())
+        from coding_harness.logger import log_error, log_path
+        log_error(f"_run_chat failed: {type(e).__name__}: {e}", e)
+        console.print(f"\n[bold red]Error:[/bold red] {type(e).__name__}: {e}")
+        console.print(f"[dim]Full details logged to: {log_path()}[/dim]")
     console.print()
 
 
