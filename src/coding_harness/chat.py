@@ -192,6 +192,22 @@ _FOLLOWUP_SIGNALS = (
     "it ",
     "above",
     "below",
+    # Past-tense / present-perfect: user describing what they already did.
+    "i used",
+    "i ran",
+    "i've",
+    "i have",
+    "i did",
+    "i created",
+    "i made",
+    "i built",
+    "i added",
+    "i removed",
+    "i updated",
+    "i set",
+    "i ran",
+    "have been",
+    "has been",
 )
 
 # Patterns that make a "task" word actually a question ("how do i fix X" is a
@@ -199,8 +215,16 @@ _FOLLOWUP_SIGNALS = (
 _QUESTION_HINTS_RE = re.compile(
     r"\b(how (do|does|to|can|could)|why (do|does|is|are|was|were|can't|cannot)"
     r"|what (is|are|do|does|was|were|does the)|where (is|are|do i|does)"
-    r"|can (i|you) (use|run|call|do)|is (it|there|this|that) (a |an |the )?"
+    r"|can (i|you) (use|run|call|do|see|check|tell|verify|confirm|show|access|read|view|find|know|detect|access)"
+    r"|is (it|there|this|that) (a |an |the )?"
     r"|explain |tell me |describe )\b",
+    re.IGNORECASE,
+)
+
+# Word-boundary regex for task signals — prevents "fix" matching "fixed",
+# "create" matching "created", "add" matching "added", etc.
+_TASK_SIGNAL_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(s) for s in _TASK_SIGNALS) + r")\b",
     re.IGNORECASE,
 )
 
@@ -224,7 +248,7 @@ def _heuristic_classify(text: str) -> Intent | None:
         if bare in _CHITCHAT or first in _CHITCHAT:
             return "chat"
 
-    has_task_signal = any(sig in lower for sig in _TASK_SIGNALS)
+    has_task_signal = bool(_TASK_SIGNAL_RE.search(lower))
     has_followup = any(sig in lower for sig in _FOLLOWUP_SIGNALS)
     has_question_mark = "?" in stripped
     starts_with_question = lower[1:].lstrip().startswith(_QUESTION_STARTERS)
