@@ -51,9 +51,24 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "Answer your next message directly without the agent loop.",
     ),
     (
+        "/simple",
+        "Force simple mode (next message)",
+        "Run next message as a direct executor call — no planner/reviewer overhead.",
+    ),
+    (
+        "/orchestrate",
+        "Force full orchestration (next message)",
+        "Run next message through the full planner→coder→tester→reviewer loop.",
+    ),
+    (
         "/task",
-        "Force task mode (next message)",
-        "Run your next message through the full agent loop.",
+        "Alias for /orchestrate",
+        "Run your next message through the full agent loop (alias for /orchestrate).",
+    ),
+    (
+        "/auto",
+        "Reset to auto-routing",
+        "Let Wells classify each message automatically (chat / simple / orchestrate).",
     ),
     (
         "/clear",
@@ -124,8 +139,13 @@ def handle_slash_command(command: str) -> bool:
         _print_status_panel()
     elif cmd == "/chat":
         _set_force_mode("chat")
-    elif cmd == "/task":
+    elif cmd == "/simple":
+        _set_force_mode("simple")
+    elif cmd in ("/orchestrate", "/task"):
         _set_force_mode("task")
+    elif cmd == "/auto":
+        _REPL_STATE["force_mode"] = None
+        console.print("[dim]Routing reset to [bold]auto[/bold] — Wells will classify each message.[/dim]")
     elif cmd == "/clear":
         _REPL_STATE["memory"].clear()
         console.print("[green]Conversation history cleared.[/green]")
@@ -542,16 +562,95 @@ _REPL_STATE: dict = {
 }
 
 
+def _run_simple(text: str, agent_state: dict, callbacks) -> None:
+    """Run a scoped edit directly through the executor — no orchestration graph."""
+    from coding_harness.executor import run_executor
+    from coding_harness.sessions import new_session_id, save_session, session_from_final_state
+    from coding_harness.tools import ToolContext
+
+    # Consume resume context same as _run_task.
+    resume_ctx: str | None = _REPL_STATE.pop("resume_context", None)
+    _REPL_STATE.pop("resume_session_id", None)
+
+    original_goal = text
+    effective_task = f"{resume_ctx}\n\nTASK:\n{text}" if resume_ctx else text
+
+    LEDGER.reset()
+    session_id = new_session_id()
+    t0 = _time.time()
+
+    if resume_ctx:
+        console.print("[dim]Continuing from previous session...[/dim]")
+
+    ctx = ToolContext(
+        workspace=agent_state.get("workspace_root", config.WORKSPACE_ROOT),
+        plan_mode=agent_state.get("plan_mode", config.PLAN_MODE),
+        safety=agent_state.get("safety", config.HARNESS_SAFETY),
+    )
+
+    try:
+        result = run_executor(task=effective_task, ctx=ctx, max_steps=10)
+
+        console.print()
+        if result.summary:
+            console.print(result.summary)
+        console.print()
+
+        if result.stopped_reason == "max_steps":
+            console.print(
+                "[yellow]Reached step limit. If the task is incomplete, "
+                "use [bold]/orchestrate[/bold] to run full orchestration.[/yellow]"
+            )
+
+        t = LEDGER.totals()
+        total = t["input"] + t["output"]
+        console.print(
+            f"[dim]{result.steps_taken} step(s) · {total:,} tokens "
+            f"({t['input']:,} in / {t['output']:,} out)[/dim]"
+        )
+
+        try:
+            final_state = {
+                "review_complete": result.stopped_reason == "done",
+                "implementation_steps": result.summary,
+                "review_result": result.stopped_reason,
+                "iteration": 1,
+                "git_summary": "",
+            }
+            data = session_from_final_state(
+                session_id, original_goal, final_state,
+                workspace=config.WORKSPACE_ROOT,
+                tokens_in=t["input"],
+                tokens_out=t["output"],
+                duration_seconds=int(_time.time() - t0),
+                resumed_from=resume_ctx[:80] if resume_ctx else None,
+            )
+            save_session(session_id, data)
+            console.print(f"[dim][session: {session_id}][/dim]")
+        except Exception:
+            pass
+
+        # Feed result into chat memory for follow-up questions.
+        _REPL_STATE["memory"].set_run_summary(
+            f"Goal: {original_goal}\nResult: {result.summary[:400]}"
+        )
+
+    except Exception as e:
+        from coding_harness.logger import log_error
+        log_error(f"_run_simple failed: {type(e).__name__}: {e}", e)
+        console.print(f"\n[bold red]Error:[/bold red] {e}")
+
+
 def _set_force_mode(mode: str) -> None:
     _REPL_STATE["force_mode"] = mode
-    label = (
-        "[bold cyan]chat[/bold cyan]"
-        if mode == "chat"
-        else "[bold magenta]task[/bold magenta]"
-    )
+    labels = {
+        "chat": "[bold cyan]chat[/bold cyan]",
+        "simple": "[bold green]simple[/bold green] [dim](direct executor)[/dim]",
+        "task": "[bold magenta]orchestrate[/bold magenta] [dim](full loop)[/dim]",
+    }
+    label = labels.get(mode, f"[bold]{mode}[/bold]")
     console.print(
-        f"Next message will be handled in {label} mode "
-        f"[dim](auto-routing resumes after)[/dim]."
+        f"Next message: {label} [dim](auto-routing resumes after)[/dim]."
     )
 
 
