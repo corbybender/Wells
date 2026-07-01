@@ -36,9 +36,86 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+import os
+import platform
+import shutil
+
 from coding_harness import config, tools
 from coding_harness.compress import compress_output
 from coding_harness.tokens import LEDGER, estimate_tokens
+
+
+# ---------------------------------------------------------------------------
+# Environment detection — computed once at import, injected into every prompt
+# ---------------------------------------------------------------------------
+
+_ENV_CONTEXT_CACHE: str | None = None
+
+
+def _build_env_context() -> str:
+    """Return a one-time snapshot of the execution environment.
+
+    Uses only PATH lookups (shutil.which) — no subprocesses — so it is fast
+    and safe to call at import time.
+    """
+    global _ENV_CONTEXT_CACHE
+    if _ENV_CONTEXT_CACHE is not None:
+        return _ENV_CONTEXT_CACHE
+
+    sys_name = platform.system()  # 'Windows' | 'Linux' | 'Darwin'
+
+    if sys_name == "Darwin":
+        os_str = f"macOS {platform.mac_ver()[0] or platform.release()}"
+    elif sys_name == "Windows":
+        os_str = f"Windows {platform.release()}"
+    else:
+        # Linux — try /etc/os-release for a friendlier name
+        try:
+            with open("/etc/os-release") as fh:
+                info = dict(
+                    line.strip().split("=", 1)
+                    for line in fh
+                    if "=" in line
+                )
+            pretty = info.get("PRETTY_NAME", "").strip('"')
+            os_str = pretty or f"Linux {platform.release()}"
+        except Exception:
+            os_str = f"Linux {platform.release()}"
+
+    # Shell
+    if sys_name == "Windows":
+        if shutil.which("pwsh"):
+            shell = "PowerShell (pwsh)"
+        elif shutil.which("powershell"):
+            shell = "Windows PowerShell"
+        else:
+            shell = "cmd.exe"
+    else:
+        shell = os.environ.get("SHELL", "/bin/sh")
+
+    # CLI tool availability — PATH lookup only, no subprocess overhead
+    candidates = [
+        "git", "az", "aws", "gcloud",
+        "docker", "kubectl", "helm", "terraform",
+        "npm", "node", "bun", "deno",
+        "python", "python3", "pip", "uv",
+        "cargo", "rustc", "go",
+        "java", "mvn", "gradle",
+        "dotnet",
+        "curl", "wget",
+        "gh", "hub",
+        "make", "cmake",
+        "jq", "yq",
+    ]
+    available = [t for t in candidates if shutil.which(t)]
+
+    lines = [
+        f"OS      : {os_str}",
+        f"Shell   : {shell}",
+        f"Tools   : {', '.join(available) if available else '(none detected in PATH)'}",
+    ]
+    _ENV_CONTEXT_CACHE = "\n".join(lines)
+    return _ENV_CONTEXT_CACHE
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +167,17 @@ def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool,
     # The harness operating principles (AGENT.md) are always prepended so every
     # executor run is governed by the constitution, regardless of model.
     from coding_harness.principles import inject_into_prompt as inject_principles
+    env = _build_env_context()
     base = f"""You are an autonomous software engineering agent working inside a real code repository.
 You operate by calling tools to read files, search code, make edits, and run commands/tests,
 then observing the results, until the task is complete.
+
+ENVIRONMENT:
+{env}
+
+The tools listed under "Tools" above reflect actual PATH lookups on this machine.
+Do NOT pre-emptively claim a tool is missing — if it appears in the list it is
+available. If you are unsure, run it via run_command and observe the actual output.
 
 TASK:
 {task}
