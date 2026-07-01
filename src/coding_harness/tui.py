@@ -412,10 +412,35 @@ class WellsApp(App[None]):
     # ------------------------------------------------------------------
 
     def _dispatch_slash(self, command: str) -> None:
-        """Run slash commands synchronously on the asyncio thread."""
-        import coding_harness.cli as cli_mod
+        """Route slash commands on the asyncio event loop thread.
 
-        # Swap console to TUI console (main-thread variant, no call_from_thread).
+        Commands that call input() internally — /resume and /sessions clear —
+        are intercepted HERE, before handle_slash_command is ever called.
+        Letting them reach handle_slash_command would block the event loop
+        forever because Textual owns stdin and input() never returns.
+        """
+        parts = command.strip().split()
+        cmd = parts[0].lower() if parts else ""
+        args = parts[1:]
+        arg = args[0] if args else ""
+
+        # -- Intercept blocking commands first --------------------------------
+        if cmd == "/resume":
+            self._start_resume_picker(arg)
+            return
+
+        if cmd == "/sessions" and arg.lower() == "clear":
+            all_ws = "--all" in [a.lower() for a in args]
+            scope = "ALL workspaces" if all_ws else "this workspace"
+            self.write_log(
+                f"[yellow]Delete all sessions for {scope}?[/yellow] "
+                "[dim]Type [bold]y[/bold] to confirm or anything else to cancel.[/dim]"
+            )
+            self._pending = {"kind": "sessions_clear", "all_ws": all_ws}
+            return
+
+        # -- All other commands are safe to run synchronously -----------------
+        import coding_harness.cli as cli_mod
         orig = cli_mod.console
         cli_mod.console = _TUIConsole(self, thread_safe=False)
         try:
@@ -425,32 +450,6 @@ class WellsApp(App[None]):
 
         if not keep_running:
             self.exit()
-            return
-
-        # Special handling for interactive subcommands that need user input.
-        self._intercept_interactive(command)
-
-    def _intercept_interactive(self, command: str) -> None:
-        """Replace raw input() prompts with a pending-reply state machine."""
-        parts = command.strip().lower().split()
-        cmd = parts[0] if parts else ""
-        sub = parts[1] if len(parts) > 1 else ""
-
-        if cmd == "/resume" and not self._pending:
-            # show_resume_list was already called by handle_slash_command's
-            # _handle_resume_cmd — but that hit input() which did nothing in TUI.
-            # Re-trigger our TUI-native picker.
-            self._start_resume_picker(parts[1] if len(parts) > 1 else "")
-        elif cmd == "/sessions" and sub == "clear":
-            scope = "ALL workspaces" if "--all" in parts else "this workspace"
-            self.write_log(
-                f"[yellow]Delete all sessions for {scope}?[/yellow] "
-                "[dim]Type [bold]y[/bold] to confirm or anything else to cancel.[/dim]"
-            )
-            self._pending = {
-                "kind": "sessions_clear",
-                "all_ws": "--all" in parts,
-            }
 
     def _start_resume_picker(self, arg: str) -> None:
         from coding_harness.sessions import (
