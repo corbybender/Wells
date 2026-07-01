@@ -119,11 +119,7 @@ class StatusBar(Static):
         except Exception:
             force = None
 
-        if force == "chat":
-            mode = "[bold yellow]mode: chat[/bold yellow]"
-        elif force == "simple":
-            mode = "[bold green]mode: simple[/bold green]"
-        elif force == "task":
+        if force == "task":
             mode = "[bold magenta]mode: orchestrate[/bold magenta]"
         else:
             mode = "[dim]mode: auto[/dim]"
@@ -327,8 +323,9 @@ class WellsApp(App[None]):
             f"  [dim](safety: {config.HARNESS_SAFETY})[/dim]"
         )
         self.write_log(
-            "Ask a question [dim](auto chat)[/dim] or give a task "
-            "[dim](auto agent)[/dim]. Type [bold]/[/bold] for commands.\n"
+            "Ask anything — questions, edits, tasks. "
+            "Use [bold]/orchestrate[/bold] for complex multi-component work. "
+            "Type [bold]/[/bold] for all commands.\n"
         )
 
     def _ensure_repo_index(self) -> None:
@@ -539,7 +536,7 @@ class WellsApp(App[None]):
         """Run chat or task in a worker thread with redirected I/O."""
         import coding_harness.cli as cli_mod
         from coding_harness.cli import (
-            _REPL_STATE, _run_chat, _run_task, _summarize_run,
+            _REPL_STATE, _run_task, _summarize_run,
         )
 
         tui_console = _TUIConsole(self, thread_safe=True)
@@ -561,29 +558,17 @@ class WellsApp(App[None]):
             else:
                 intent = chat.classify_intent(text)
 
-            from coding_harness.cli import StreamingCallback, _run_simple
-            from coding_harness.chat import needs_escalation
+            from coding_harness.cli import StreamingCallback, _run_auto
             callbacks = [StreamingCallback()]
 
-            if intent == "chat":
-                reply = _run_chat(text, callbacks)
-                # If the chat LLM signalled it needs tools, auto-escalate.
-                if reply and needs_escalation(reply):
-                    self.call_from_thread(
-                        self.write_log,
-                        "[dim]Auto-escalating to task mode…[/dim]",
-                    )
-                    _run_task(text, self._agent_state, self._graph_app, callbacks)
-                    _REPL_STATE["memory"].set_run_summary(
-                        _summarize_run(_REPL_STATE.get("last_state", {}))
-                    )
-            elif intent == "simple":
-                _run_simple(text, self._agent_state, callbacks)
-            else:
+            if intent == "task":
                 _run_task(text, self._agent_state, self._graph_app, callbacks)
                 _REPL_STATE["memory"].set_run_summary(
                     _summarize_run(_REPL_STATE.get("last_state", {}))
                 )
+            else:
+                # "auto" (default) — direct executor, handles Q&A and tasks.
+                _run_auto(text, self._agent_state, callbacks)
         except Exception as e:
             self.call_from_thread(
                 self.write_log, f"[bold red]Error:[/bold red] {e}"

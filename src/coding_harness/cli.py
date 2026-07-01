@@ -46,16 +46,6 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "Print working dir, model, and token usage/savings.",
     ),
     (
-        "/chat",
-        "Force chat mode (next message)",
-        "Answer your next message directly without the agent loop.",
-    ),
-    (
-        "/simple",
-        "Force simple mode (next message)",
-        "Run next message as a direct executor call — no planner/reviewer overhead.",
-    ),
-    (
         "/orchestrate",
         "Force full orchestration (next message)",
         "Run next message through the full planner→coder→tester→reviewer loop.",
@@ -68,7 +58,7 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
     (
         "/auto",
         "Reset to auto-routing",
-        "Let Wells classify each message automatically (chat / simple / orchestrate).",
+        "Let Wells classify each message automatically (auto / orchestrate).",
     ),
     (
         "/clear",
@@ -137,10 +127,6 @@ def handle_slash_command(command: str) -> bool:
         _handle_working_dir(arg)
     elif cmd == "/status":
         _print_status_panel()
-    elif cmd == "/chat":
-        _set_force_mode("chat")
-    elif cmd == "/simple":
-        _set_force_mode("simple")
     elif cmd in ("/orchestrate", "/task"):
         _set_force_mode("task")
     elif cmd == "/auto":
@@ -317,38 +303,102 @@ def run_repl(resume_context: str | None = None) -> None:
     run_tui(resume_context=resume_context)
 
 
-def _run_chat(text: str, callbacks) -> str | None:
-    """Answer ``text`` directly without the agent loop (streamed).
+# Prepended to executor system prompt in auto mode so the LLM answers
+# questions directly and uses tools only when genuinely needed.
+_AUTO_SYSTEM_PREFIX = (
+    "You are Wells, a concise coding assistant.\n\n"
+    "- For questions or explanations: answer directly in your response. "
+    "Use tools only if you need to look something up to be accurate (e.g. read a "
+    "file to verify a specific detail). Do not invent answers.\n"
+    "- For file edits, commands, or any action: use your tools efficiently. "
+    "Do the minimum necessary. Do not add unrequested changes.\n"
+    "- Be brief. One-line answers are fine when the question is simple."
+)
 
-    Returns the reply text so the caller can check for escalation signals.
-    Returns None on error.
-    """
-    resume_ctx = _REPL_STATE.get("resume_context")
+
+def _run_auto(text: str, agent_state: dict, callbacks) -> None:
+    """Run ``text`` via the direct executor — handles Q&A and tasks alike."""
+    from coding_harness.executor import run_executor
+    from coding_harness.sessions import new_session_id, save_session, session_from_final_state
+    from coding_harness.tools import ToolContext
+
+    resume_ctx: str | None = _REPL_STATE.pop("resume_context", None)
+    _REPL_STATE.pop("resume_session_id", None)
+
+    original_goal = text
+    effective_task = text
     if resume_ctx:
-        _REPL_STATE["memory"].set_run_summary(resume_ctx)
+        effective_task = f"{resume_ctx}\n\nCURRENT REQUEST:\n{text}"
 
-    console.print()
-    reply: str | None = None
-    try:
-        reply = chat.conversational_reply(
-            text,
-            _REPL_STATE["memory"],
-            on_token=_stream_token if config.STREAM_OUTPUT else None,
+    # Inject last_run_summary so follow-up questions have context.
+    memory = _REPL_STATE["memory"]
+    if memory.last_run_summary and not resume_ctx:
+        effective_task = (
+            f"Context from previous action:\n{memory.last_run_summary}\n\n"
+            f"Current request:\n{text}"
         )
-        if not config.STREAM_OUTPUT and reply:
-            console.print(reply)
+
+    LEDGER.reset()
+    session_id = new_session_id()
+    t0 = _time.time()
+
+    if resume_ctx:
+        console.print("[dim]Continuing from previous session...[/dim]")
+
+    ctx = ToolContext(
+        workspace=agent_state.get("workspace_root", config.WORKSPACE_ROOT),
+        plan_mode=agent_state.get("plan_mode", config.PLAN_MODE),
+        safety=agent_state.get("safety", config.HARNESS_SAFETY),
+    )
+
+    try:
+        result = run_executor(
+            task=effective_task,
+            ctx=ctx,
+            system_prefix=_AUTO_SYSTEM_PREFIX,
+        )
+
+        console.print()
+        if result.summary:
+            console.print(result.summary)
+        console.print()
+
+        t = LEDGER.totals()
+        total = t["input"] + t["output"]
+        console.print(
+            f"[dim]{result.steps_taken} step(s) · {total:,} tokens "
+            f"({t['input']:,} in / {t['output']:,} out)[/dim]"
+        )
+
+        try:
+            final_state = {
+                "review_complete": result.stopped_reason == "done",
+                "implementation_steps": result.summary,
+                "review_result": result.stopped_reason,
+                "iteration": 1,
+                "git_summary": "",
+            }
+            data = session_from_final_state(
+                session_id, original_goal, final_state,
+                workspace=config.WORKSPACE_ROOT,
+                tokens_in=t["input"],
+                tokens_out=t["output"],
+                duration_seconds=int(_time.time() - t0),
+                resumed_from=resume_ctx[:80] if resume_ctx else None,
+            )
+            save_session(session_id, data)
+            console.print(f"[dim][session: {session_id}][/dim]")
+        except Exception:
+            pass
+
+        memory.set_run_summary(
+            f"Goal: {original_goal}\nResult: {result.summary[:400]}"
+        )
+
     except Exception as e:
-        from coding_harness.logger import log_error, log_path
-        log_error(f"_run_chat failed: {type(e).__name__}: {e}", e)
-        console.print(f"\n[bold red]Error:[/bold red] {type(e).__name__}: {e}")
-        console.print(f"[dim]Full details logged to: {log_path()}[/dim]")
-    console.print()
-    return reply
-
-
-def _stream_token(token: str) -> None:
-    sys.stdout.write(token)
-    sys.stdout.flush()
+        from coding_harness.logger import log_error
+        log_error(f"_run_auto failed: {type(e).__name__}: {e}", e)
+        console.print(f"\n[bold red]Error:[/bold red] {e}")
 
 
 def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
@@ -565,91 +615,11 @@ _REPL_STATE: dict = {
 }
 
 
-def _run_simple(text: str, agent_state: dict, callbacks) -> None:
-    """Run a scoped edit directly through the executor — no orchestration graph."""
-    from coding_harness.executor import run_executor
-    from coding_harness.sessions import new_session_id, save_session, session_from_final_state
-    from coding_harness.tools import ToolContext
-
-    # Consume resume context same as _run_task.
-    resume_ctx: str | None = _REPL_STATE.pop("resume_context", None)
-    _REPL_STATE.pop("resume_session_id", None)
-
-    original_goal = text
-    effective_task = f"{resume_ctx}\n\nTASK:\n{text}" if resume_ctx else text
-
-    LEDGER.reset()
-    session_id = new_session_id()
-    t0 = _time.time()
-
-    if resume_ctx:
-        console.print("[dim]Continuing from previous session...[/dim]")
-
-    ctx = ToolContext(
-        workspace=agent_state.get("workspace_root", config.WORKSPACE_ROOT),
-        plan_mode=agent_state.get("plan_mode", config.PLAN_MODE),
-        safety=agent_state.get("safety", config.HARNESS_SAFETY),
-    )
-
-    try:
-        result = run_executor(task=effective_task, ctx=ctx, max_steps=10)
-
-        console.print()
-        if result.summary:
-            console.print(result.summary)
-        console.print()
-
-        if result.stopped_reason == "max_steps":
-            console.print(
-                "[yellow]Reached step limit. If the task is incomplete, "
-                "use [bold]/orchestrate[/bold] to run full orchestration.[/yellow]"
-            )
-
-        t = LEDGER.totals()
-        total = t["input"] + t["output"]
-        console.print(
-            f"[dim]{result.steps_taken} step(s) · {total:,} tokens "
-            f"({t['input']:,} in / {t['output']:,} out)[/dim]"
-        )
-
-        try:
-            final_state = {
-                "review_complete": result.stopped_reason == "done",
-                "implementation_steps": result.summary,
-                "review_result": result.stopped_reason,
-                "iteration": 1,
-                "git_summary": "",
-            }
-            data = session_from_final_state(
-                session_id, original_goal, final_state,
-                workspace=config.WORKSPACE_ROOT,
-                tokens_in=t["input"],
-                tokens_out=t["output"],
-                duration_seconds=int(_time.time() - t0),
-                resumed_from=resume_ctx[:80] if resume_ctx else None,
-            )
-            save_session(session_id, data)
-            console.print(f"[dim][session: {session_id}][/dim]")
-        except Exception:
-            pass
-
-        # Feed result into chat memory for follow-up questions.
-        _REPL_STATE["memory"].set_run_summary(
-            f"Goal: {original_goal}\nResult: {result.summary[:400]}"
-        )
-
-    except Exception as e:
-        from coding_harness.logger import log_error
-        log_error(f"_run_simple failed: {type(e).__name__}: {e}", e)
-        console.print(f"\n[bold red]Error:[/bold red] {e}")
-
-
 def _set_force_mode(mode: str) -> None:
     _REPL_STATE["force_mode"] = mode
     labels = {
-        "chat": "[bold cyan]chat[/bold cyan]",
-        "simple": "[bold green]simple[/bold green] [dim](direct executor)[/dim]",
-        "task": "[bold magenta]orchestrate[/bold magenta] [dim](full loop)[/dim]",
+        "auto": "[bold green]auto[/bold green] [dim](direct executor)[/dim]",
+        "task": "[bold magenta]orchestrate[/bold magenta] [dim](full planning loop)[/dim]",
     }
     label = labels.get(mode, f"[bold]{mode}[/bold]")
     console.print(
