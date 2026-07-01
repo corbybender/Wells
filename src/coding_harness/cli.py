@@ -482,6 +482,13 @@ def run_repl(resume_context: str | None = None) -> None:
 
 def _run_chat(text: str, callbacks) -> None:
     """Answer ``text`` directly without the agent loop (streamed)."""
+    # If resume context is loaded, inject into chat memory so every chat turn
+    # in this session is aware of what the previous session did.  Don't pop it
+    # here — the task runner pops it when it needs to prepend it to the goal.
+    resume_ctx = _REPL_STATE.get("resume_context")
+    if resume_ctx:
+        _REPL_STATE["memory"].set_run_summary(resume_ctx)
+
     console.print()  # blank line before streamed output
     try:
         reply = chat.conversational_reply(
