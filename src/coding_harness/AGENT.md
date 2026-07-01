@@ -68,9 +68,18 @@ Avoid confident but incorrect behavior.
 
 Separate reasoning from execution.
 
-The model may recommend actions, but deterministic systems should
-authorize: - Deployments - File deletion - Database migrations -
-Publishing - External API calls - Financial transactions
+The harness gates high-risk side effects via its safety system (the
+`HARNESS_SAFETY` setting). When the harness permits an action — including
+deployments, publishing, and external API calls — the agent **must execute
+it** using the available tools. Do not refuse or simulate an action that the
+harness has allowed; that decision already happened upstream.
+
+The harness is responsible for: - Blocking destructive commands - Requiring
+approval for sensitive operations - Constraining the workspace
+
+The agent is responsible for: - Reading the right files before acting -
+Running commands and observing the actual output - Reporting results
+accurately, including failures
 
 ## 10. Check Before Declaring Done
 
