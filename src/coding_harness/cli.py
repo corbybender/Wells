@@ -5,10 +5,6 @@ import sys
 import time as _time
 from pathlib import Path
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import HTML
 from rich.console import Console
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -18,12 +14,6 @@ from coding_harness.tokens import LEDGER
 from coding_harness.main import _print_final_summary, _print_info, _reload_module_config
 
 console = Console()
-
-style = Style.from_dict(
-    {
-        "prompt": "#00aa00 bold",
-    }
-)
 
 
 # ---------------------------------------------------------------------------
@@ -88,24 +78,6 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
 ]
 
 
-class SlashCompleter(Completer):
-    """Autocomplete slash commands. Typing '/' lists every command."""
-
-    def get_completions(self, document, complete_event):
-        text = document.text_before_cursor
-        if not text.startswith("/"):
-            return
-        # Suggest all commands whose name starts with the typed text.
-        for cmd, short, _long in SLASH_COMMANDS:
-            if cmd.startswith(text):
-                yield Completion(
-                    cmd,
-                    start_position=-len(text),
-                    display=cmd,
-                    display_meta=short,
-                )
-
-
 class StreamingCallback(BaseCallbackHandler):
     """Streams LLM tokens to the console."""
 
@@ -119,17 +91,6 @@ class StreamingCallback(BaseCallbackHandler):
             sys.stdout.write("\n")
             sys.stdout.flush()
 
-
-def print_welcome() -> None:
-    console.print("\n[bold blue]Wells Coding Harness[/bold blue]")
-    console.print(f"Model: {config.model_name_for_task('coding')}")
-    console.print(
-        f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})"
-    )
-    console.print(
-        "Ask a question (auto chat) or give a task (auto agent). "
-        "Type [bold]/[/bold] for commands."
-    )
 
 
 def handle_slash_command(command: str) -> bool:
@@ -330,186 +291,10 @@ def _handle_index(arg: str) -> None:
         console.print("[dim]Usage: /index [build|update|force|status|clear][/dim]")
 
 
-def _status_parts() -> tuple[str, str, str, str]:
-    """Return (wd, model, tokens_str, mode_label) — shared by toolbar and static bar."""
-    try:
-        totals = LEDGER.totals()
-        used = totals["input"] + totals["output"]
-        saved = totals["saved_trim"] + totals["saved_summary"]
-    except Exception:
-        used = saved = 0
-
-    try:
-        model = config.model_name_for_task("coding")
-    except Exception:
-        model = "?"
-
-    wd = config.WORKSPACE_ROOT
-    if len(wd) > 32:
-        wd = "..." + wd[-29:]
-
-    saved_str = f" | saved: {saved:,}" if saved else ""
-    tokens_str = f"tokens: {used:,}{saved_str}"
-
-    force = _REPL_STATE.get("force_mode")
-    if force == "chat":
-        mode_label = "mode: chat"
-    elif force == "task":
-        mode_label = "mode: task"
-    else:
-        mode_label = "mode: auto"
-
-    return wd, model, tokens_str, mode_label
-
-
-def _bottom_toolbar():
-    """prompt_toolkit toolbar — shown while prompt is active (waiting for input)."""
-    wd, model, tokens_str, mode_label = _status_parts()
-
-    force = _REPL_STATE.get("force_mode")
-    if force == "chat":
-        mode_html = f'<style fg="#ffaa00">| {mode_label}</style>'
-    elif force == "task":
-        mode_html = f'<style fg="#ff44ff">| {mode_label}</style>'
-    else:
-        mode_html = f'<style fg="#666666">| {mode_label}</style>'
-
-    return HTML(
-        f'<style fg="#888888">{wd}</style>'
-        f' <style fg="#00aa00">| {model}</style>'
-        f' <style fg="#5588ff">| {tokens_str}</style>'
-        f" {mode_html}"
-    )
-
-
-def _print_status_bar() -> None:
-    """Print the status bar as a static Rich line after each response.
-
-    prompt_toolkit's bottom_toolbar only renders while the prompt is active.
-    Printing it here keeps the same info visible immediately after output ends,
-    before the next prompt re-appears.
-    """
-    wd, model, tokens_str, mode_label = _status_parts()
-
-    force = _REPL_STATE.get("force_mode")
-    if force == "chat":
-        mode_rich = f"[#ffaa00]{mode_label}[/#ffaa00]"
-    elif force == "task":
-        mode_rich = f"[#ff44ff]{mode_label}[/#ff44ff]"
-    else:
-        mode_rich = f"[dim]{mode_label}[/dim]"
-
-    console.print(
-        f"[dim]{wd}[/dim] [green]| {model}[/green] "
-        f"[#5588ff]| {tokens_str}[/#5588ff] [dim]|[/dim] {mode_rich}"
-    )
-
-
-def _ensure_repo_index() -> None:
-    """Auto-detect / build repository index (silent when unavailable or disabled).
-
-    Respects INDEX_AUTO_UPDATE config. On first-run with no index, builds it
-    silently. On stale index (older than INDEX_MAX_AGE_HOURS), auto-updates.
-    When the indexer is not installed, does nothing.
-    """
-    if not config.INDEX_AUTO_UPDATE:
-        return
-    try:
-        from coding_harness.index_tools import ensure_index
-
-        max_age = float(os.environ.get("INDEX_MAX_AGE_HOURS", "24"))
-        result = ensure_index(config.WORKSPACE_ROOT, max_age_hours=max_age,
-                              auto_build=True)
-        if result.startswith("index-built"):
-            # Only print the summary line, not the full build output.
-            console.print(f"[green]{result[:120]}[/green]")
-        elif result.startswith("index-failed"):
-            console.print(f"[yellow]Index: {result}[/yellow]")
-        # Everything else (ready, skipped, unavailable) is silent.
-    except Exception:
-        pass
-
-
 def run_repl(resume_context: str | None = None) -> None:
-    # Auto-setup on first run
-    try:
-        from coding_harness import setup
-        setup.first_run_setup()
-    except Exception:
-        pass  # Setup is optional
-
-    if not _ensure_model_configured():
-        return
-
-    # Auto-detect / build repository index (silent when unavailable).
-    _ensure_repo_index()
-
-    print_welcome()
-
-    # Session-scoped state shared with slash commands and the router.
-    _REPL_STATE["memory"] = chat.ConversationMemory()
-    _REPL_STATE["force_mode"] = None
-    _REPL_STATE["last_state"] = {}
-    _REPL_STATE["resume_context"] = resume_context  # pre-loaded from -r flag
-    _REPL_STATE["resume_session_id"] = None
-    if resume_context:
-        console.print("[dim]Session context loaded — your first task continues from the previous session.[/dim]\n")
-
-    session = PromptSession(
-        completer=SlashCompleter(),
-        bottom_toolbar=_bottom_toolbar,
-    )
-
-    app = build_graph()
-
-    # Maintain conversational state across loops
-    agent_state = {
-        "iteration": 0,
-        "max_iterations": config.MAX_ITERATIONS,
-        "workspace_root": config.WORKSPACE_ROOT,
-        "safety": config.HARNESS_SAFETY,
-        "plan_mode": config.PLAN_MODE,
-        "messages": [],
-        "executor_messages": [],
-    }
-
-    callbacks = [StreamingCallback()]
-
-    while True:
-        try:
-            text = session.prompt(
-                HTML("<prompt>Wells&gt;</prompt> "), style=style
-            ).strip()
-        except KeyboardInterrupt:
-            continue
-        except EOFError:
-            break
-
-        if not text:
-            continue
-
-        if text.startswith("/"):
-            if not handle_slash_command(text):
-                break
-            continue
-
-        # ---- Route: chat vs task -----------------------------------------
-        force = _REPL_STATE.get("force_mode")
-        if force:
-            intent = force
-            _REPL_STATE["force_mode"] = None  # one-shot override
-        else:
-            intent = chat.classify_intent(text)
-
-        if intent == "chat":
-            _run_chat(text, callbacks)
-        else:
-            _run_task(text, agent_state, app, callbacks)
-            # Feed the agent's result back into the conversation memory so
-            # follow-up questions ("did it work?") have context.
-            _REPL_STATE["memory"].set_run_summary(
-                _summarize_run(_REPL_STATE.get("last_state", {}))
-            )
+    """Launch the full-screen Textual TUI (replaces the old prompt_toolkit REPL)."""
+    from coding_harness.tui import run_tui
+    run_tui(resume_context=resume_context)
 
 
 def _run_chat(text: str, callbacks) -> None:
@@ -536,7 +321,6 @@ def _run_chat(text: str, callbacks) -> None:
         console.print(f"\n[bold red]Error:[/bold red] {type(e).__name__}: {e}")
         console.print(f"[dim]Full details logged to: {log_path()}[/dim]")
     console.print()
-    _print_status_bar()
 
 
 def _stream_token(token: str) -> None:
@@ -611,8 +395,6 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
         from coding_harness.logger import log_error
         log_error(f"_run_task failed: {type(e).__name__}: {e}", e)
         console.print(f"\n[bold red]Error during execution:[/bold red] {e}")
-
-    _print_status_bar()
 
 
 def _summarize_run(state: dict) -> str:
