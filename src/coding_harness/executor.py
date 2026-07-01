@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass, field
 
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     HumanMessage,
     SystemMessage,
@@ -149,7 +150,8 @@ def parse_text_tool_calls(text: str) -> list[dict]:
 
 
 def _account_usage(
-    *, step: str, model: str, messages: list[BaseMessage], resp: BaseMessage
+    *, step: str, model: str, messages: list[BaseMessage], resp: BaseMessage,
+    saved_by_trim: int = 0,
 ) -> None:
     """Record token usage for one executor round into the global ledger."""
     um = getattr(resp, "usage_metadata", None) or {}
@@ -169,7 +171,89 @@ def _account_usage(
         reasoning_tokens=reasoning,
         cache_read_tokens=cache_read,
         category_tokens={"executor_input": input_tokens},
+        saved_by_trim=saved_by_trim,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sliding-window context pruning
+# ---------------------------------------------------------------------------
+
+# When estimated input tokens exceed this, drop oldest AI+Tool rounds.
+_PRUNE_THRESHOLD = int(__import__("os").environ.get("WELLS_CTX_LIMIT", "14000"))
+# Target token count after pruning.
+_PRUNE_TARGET = int(__import__("os").environ.get("WELLS_CTX_TARGET", "9000"))
+
+
+def _ctx_tokens(messages: list[BaseMessage]) -> int:
+    """Rough token estimate for the full message list."""
+    total = 0
+    for m in messages:
+        content = getattr(m, "content", "") or ""
+        if isinstance(content, list):
+            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+        total += estimate_tokens(content)
+        for tc in getattr(m, "tool_calls", None) or []:
+            total += estimate_tokens(str(tc.get("args", {})))
+    return total
+
+
+def _prune_messages(messages: list[BaseMessage]) -> tuple[list[BaseMessage], int]:
+    """Drop oldest (AIMessage + ToolMessages) rounds when context is too large.
+
+    Always preserves:
+    - messages[0] (SystemMessage)
+    - messages[1] (initial HumanMessage / task)
+    - the most recent AI+Tool round (so the model always has fresh context)
+
+    Returns (pruned_messages, estimated_tokens_saved).
+    """
+    total = _ctx_tokens(messages)
+    if total <= _PRUNE_THRESHOLD or len(messages) <= 3:
+        return messages, 0
+
+    head = messages[:2]   # system + initial task
+    tail = list(messages[2:])
+    saved = 0
+
+    while tail and (total - saved) > _PRUNE_TARGET:
+        # Count remaining AIMessage rounds to ensure we keep at least one.
+        rounds_left = sum(1 for m in tail if isinstance(m, AIMessage))
+        if rounds_left <= 1:
+            break
+
+        # Drop the first element: must be an AIMessage (or orphaned ToolMessage).
+        if isinstance(tail[0], ToolMessage):
+            saved += estimate_tokens(getattr(tail[0], "content", "") or "")
+            tail = tail[1:]
+            continue
+
+        if not isinstance(tail[0], AIMessage):
+            break  # unexpected message type — stop to be safe
+
+        # Drop the AIMessage.
+        ai_content = getattr(tail[0], "content", "") or ""
+        if isinstance(ai_content, list):
+            ai_content = " ".join(b.get("text", "") for b in ai_content if isinstance(b, dict))
+        ai_args = sum(
+            estimate_tokens(str(tc.get("args", {})))
+            for tc in (getattr(tail[0], "tool_calls", None) or [])
+        )
+        saved += estimate_tokens(ai_content) + ai_args
+        tail = tail[1:]
+
+        # Drop all ToolMessages that belong to this AI turn.
+        while tail and isinstance(tail[0], ToolMessage):
+            saved += estimate_tokens(getattr(tail[0], "content", "") or "")
+            tail = tail[1:]
+
+    if not saved:
+        return messages, 0
+
+    note = HumanMessage(
+        content=f"[context pruned: ~{saved:,} tokens of older tool-call history removed]"
+    )
+    return head + [note] + tail, saved
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +319,13 @@ def run_executor(
 
     history: list[dict] = []
     steps = 0
+    total_pruned = 0
     while steps < cap:
+        messages, pruned = _prune_messages(messages)
+        if pruned:
+            total_pruned += pruned
+            print(f"[executor] context pruned: ~{pruned:,} tokens dropped, "
+                  f"now ~{_ctx_tokens(messages):,} tokens")
         try:
             resp = config._invoke_with_retry(llm, messages)
         except Exception as e:
@@ -246,7 +336,8 @@ def run_executor(
                 stopped_reason="error",
                 messages=messages,
             )
-        _account_usage(step=step_label, model=model_name, messages=messages, resp=resp)
+        _account_usage(step=step_label, model=model_name, messages=messages, resp=resp,
+                       saved_by_trim=pruned)
         messages.append(resp)
 
         # Extract tool calls (native first, then text fallback).
@@ -300,9 +391,13 @@ def run_executor(
         if steps >= cap:
             # One final round to let the model summarize after hitting the cap.
             try:
+                messages, pruned = _prune_messages(messages)
+                if pruned:
+                    total_pruned += pruned
                 final = config._invoke_with_retry(llm, messages)
                 _account_usage(
-                    step=step_label, model=model_name, messages=messages, resp=final
+                    step=step_label, model=model_name, messages=messages, resp=final,
+                    saved_by_trim=pruned,
                 )
                 messages.append(final)
                 return ExecutorResult(
