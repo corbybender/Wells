@@ -330,12 +330,8 @@ def _handle_index(arg: str) -> None:
         console.print("[dim]Usage: /index [build|update|force|status|clear][/dim]")
 
 
-def _bottom_toolbar():
-    """Persistent status bar shown beneath the prompt (like opencode's panel).
-
-    Returns prompt_toolkit-formatted text. Called on every render, so it stays
-    live as token usage grows and as the working dir / model change.
-    """
+def _status_parts() -> tuple[str, str, str, str]:
+    """Return (wd, model, tokens_str, mode_label) — shared by toolbar and static bar."""
     try:
         totals = LEDGER.totals()
         used = totals["input"] + totals["output"]
@@ -349,27 +345,63 @@ def _bottom_toolbar():
         model = "?"
 
     wd = config.WORKSPACE_ROOT
-    # Shorten the working dir for narrow terminals.
     if len(wd) > 32:
         wd = "..." + wd[-29:]
 
     saved_str = f" | saved: {saved:,}" if saved else ""
+    tokens_str = f"tokens: {used:,}{saved_str}"
 
-    # Show forced mode if active.
     force = _REPL_STATE.get("force_mode")
-    mode_str = ""
     if force == "chat":
-        mode_str = '<style fg="#ffaa00">| FORCE:chat</style>'
+        mode_label = "mode: chat"
     elif force == "task":
-        mode_str = '<style fg="#ff44ff">| FORCE:task</style>'
+        mode_label = "mode: task"
     else:
-        mode_str = '<style fg="#666666">| auto</style>'
+        mode_label = "mode: auto"
+
+    return wd, model, tokens_str, mode_label
+
+
+def _bottom_toolbar():
+    """prompt_toolkit toolbar — shown while prompt is active (waiting for input)."""
+    wd, model, tokens_str, mode_label = _status_parts()
+
+    force = _REPL_STATE.get("force_mode")
+    if force == "chat":
+        mode_html = f'<style fg="#ffaa00">| {mode_label}</style>'
+    elif force == "task":
+        mode_html = f'<style fg="#ff44ff">| {mode_label}</style>'
+    else:
+        mode_html = f'<style fg="#666666">| {mode_label}</style>'
 
     return HTML(
         f'<style fg="#888888">{wd}</style>'
         f' <style fg="#00aa00">| {model}</style>'
-        f' <style fg="#5588ff">| tokens: {used:,}{saved_str}</style>'
-        f" {mode_str}"
+        f' <style fg="#5588ff">| {tokens_str}</style>'
+        f" {mode_html}"
+    )
+
+
+def _print_status_bar() -> None:
+    """Print the status bar as a static Rich line after each response.
+
+    prompt_toolkit's bottom_toolbar only renders while the prompt is active.
+    Printing it here keeps the same info visible immediately after output ends,
+    before the next prompt re-appears.
+    """
+    wd, model, tokens_str, mode_label = _status_parts()
+
+    force = _REPL_STATE.get("force_mode")
+    if force == "chat":
+        mode_rich = f"[#ffaa00]{mode_label}[/#ffaa00]"
+    elif force == "task":
+        mode_rich = f"[#ff44ff]{mode_label}[/#ff44ff]"
+    else:
+        mode_rich = f"[dim]{mode_label}[/dim]"
+
+    console.print(
+        f"[dim]{wd}[/dim] [green]| {model}[/green] "
+        f"[#5588ff]| {tokens_str}[/#5588ff] [dim]|[/dim] {mode_rich}"
     )
 
 
@@ -504,6 +536,7 @@ def _run_chat(text: str, callbacks) -> None:
         console.print(f"\n[bold red]Error:[/bold red] {type(e).__name__}: {e}")
         console.print(f"[dim]Full details logged to: {log_path()}[/dim]")
     console.print()
+    _print_status_bar()
 
 
 def _stream_token(token: str) -> None:
@@ -578,6 +611,8 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
         from coding_harness.logger import log_error
         log_error(f"_run_task failed: {type(e).__name__}: {e}", e)
         console.print(f"\n[bold red]Error during execution:[/bold red] {e}")
+
+    _print_status_bar()
 
 
 def _summarize_run(state: dict) -> str:
