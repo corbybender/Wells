@@ -121,8 +121,10 @@ class StatusBar(Static):
 
         if force == "chat":
             mode = "[bold yellow]mode: chat[/bold yellow]"
+        elif force == "simple":
+            mode = "[bold green]mode: simple[/bold green]"
         elif force == "task":
-            mode = "[bold magenta]mode: task[/bold magenta]"
+            mode = "[bold magenta]mode: orchestrate[/bold magenta]"
         else:
             mode = "[dim]mode: auto[/dim]"
 
@@ -560,11 +562,13 @@ class WellsApp(App[None]):
             else:
                 intent = chat.classify_intent(text)
 
-            from coding_harness.cli import StreamingCallback
+            from coding_harness.cli import StreamingCallback, _run_simple
             callbacks = [StreamingCallback()]
 
             if intent == "chat":
                 _run_chat(text, callbacks)
+            elif intent == "simple":
+                _run_simple(text, self._agent_state, callbacks)
             else:
                 _run_task(text, self._agent_state, self._graph_app, callbacks)
                 _REPL_STATE["memory"].set_run_summary(

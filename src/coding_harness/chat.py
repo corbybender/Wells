@@ -44,7 +44,7 @@ from coding_harness.config import (
 )
 from coding_harness.tokens import LEDGER, calibrate, estimate_tokens
 
-Intent = Literal["chat", "task"]
+Intent = Literal["chat", "simple", "task"]
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +122,60 @@ _CHITCHAT = (
     "sounds good",
 )
 
+# ---------------------------------------------------------------------------
+# Simple-task signals — scoped atomic edits that don't need orchestration
+# ---------------------------------------------------------------------------
+
+# Atomic "point-fix" verbs: imply a small, located change to something known.
+_SIMPLE_VERBS = (
+    "change", "update", "set", "fix", "rename", "delete", "remove",
+    "replace", "edit", "correct", "adjust", "tweak", "bump", "increase",
+    "decrease", "toggle", "enable", "disable", "comment out", "uncomment",
+    "add a line", "add one", "remove the", "delete the", "change the",
+    "update the", "set the", "fix the", "rename the",
+)
+
+# File-like targets: a specific file or element is named, scoping the task.
+_FILE_EXTENSION_RE = re.compile(
+    r"\b\w+\.(html?|css|js|ts|tsx|jsx|py|rs|go|java|json|ya?ml|toml|md|txt|sh|env)\b",
+    re.IGNORECASE,
+)
+_SPECIFIC_TARGET_RE = re.compile(
+    r"\b(the\s+\w+\s+(div|class|function|method|variable|field|property|line|"
+    r"file|component|element|style|attribute|tag|button|header|footer|"
+    r"section|column|row|width|height|color|font|margin|padding|border|"
+    r"value|key|string|text|label|name|path|url|import|export))\b",
+    re.IGNORECASE,
+)
+
+# These words in the request push it toward full orchestration, not simple.
+_COMPLEX_BLOCKERS = (
+    "build", "create", "implement", "set up", "design", "architect",
+    "add a", "add the", "new ", "entire", "all ", "across", "system",
+    "service", "api", "auth", "database", "deploy", "refactor",
+    "restructure", "migrate",
+)
+
+
+def _is_simple_task(text: str) -> bool:
+    """Return True when the request looks like a scoped, single-file atomic edit."""
+    lower = text.strip().lower()
+    words = lower.split()
+    if len(words) > 30:
+        return False  # long requests are rarely simple
+
+    # Any complex-blocker present → not simple
+    if any(b in lower for b in _COMPLEX_BLOCKERS):
+        return False
+
+    has_simple_verb = any(lower.startswith(v) or f" {v} " in f" {lower} " for v in _SIMPLE_VERBS)
+    has_file_target = bool(_FILE_EXTENSION_RE.search(text))
+    has_specific_target = bool(_SPECIFIC_TARGET_RE.search(text))
+
+    return has_simple_verb and (has_file_target or has_specific_target)
+
+
+# ---------------------------------------------------------------------------
 # Verbs that signal a request to *change the codebase* — a real task.
 # If any appear, lean toward "task" even when the message is phrased as a
 # question ("can you fix the login bug?").
@@ -268,18 +322,21 @@ def _heuristic_classify(text: str) -> Intent | None:
     if starts_with_question and not has_task_signal:
         return "chat"
 
-    # Imperative task verb present → task.
+    # Imperative task verb present — check if it's a simple scoped edit first.
     if has_task_signal and not starts_with_question and not looks_like_question:
+        if _is_simple_task(stripped):
+            return "simple"
         return "task"
 
-    # Task verb phrased as a question ("can you fix the bug?") → task, because
-    # the user clearly wants the work done.
+    # Task verb phrased as a question ("can you fix the bug?") → check scope.
     if (
         has_task_signal
         and (starts_with_question or has_question_mark)
         and not has_followup
     ):
         if _imperative_after_please(stripped):
+            if _is_simple_task(stripped):
+                return "simple"
             return "task"
 
     return None  # ambiguous
@@ -308,18 +365,24 @@ def _imperative_after_please(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _CLASSIFIER_SYSTEM = (
-    "You are a fast intent router for a coding assistant REPL. Decide whether "
-    "the user's message is (a) a CONVERSATIONAL question that deserves a direct "
-    "answer, or (b) a TASK that requires reading/editing files and running "
-    "commands in the workspace.\n\n"
-    "Reply with exactly one word: CHAT or TASK.\n\n"
-    "Guidelines:\n"
-    "- 'explain what you did', 'did the fix work?', 'what does X do?' -> CHAT\n"
-    "- 'what files did you change?' -> CHAT\n"
-    "- 'add a login page', 'fix the bug in parser.py', 'refactor X' -> TASK\n"
-    "- 'can you fix the bug?' (wants work done) -> TASK\n"
-    "- 'how do I fix X?' (asking to learn) -> CHAT\n"
-    "- when unsure, prefer TASK.\n"
+    "You are a fast intent router for a coding assistant REPL. Classify the "
+    "user's message into exactly one of three categories.\n\n"
+    "Reply with exactly one word: CHAT, SIMPLE, or TASK.\n\n"
+    "CHAT — conversational; answer directly, no file edits needed:\n"
+    "  'explain what you did', 'what does X do?', 'did the fix work?'\n\n"
+    "SIMPLE — a scoped, atomic file edit with a clear target; no planning needed:\n"
+    "  'change the div height to 200px in index.html'\n"
+    "  'rename the function foo to bar in utils.py'\n"
+    "  'update the color in main.css to #ff0000'\n"
+    "  'fix the typo on line 42 of config.py'\n\n"
+    "TASK — new feature, multi-file change, unclear scope, or architecture work:\n"
+    "  'add a login page', 'build a REST API', 'refactor the auth system'\n"
+    "  'fix the bug' (no file specified), 'implement dark mode'\n\n"
+    "Rules:\n"
+    "- If a specific file AND a specific small change are both named → SIMPLE\n"
+    "- If it requires planning, multiple files, or creating new things → TASK\n"
+    "- Questions or explanations → CHAT\n"
+    "- When unsure between SIMPLE and TASK, prefer TASK.\n"
 )
 
 _CLASSIFIER_CACHE: dict[str, Intent] = {}
@@ -336,9 +399,14 @@ def _llm_classify(text: str) -> Intent:
             llm, [SystemMessage(content=_CLASSIFIER_SYSTEM), HumanMessage(content=text)]
         )
         answer = (resp.content or "").strip().upper()
-        intent: Intent = "chat" if answer.startswith("CHAT") else "task"
+        if answer.startswith("CHAT"):
+            intent: Intent = "chat"
+        elif answer.startswith("SIMPLE"):
+            intent = "simple"
+        else:
+            intent = "task"
     except Exception:
-        intent = "task"  # conservative fallback: run the agent
+        intent = "task"  # conservative fallback
     _CLASSIFIER_CACHE[key] = intent
     return intent
 
