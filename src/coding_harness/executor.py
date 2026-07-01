@@ -176,13 +176,120 @@ def _account_usage(
 
 
 # ---------------------------------------------------------------------------
-# Sliding-window context pruning
+# Working memory — structural task state maintained across tool calls
 # ---------------------------------------------------------------------------
 
-# When estimated input tokens exceed this, drop oldest AI+Tool rounds.
-_PRUNE_THRESHOLD = int(__import__("os").environ.get("WELLS_CTX_LIMIT", "14000"))
-# Target token count after pruning.
-_PRUNE_TARGET = int(__import__("os").environ.get("WELLS_CTX_TARGET", "9000"))
+_WM_TAG = "<working_memory>"  # prefix that identifies the WM HumanMessage in the list
+
+
+@dataclass
+class WorkingMemory:
+    """Compact structured state updated after every tool call and injected into
+    every LLM request.  Never pruned — it IS the compressed truth of the run.
+
+    Prevents the costliest agent failure modes:
+    - Re-reading files already processed
+    - Re-attempting approaches that already failed
+    - Forgetting test state between rounds
+    """
+
+    task: str = ""
+    files_modified: list[str] = field(default_factory=list)
+    files_read: list[str] = field(default_factory=list)
+    failed_commands: list[str] = field(default_factory=list)
+    test_status: str = ""
+
+    def update_from_tool(self, name: str, args: dict, result_text: str, ok: bool) -> None:
+        path = (
+            args.get("path") or args.get("file_path")
+            or args.get("filename") or args.get("filepath") or ""
+        )
+        if name in {"read_file", "view_file", "cat"} and path:
+            if path not in self.files_read:
+                self.files_read.append(path)
+        elif name in {"write_file", "edit_file", "patch_file", "str_replace_editor",
+                      "str_replace", "create_file"} and path and ok:
+            if path not in self.files_modified:
+                self.files_modified.append(path)
+            if path not in self.files_read:
+                self.files_read.append(path)
+        elif name in {"run_tests", "pytest", "test"}:
+            lines = [l.strip() for l in result_text.splitlines() if l.strip()]
+            for line in lines:
+                low = line.lower()
+                if any(k in low for k in ("passed", "failed", "error", "ok", "tests ran")):
+                    self.test_status = line[:200]
+                    break
+            else:
+                self.test_status = lines[0][:200] if lines else ""
+        elif name in {"run_command", "bash", "shell"} and not ok:
+            cmd = str(args.get("command", ""))[:60]
+            err_lines = result_text.strip().splitlines()
+            err = err_lines[-1][:80] if err_lines else ""
+            entry = f"{cmd} → {err}"
+            if entry not in self.failed_commands:
+                self.failed_commands.append(entry)
+
+    def is_empty(self) -> bool:
+        return not any([self.files_modified, self.files_read,
+                        self.failed_commands, self.test_status])
+
+    def to_xml(self) -> str:
+        parts = [_WM_TAG]
+        if self.task:
+            parts.append(f"  <task>{self.task[:300]}</task>")
+        if self.files_modified:
+            parts.append(
+                f"  <files_modified>{', '.join(self.files_modified[-12:])}</files_modified>"
+            )
+        # Only list read-only files (not ones already in files_modified — redundant)
+        read_only = [f for f in self.files_read if f not in self.files_modified]
+        if read_only:
+            parts.append(f"  <files_read>{', '.join(read_only[-12:])}</files_read>")
+        if self.failed_commands:
+            parts.append("  <failed_approaches>")
+            for fc in self.failed_commands[-5:]:
+                parts.append(f"    - {fc}")
+            parts.append("  </failed_approaches>")
+        if self.test_status:
+            parts.append(f"  <test_status>{self.test_status}</test_status>")
+        parts.append("</working_memory>")
+        return "\n".join(parts)
+
+
+def _inject_wm(messages: list[BaseMessage], wm: WorkingMemory) -> list[BaseMessage]:
+    """Insert or replace the working memory HumanMessage (never pruned).
+
+    Position: immediately after the first HumanMessage (the task).
+    """
+    if wm.is_empty():
+        return messages
+    wm_msg = HumanMessage(content=wm.to_xml())
+    result = list(messages)
+    for i, m in enumerate(result):
+        if isinstance(m, HumanMessage) and (m.content or "").startswith(_WM_TAG):
+            result[i] = wm_msg
+            return result
+    # Not found — insert after first HumanMessage
+    for i, m in enumerate(result):
+        if isinstance(m, HumanMessage):
+            result.insert(i + 1, wm_msg)
+            return result
+    result.append(wm_msg)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Observation masking (primary context management)
+# ---------------------------------------------------------------------------
+
+# Keep this many most-recent AI+Tool rounds verbatim; replace content in older ones.
+_MASK_KEEP_ROUNDS = int(__import__("os").environ.get("WELLS_KEEP_ROUNDS", "4"))
+# Only mask tool outputs larger than this many estimated tokens (small ones are cheap).
+_MASK_MIN_TOKENS = int(__import__("os").environ.get("WELLS_MASK_MIN", "120"))
+# Absolute drop threshold — safety valve, fires only when masking isn't enough.
+_DROP_THRESHOLD = int(__import__("os").environ.get("WELLS_CTX_LIMIT", "18000"))
+_DROP_TARGET = int(__import__("os").environ.get("WELLS_CTX_TARGET", "12000"))
 
 
 def _ctx_tokens(messages: list[BaseMessage]) -> int:
@@ -198,61 +305,147 @@ def _ctx_tokens(messages: list[BaseMessage]) -> int:
     return total
 
 
-def _prune_messages(messages: list[BaseMessage]) -> tuple[list[BaseMessage], int]:
-    """Drop oldest (AIMessage + ToolMessages) rounds when context is too large.
+def _mask_tool_result(name: str, args: dict, content: str) -> str:
+    """Compress a large tool result to a typed 1-line summary.
 
-    Always preserves:
-    - messages[0] (SystemMessage)
-    - messages[1] (initial HumanMessage / task)
-    - the most recent AI+Tool round (so the model always has fresh context)
-
-    Returns (pruned_messages, estimated_tokens_saved).
+    Type-aware so each summary carries the most useful signal for its tool kind.
+    Index tools (find_symbol, etc.) are never masked — their output is already compact.
     """
-    total = _ctx_tokens(messages)
-    if total <= _PRUNE_THRESHOLD or len(messages) <= 3:
+    path = (
+        args.get("path") or args.get("file_path")
+        or args.get("filename") or args.get("pattern") or ""
+    )
+    lines = [l for l in content.splitlines() if l.strip()]
+    n = len(lines)
+
+    if name in {"read_file", "view_file", "cat"}:
+        return f"[FILE_READ: {path} — {n} lines, content processed]"
+    elif name in {"list_dir", "ls", "glob"}:
+        return f"[LIST: {path or '.'} — {n} entries]"
+    elif name in {"grep", "search", "ripgrep"}:
+        pat = args.get("pattern", path) or ""
+        matches = [l for l in lines if ":" in l or l.startswith("/")]
+        return f"[GREP: '{pat[:60]}' — {len(matches)} matches]"
+    elif name == "write_file":
+        return f"[WRITE: {path} — {n} lines written, ok]"
+    elif name in {"edit_file", "patch_file", "str_replace_editor", "str_replace", "create_file"}:
+        return f"[EDIT: {path} — changes applied]"
+    elif name in {"run_tests", "pytest", "test"}:
+        for line in lines:
+            low = line.lower()
+            if any(k in low for k in ("passed", "failed", "error", "ok", "test")):
+                return f"[TESTS: {line[:140]}]"
+        return f"[TESTS: {lines[0][:140]}]" if lines else "[TESTS: complete]"
+    elif name in {"run_command", "bash", "shell"}:
+        cmd = str(args.get("command", ""))[:50]
+        first = lines[0][:100] if lines else "ok"
+        return f"[CMD '{cmd}': {first}]"
+    elif name.startswith("find_") or name.startswith("search_") or name.startswith("list_symbol"):
+        return content  # index tools are compact; never mask them
+    else:
+        first = lines[0][:120] if lines else "ok"
+        return f"[{name}: {first}]"
+
+
+def _apply_observation_masking(
+    messages: list[BaseMessage],
+    tool_meta: dict[str, tuple[str, dict]],
+) -> tuple[list[BaseMessage], int]:
+    """Replace large ToolMessage content in old rounds with typed 1-line summaries.
+
+    The JetBrains Research finding (NeurIPS 2025 DL4C): masking beats naive drop
+    at 52% lower cost with +2.6% solve rate because the AI reasoning turns — which
+    describe what was learned and decided — are preserved intact. Only the raw tool
+    output (file contents, grep walls, command stdout) is compressed.
+
+    Always keeps:
+    - All AIMessages verbatim (reasoning gold, never touched)
+    - Last _MASK_KEEP_ROUNDS rounds verbatim (fresh context the model needs)
+    - Tool results under _MASK_MIN_TOKENS (cheap to keep)
+    - Index tool results (already compact)
+
+    Returns (new_messages, estimated_tokens_saved).
+    """
+    ai_positions = [i for i, m in enumerate(messages) if isinstance(m, AIMessage)]
+    if len(ai_positions) <= _MASK_KEEP_ROUNDS:
         return messages, 0
 
-    head = messages[:2]   # system + initial task
-    tail = list(messages[2:])
+    cutoff = ai_positions[-_MASK_KEEP_ROUNDS]  # mask everything before this index
+
+    result = list(messages)
+    saved = 0
+    for i, m in enumerate(messages[:cutoff]):
+        if not isinstance(m, ToolMessage):
+            continue
+        content = m.content or ""
+        if isinstance(content, list):
+            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+        if estimate_tokens(content) <= _MASK_MIN_TOKENS:
+            continue
+        # Skip if already a 1-liner summary
+        if content.startswith("[") and "\n" not in content.strip():
+            continue
+        name, args = tool_meta.get(m.tool_call_id or "", ("", {}))
+        masked = _mask_tool_result(name, args, content)
+        saved += estimate_tokens(content) - estimate_tokens(masked)
+        result[i] = ToolMessage(content=masked, tool_call_id=m.tool_call_id, name=m.name)
+
+    return result, max(0, saved)
+
+
+def _safety_drop(messages: list[BaseMessage]) -> tuple[list[BaseMessage], int]:
+    """Absolute last resort: drop complete oldest rounds when context still exceeds limit.
+
+    Should rarely fire after observation masking. Indicates either an extremely long
+    run or pathologically large tool outputs that couldn't be masked enough.
+    """
+    total = _ctx_tokens(messages)
+    if total <= _DROP_THRESHOLD or len(messages) <= 3:
+        return messages, 0
+
+    # Protect head: system message + task HumanMessage + optional WM HumanMessage
+    head_count = 0
+    seen_human = False
+    for m in messages:
+        head_count += 1
+        if isinstance(m, HumanMessage):
+            if not seen_human:
+                seen_human = True  # first HumanMessage = task
+            elif (m.content or "").startswith(_WM_TAG):
+                pass  # WM message — also protect
+            else:
+                head_count -= 1  # not WM, stop protecting here
+                break
+
+    head = messages[:head_count]
+    tail = list(messages[head_count:])
     saved = 0
 
-    while tail and (total - saved) > _PRUNE_TARGET:
-        # Count remaining AIMessage rounds to ensure we keep at least one.
+    while tail and (total - saved) > _DROP_TARGET:
         rounds_left = sum(1 for m in tail if isinstance(m, AIMessage))
         if rounds_left <= 1:
             break
-
-        # Drop the first element: must be an AIMessage (or orphaned ToolMessage).
         if isinstance(tail[0], ToolMessage):
             saved += estimate_tokens(getattr(tail[0], "content", "") or "")
             tail = tail[1:]
             continue
-
         if not isinstance(tail[0], AIMessage):
-            break  # unexpected message type — stop to be safe
-
-        # Drop the AIMessage.
-        ai_content = getattr(tail[0], "content", "") or ""
-        if isinstance(ai_content, list):
-            ai_content = " ".join(b.get("text", "") for b in ai_content if isinstance(b, dict))
-        ai_args = sum(
+            break
+        ai_c = getattr(tail[0], "content", "") or ""
+        if isinstance(ai_c, list):
+            ai_c = " ".join(b.get("text", "") for b in ai_c if isinstance(b, dict))
+        saved += estimate_tokens(ai_c) + sum(
             estimate_tokens(str(tc.get("args", {})))
             for tc in (getattr(tail[0], "tool_calls", None) or [])
         )
-        saved += estimate_tokens(ai_content) + ai_args
         tail = tail[1:]
-
-        # Drop all ToolMessages that belong to this AI turn.
         while tail and isinstance(tail[0], ToolMessage):
             saved += estimate_tokens(getattr(tail[0], "content", "") or "")
             tail = tail[1:]
 
     if not saved:
         return messages, 0
-
-    note = HumanMessage(
-        content=f"[context pruned: ~{saved:,} tokens of older tool-call history removed]"
-    )
+    note = HumanMessage(content=f"[safety drop: ~{saved:,} tokens of old history removed]")
     return head + [note] + tail, saved
 
 
@@ -317,15 +510,33 @@ def run_executor(
     model_label = config.providers.load_profile(profile)
     model_name = model_label.label() if model_label else profile
 
+    wm = WorkingMemory(task=task)
+    _tool_meta: dict[str, tuple[str, dict]] = {}  # tool_call_id → (name, args)
+
     history: list[dict] = []
     steps = 0
-    total_pruned = 0
+    total_saved = 0
+
     while steps < cap:
-        messages, pruned = _prune_messages(messages)
-        if pruned:
-            total_pruned += pruned
-            print(f"[executor] context pruned: ~{pruned:,} tokens dropped, "
-                  f"now ~{_ctx_tokens(messages):,} tokens")
+        # ── Context management pipeline (order matters) ──────────────────────
+        # 1. Working memory — always-in-context structural state, never pruned
+        messages = _inject_wm(messages, wm)
+        # 2. Observation masking — primary compression, keeps AI reasoning intact
+        messages, mask_saved = _apply_observation_masking(messages, _tool_meta)
+        # 3. Safety drop — absolute fallback, should rarely fire after masking
+        messages, drop_saved = _safety_drop(messages)
+        saved = mask_saved + drop_saved
+        if saved:
+            total_saved += saved
+            ctx_now = _ctx_tokens(messages)
+            parts = []
+            if mask_saved:
+                parts.append(f"masked ~{mask_saved:,}")
+            if drop_saved:
+                parts.append(f"dropped ~{drop_saved:,}")
+            print(f"[executor] ctx: {' + '.join(parts)} tokens → ~{ctx_now:,} remaining")
+        # ─────────────────────────────────────────────────────────────────────
+
         try:
             resp = config._invoke_with_retry(llm, messages)
         except Exception as e:
@@ -337,14 +548,12 @@ def run_executor(
                 messages=messages,
             )
         _account_usage(step=step_label, model=model_name, messages=messages, resp=resp,
-                       saved_by_trim=pruned)
+                       saved_by_trim=saved)
         messages.append(resp)
 
-        # Extract tool calls (native first, then text fallback).
         calls = _extract_calls(resp, native_tools=native_tools)
 
         if not calls:
-            # No tool calls -> the model produced a final answer.
             return ExecutorResult(
                 summary=(getattr(resp, "content", "") or "").strip() or "(no output)",
                 steps_taken=steps,
@@ -353,56 +562,59 @@ def run_executor(
                 messages=messages,
             )
 
-        # Execute each call and append observations.
         for call in calls:
             steps += 1
             name = call.get("name")
             args = call.get("args") or {}
+            tcid = call.get("id") or f"call_{steps}"
+
             if not name:
                 obs_text = "[error: malformed tool call — missing name]"
-                history.append(
-                    {"name": "?", "args": args, "ok": False, "output_preview": obs_text}
-                )
+                history.append({"name": "?", "args": args, "ok": False,
+                                "output_preview": obs_text})
                 messages.append(
                     _tool_message(obs_text, tool_call_id="parseerr", name="parse_error")
                 )
                 continue
+
+            # Store metadata so the masker can produce type-aware summaries later.
+            _tool_meta[tcid] = (name, args)
+
             result = tools.dispatch(name, args, ctx)
             obs_text = result.to_model_text()
-            history.append(
-                {
-                    "name": name,
-                    "args": args,
-                    "ok": result.ok,
-                    "output_preview": (result.output or result.error)[:200],
-                    "simulated": result.simulated,
-                }
-            )
+
+            # Update working memory with the structural facts from this result.
+            wm.update_from_tool(name, args, obs_text, result.ok)
+
+            history.append({
+                "name": name,
+                "args": args,
+                "ok": result.ok,
+                "output_preview": (result.output or result.error or "")[:200],
+                "simulated": result.simulated,
+            })
             print(
                 f"[executor] {name}({list(args.keys())}) -> {'ok' if result.ok else 'fail'}"
                 + (" [simulated]" if result.simulated else "")
             )
-            # Native tool calls need a matching tool_call_id on the ToolMessage.
-            tcid = call.get("id") or f"call_{steps}"
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
             )
 
         if steps >= cap:
-            # One final round to let the model summarize after hitting the cap.
+            # One final round: apply full context pipeline then ask for summary.
             try:
-                messages, pruned = _prune_messages(messages)
-                if pruned:
-                    total_pruned += pruned
+                messages = _inject_wm(messages, wm)
+                messages, ms = _apply_observation_masking(messages, _tool_meta)
+                messages, ds = _safety_drop(messages)
+                final_saved = ms + ds
                 final = config._invoke_with_retry(llm, messages)
-                _account_usage(
-                    step=step_label, model=model_name, messages=messages, resp=final,
-                    saved_by_trim=pruned,
-                )
+                _account_usage(step=step_label, model=model_name, messages=messages,
+                               resp=final, saved_by_trim=final_saved)
                 messages.append(final)
                 return ExecutorResult(
                     summary=(getattr(final, "content", "") or "").strip()
-                    or "(reached step cap)",
+                            or "(reached step cap)",
                     steps_taken=steps,
                     tool_calls=history,
                     stopped_reason="max_steps",
