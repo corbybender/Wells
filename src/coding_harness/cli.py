@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time as _time
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -73,6 +74,16 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "/index",
         "Manage repository index",
         "Build/update repo index (wells-index). Subcommands: /index (build), /index status, /index clear.",
+    ),
+    (
+        "/sessions",
+        "Browse session history",
+        "List, delete, or clear sessions. Usage: /sessions [delete ID|clear|--all]",
+    ),
+    (
+        "/resume",
+        "Resume a previous session",
+        "Pick a session and load its context for the next task. Usage: /resume [SESSION_ID]",
     ),
 ]
 
@@ -159,6 +170,10 @@ def handle_slash_command(command: str) -> bool:
         console.print("[green]Conversation history cleared.[/green]")
     elif cmd == "/index":
         _handle_index(arg)
+    elif cmd == "/sessions":
+        _handle_sessions(arg)
+    elif cmd == "/resume":
+        _handle_resume_cmd(arg)
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         console.print("[dim]Type / for a list of commands.[/dim]")
@@ -383,7 +398,7 @@ def _ensure_repo_index() -> None:
         pass
 
 
-def run_repl() -> None:
+def run_repl(resume_context: str | None = None) -> None:
     # Auto-setup on first run
     try:
         from coding_harness import setup
@@ -401,8 +416,12 @@ def run_repl() -> None:
 
     # Session-scoped state shared with slash commands and the router.
     _REPL_STATE["memory"] = chat.ConversationMemory()
-    _REPL_STATE["force_mode"] = None  # "chat" | "task" | None (auto)
+    _REPL_STATE["force_mode"] = None
     _REPL_STATE["last_state"] = {}
+    _REPL_STATE["resume_context"] = resume_context  # pre-loaded from -r flag
+    _REPL_STATE["resume_session_id"] = None
+    if resume_context:
+        console.print("[dim]Session context loaded — your first task continues from the previous session.[/dim]\n")
 
     session = PromptSession(
         completer=SlashCompleter(),
@@ -487,15 +506,29 @@ def _stream_token(token: str) -> None:
 
 def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
     """Run ``text`` through the full agentic graph."""
-    # Update goal
-    agent_state["goal"] = text
+    from coding_harness.sessions import (
+        build_resume_context, new_session_id, save_session, session_from_final_state,
+    )
+
+    # Consume resume context (one-shot: cleared after first use).
+    resume_ctx: str | None = _REPL_STATE.pop("resume_context", None)
+    _REPL_STATE.pop("resume_session_id", None)
+
+    original_goal = text
+    effective_goal = (
+        f"{resume_ctx}\n\nCONTINUED GOAL:\n{text}" if resume_ctx else text
+    )
+    agent_state["goal"] = effective_goal
     agent_state["iteration"] = 0
     LEDGER.reset()
+    session_id = new_session_id()
+    t0 = _time.time()
 
+    if resume_ctx:
+        console.print("[dim]Continuing from previous session...[/dim]")
     console.print(f"\n[bold cyan]Executing:[/bold cyan] {text}\n")
 
     try:
-        # We use stream to get node updates
         for update in app.stream(
             agent_state, config={"callbacks": callbacks}, stream_mode="updates"
         ):
@@ -505,15 +538,38 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
                 )
                 if not config.STREAM_OUTPUT:
                     console.print(f"Completed step: {node_name}")
-
-                # Merge node_state back into our persistent agent_state
                 for k, v in node_state.items():
                     agent_state[k] = v
 
         _REPL_STATE["last_state"] = dict(agent_state)
         _print_final_summary(agent_state)
-        console.print("\n" + LEDGER.format_report())
+
+        t = LEDGER.totals()
+        total = t["input"] + t["output"]
+        console.print(
+            f"\n[dim][tokens] {total:,} total "
+            f"({t['input']:,} in / {t['output']:,} out) "
+            f"across {t['calls']} calls[/dim]"
+        )
+
+        # Save session.
+        try:
+            data = session_from_final_state(
+                session_id, original_goal, agent_state,
+                workspace=config.WORKSPACE_ROOT,
+                tokens_in=t["input"],
+                tokens_out=t["output"],
+                duration_seconds=int(_time.time() - t0),
+                resumed_from=resume_ctx[:80] if resume_ctx else None,
+            )
+            save_session(session_id, data)
+            console.print(f"[dim][session: {session_id}][/dim]")
+        except Exception as e:
+            console.print(f"[dim][session save failed: {e}][/dim]")
+
     except Exception as e:
+        from coding_harness.logger import log_error
+        log_error(f"_run_task failed: {type(e).__name__}: {e}", e)
         console.print(f"\n[bold red]Error during execution:[/bold red] {e}")
 
 
@@ -536,11 +592,129 @@ def _summarize_run(state: dict) -> str:
     return "\n".join(parts)
 
 
+def _handle_sessions(arg: str) -> None:
+    """Handle /sessions [list|delete ID|clear] [--all]."""
+    from coding_harness.sessions import (
+        clear_sessions, delete_session, format_age, list_sessions,
+    )
+    from rich.table import Table
+
+    parts = arg.strip().split() if arg.strip() else []
+    all_ws = "--all" in parts
+    sub_parts = [p for p in parts if p != "--all"]
+    subcmd = sub_parts[0] if sub_parts else "list"
+    workspace = None if all_ws else config.WORKSPACE_ROOT
+
+    if subcmd in ("list", ""):
+        sessions = list_sessions(workspace=workspace, limit=25)
+        if not sessions:
+            scope = "any workspace" if all_ws else "this workspace"
+            console.print(f"[yellow]No sessions found for {scope}.[/yellow]")
+            return
+        table = Table(show_header=True, header_style="bold cyan", expand=False)
+        table.add_column("Session ID", style="dim", width=26, no_wrap=True)
+        table.add_column("Age", width=10)
+        table.add_column("Status", width=10)
+        table.add_column("Tokens", justify="right", width=9)
+        table.add_column("Goal")
+        for s in sessions:
+            age = format_age(s.get("created_at", ""))
+            status = s.get("status", "?")
+            color = "green" if status == "COMPLETE" else "yellow"
+            tok = (s.get("tokens_in") or 0) + (s.get("tokens_out") or 0)
+            tok_s = f"{tok:,}" if tok else "?"
+            goal = (s.get("goal") or "")[:55]
+            table.add_row(
+                s["id"], age, f"[{color}]{status}[/{color}]", tok_s, goal
+            )
+        console.print(table)
+        scope = "all workspaces" if all_ws else "this workspace"
+        console.print(
+            f"[dim]{len(sessions)} session(s) — {scope}. "
+            f"Use /sessions --all for all workspaces.[/dim]\n"
+        )
+
+    elif subcmd == "delete" and len(sub_parts) >= 2:
+        sid = sub_parts[1]
+        if delete_session(sid):
+            console.print(f"[green]Deleted: {sid}[/green]")
+        else:
+            console.print(f"[red]Not found: {sid}[/red]")
+
+    elif subcmd == "clear":
+        scope = "ALL workspaces" if all_ws else "this workspace"
+        try:
+            confirm = input(f"Delete all sessions for {scope}? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if confirm in ("y", "yes"):
+            n = clear_sessions(workspace=workspace)
+            console.print(f"[green]Deleted {n} session(s).[/green]")
+        else:
+            console.print("[dim]Cancelled.[/dim]")
+
+    else:
+        console.print("[red]Usage: /sessions [list|delete SESSION_ID|clear] [--all][/red]")
+
+
+def _handle_resume_cmd(arg: str) -> None:
+    """Handle /resume [SESSION_ID] — load a previous session's context."""
+    from coding_harness.sessions import (
+        build_resume_context, format_age, is_session_id,
+        list_sessions, load_session,
+    )
+
+    sid = arg.strip()
+    if sid and is_session_id(sid):
+        session = load_session(sid)
+        if not session:
+            console.print(f"[red]Session not found: {sid}[/red]")
+            return
+    else:
+        sessions = list_sessions(workspace=config.WORKSPACE_ROOT, limit=10)
+        if not sessions:
+            console.print("[yellow]No sessions for this workspace.[/yellow]")
+            return
+        console.print("\n[bold]Recent sessions:[/bold]")
+        for i, s in enumerate(sessions, 1):
+            age = format_age(s.get("created_at", ""))
+            status = s.get("status", "?")
+            color = "green" if status == "COMPLETE" else "yellow"
+            goal = (s.get("goal") or "")[:60]
+            console.print(
+                f"  [cyan]{i}.[/cyan] [{age}] [{color}]{status}[/{color}] {goal!r}"
+            )
+            console.print(f"     [dim]{s['id']}[/dim]")
+        console.print()
+        try:
+            choice = input("Select session number (or Enter to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not choice:
+            console.print("[dim]Cancelled.[/dim]")
+            return
+        try:
+            session = sessions[int(choice) - 1]
+        except (ValueError, IndexError):
+            console.print("[red]Invalid selection.[/red]")
+            return
+
+    _REPL_STATE["resume_context"] = build_resume_context(session)
+    _REPL_STATE["resume_session_id"] = session["id"]
+    console.print(f"\n[green]Session loaded: {session['id']}[/green]")
+    console.print(f"[dim]Previous goal : {(session.get('goal') or '')[:70]}[/dim]")
+    console.print(
+        "[dim]Context injected — your next task will continue from this session.[/dim]\n"
+    )
+
+
 # Session-scoped state for the REPL (memory, force-mode, last agent state).
 _REPL_STATE: dict = {
     "memory": chat.ConversationMemory(),
     "force_mode": None,
     "last_state": {},
+    "resume_context": None,
+    "resume_session_id": None,
 }
 
 

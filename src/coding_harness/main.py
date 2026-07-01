@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import sys
+import time as _time
+from datetime import datetime
 from pathlib import Path
 
 from coding_harness import __version__, config, settings
@@ -108,26 +110,33 @@ def _print_info() -> None:
     print(bar)
 
 
-def _run_goal(goal: str) -> None:
+def _run_goal(goal: str, *, resume_context: str | None = None) -> None:
     """Build and invoke the harness graph for ``goal``."""
     from coding_harness.graph import build_graph
+    from coding_harness.sessions import new_session_id, save_session, session_from_final_state
     from coding_harness.tokens import LEDGER
 
     if not _ensure_model_configured():
         sys.exit(1)
 
     LEDGER.reset()
+    session_id = new_session_id()
+    t0 = _time.time()
+
     print(f"Model: {config.model_name_for_task('coding')}")
     print(f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})")
     if config.PLAN_MODE:
         print("Plan mode: ON (coder will plan edits without applying them)")
     print(f"Max coder<->reviewer iterations: {config.MAX_ITERATIONS}")
     print(f"Goal: {goal}")
+    if resume_context:
+        print("[Continuing from previous session — context injected]")
     print("-" * 70)
 
     app = build_graph()
+    effective_goal = f"{resume_context}\n\nCONTINUED GOAL:\n{goal}" if resume_context else goal
     initial_state = {
-        "goal": goal,
+        "goal": effective_goal,
         "iteration": 0,
         "max_iterations": config.MAX_ITERATIONS,
         "workspace_root": config.WORKSPACE_ROOT,
@@ -137,6 +146,7 @@ def _run_goal(goal: str) -> None:
     }
 
     final_state = app.invoke(initial_state)
+    duration = int(_time.time() - t0)
     _print_final_summary(final_state)
 
     # Token report: one-line summary; full table only when WELLS_TOKEN_REPORT=1.
@@ -150,6 +160,21 @@ def _run_goal(goal: str) -> None:
     )
     if os.environ.get("WELLS_TOKEN_REPORT") == "1":
         print("\n" + LEDGER.format_report())
+
+    # Persist session for later resume/history.
+    try:
+        data = session_from_final_state(
+            session_id, goal, final_state,
+            workspace=config.WORKSPACE_ROOT,
+            tokens_in=t["input"],
+            tokens_out=t["output"],
+            duration_seconds=duration,
+            resumed_from=resume_context[:80] if resume_context else None,
+        )
+        save_session(session_id, data)
+        print(f"[session: {session_id}]")
+    except Exception as e:
+        print(f"[session save failed: {e}]")
 
 
 def _ensure_model_configured() -> bool:
@@ -234,15 +259,142 @@ def _run_index_cmd(args: list[str]) -> None:
         sys.exit(2)
 
 
+def _run_sessions_cmd(args: list[str]) -> None:
+    """Handle `wells sessions [list|delete|clear] [--all]` subcommand."""
+    from coding_harness.sessions import (
+        clear_sessions, delete_session, format_age, list_sessions,
+    )
+
+    all_ws = "--all" in args
+    sub_args = [a for a in args if a != "--all"]
+    subcmd = sub_args[0] if sub_args else "list"
+    workspace = None if all_ws else config.WORKSPACE_ROOT
+
+    if subcmd in ("list", ""):
+        sessions = list_sessions(workspace=workspace, limit=50)
+        if not sessions:
+            ws_note = "any workspace" if all_ws else f"workspace: {workspace}"
+            print(f"No sessions found ({ws_note}).")
+            return
+        print(f"\n{'SESSION ID':<26}  {'AGE':<10}  {'STATUS':<12}  {'TOKENS':>8}   GOAL")
+        print("-" * 92)
+        for s in sessions:
+            age = format_age(s.get("created_at", ""))
+            status = s.get("status", "?")
+            tok = (s.get("tokens_in") or 0) + (s.get("tokens_out") or 0)
+            tok_s = f"{tok:,}" if tok else "?"
+            goal = (s.get("goal") or "")[:48]
+            print(f"{s['id']:<26}  {age:<10}  {status:<12}  {tok_s:>8}   {goal}")
+        scope = "all workspaces" if all_ws else "this workspace"
+        print(f"\n{len(sessions)} session(s) — {scope}. "
+              f"Add --all to see every workspace.\n")
+
+    elif subcmd == "delete":
+        if len(sub_args) < 2:
+            print("ERROR: sessions delete requires a SESSION_ID")
+            print("Usage: wells sessions delete SESSION_ID")
+            sys.exit(2)
+        if delete_session(sub_args[1]):
+            print(f"Deleted: {sub_args[1]}")
+        else:
+            print(f"Not found: {sub_args[1]}")
+            sys.exit(1)
+
+    elif subcmd == "clear":
+        ws_note = "ALL workspaces" if all_ws else f"workspace: {workspace}"
+        try:
+            confirm = input(f"Delete all sessions for {ws_note}? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if confirm in ("y", "yes"):
+            n = clear_sessions(workspace=workspace)
+            print(f"Deleted {n} session(s).")
+        else:
+            print("Cancelled.")
+
+    else:
+        print(f"ERROR: Unknown sessions subcommand: {subcmd!r}")
+        print("Usage: wells sessions [list|delete SESSION_ID|clear] [--all]")
+        sys.exit(2)
+
+
+def _handle_resume_flag(flag_value: str, goal_args: list[str]) -> tuple[str, str | None]:
+    """Resolve -r/--resume into (goal, resume_context).
+
+    ``flag_value`` is either "" (interactive picker) or a specific session ID.
+    ``goal_args`` are the remaining CLI goal words.
+    Returns (goal_to_run, resume_context_or_None).
+    """
+    from coding_harness.sessions import (
+        build_resume_context, format_age, is_session_id,
+        list_sessions, load_session,
+    )
+
+    if flag_value and is_session_id(flag_value):
+        session = load_session(flag_value)
+        if not session:
+            print(f"ERROR: Session not found: {flag_value}")
+            sys.exit(2)
+    else:
+        # Interactive picker
+        sessions = list_sessions(limit=10)
+        if not sessions:
+            print("No previous sessions found — starting fresh.")
+            return " ".join(goal_args), None
+
+        print("\nRecent sessions:")
+        for i, s in enumerate(sessions, 1):
+            age = format_age(s.get("created_at", ""))
+            status_sym = "✓" if s.get("status") == "COMPLETE" else "~"
+            goal_prev = (s.get("goal") or "")[:58]
+            tok = (s.get("tokens_in") or 0) + (s.get("tokens_out") or 0)
+            tok_s = f"{tok // 1000}K" if tok >= 1000 else str(tok)
+            print(f"  {i}. [{age}] {status_sym} {goal_prev!r}  [{tok_s} tok]")
+            print(f"     {s['id']}")
+        print()
+        try:
+            choice = input("Select [1-N] or Enter to start fresh: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return " ".join(goal_args), None
+
+        if not choice:
+            return " ".join(goal_args), None
+
+        try:
+            session = sessions[int(choice) - 1]
+        except (ValueError, IndexError):
+            print(f"Invalid selection: {choice!r} — starting fresh.")
+            return " ".join(goal_args), None
+
+    # Show what we're resuming
+    print(f"\nResuming: {session['id']}")
+    print(f"Previous goal: {session.get('goal', '')}")
+    print(f"Status: {session.get('status', '?')}")
+    if session.get("git_summary"):
+        print(f"Changes: {session['git_summary']}")
+    print()
+
+    # Goal is whatever the user passed; fall back to original goal if none.
+    goal = " ".join(goal_args).strip() or session.get("goal", "")
+    return goal, build_resume_context(session)
+
+
 def _print_usage() -> None:
     print(__doc__)
     print(
         "\nFlags:\n"
         "  -w, --workspace PATH   operate on PATH instead of the current dir\n"
         "  -s, --safety MODE      auto | approve | dryrun\n"
+        "  -r, --resume [SID]     resume a previous session (interactive or by ID)\n"
         "      --plan             plan mode (describe edits, don't apply)\n"
         "      --version          show version and exit\n"
         "  -h, --help             show this help\n"
+        "\nSubcommands:\n"
+        "  sessions               list session history\n"
+        "  sessions delete SID    delete one session\n"
+        "  sessions clear         delete all sessions for current workspace\n"
+        "  sessions --all         operate across all workspaces\n"
     )
 
 
@@ -266,12 +418,11 @@ def main() -> None:
         print(f"wells {__version__}")
         return
 
-    # ---- Pass 1: strip global flags (--workspace, --safety, --plan) ----
-    # We pull these out FIRST so a subcommand like `info` or `config` can appear
-    # after them (e.g. `--workspace /path info`) without being mistaken for a goal.
+    # ---- Pass 1: strip global flags (--workspace, --safety, --plan, --resume) ----
     workspace_override: str | None = None
     safety_override: str | None = None
     plan_flag = False
+    resume_flag: str | None = None  # None = no resume; "" = interactive; "ID" = specific
     remaining: list[str] = []
     i = 0
     while i < len(argv):
@@ -296,6 +447,14 @@ def main() -> None:
             safety_override = a.split("=", 1)[1]
         elif a == "--plan":
             plan_flag = True
+        elif a in ("-r", "--resume"):
+            from coding_harness.sessions import is_session_id
+            # Peek ahead: if next arg is a session ID, consume it
+            if i + 1 < len(argv) and is_session_id(argv[i + 1]):
+                i += 1
+                resume_flag = argv[i]
+            else:
+                resume_flag = ""  # interactive picker
         else:
             remaining.append(a)
         i += 1
@@ -339,8 +498,10 @@ def main() -> None:
         print(principles.principles_text(ws))
         return
     if remaining and remaining[0] == "index":
-        # Build or manage the repository index.
         _run_index_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "sessions":
+        _run_sessions_cmd(remaining[1:])
         return
 
     # ---- Pass 3: a goal run — separate goal args from KEY=VALUE overrides ----
@@ -351,10 +512,20 @@ def main() -> None:
         settings.parse_argv_settings(overrides)
         _reload_module_config()
 
-    if not goal_args:
-        # No goal given — launch the interactive REPL.
+    if not goal_args and resume_flag is None:
+        # No goal and no resume flag — launch the interactive REPL.
         from coding_harness.cli import run_repl
         run_repl()
+        return
+
+    if resume_flag is not None:
+        goal, resume_ctx = _handle_resume_flag(resume_flag, goal_args)
+        if not goal:
+            # resume_flag only, no goal → launch REPL with context preloaded
+            from coding_harness.cli import run_repl
+            run_repl(resume_context=resume_ctx)
+            return
+        _run_goal(goal, resume_context=resume_ctx)
         return
 
     goal = " ".join(goal_args).strip()
