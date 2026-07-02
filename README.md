@@ -1,4 +1,8 @@
-# coding-harness
+<p align="center">
+  <img src="wells_logo.png" alt="Wells — the tripod coding robot" width="260">
+</p>
+
+<h1 align="center">Wells</h1>
 
 A local, **model-agnostic agentic coding harness**. Give it a software
 development goal and it runs an orchestration loop of
