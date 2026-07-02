@@ -535,6 +535,68 @@ def _safety_drop(messages: list[BaseMessage]) -> tuple[list[BaseMessage], int]:
 
 
 # ---------------------------------------------------------------------------
+# Activity display helpers
+# ---------------------------------------------------------------------------
+
+def _short_path(path: str) -> str:
+    """Shorten a path relative to the workspace root for display."""
+    p = str(path or "?")
+    try:
+        ws = config.WORKSPACE_ROOT.replace("\\", "/")
+        p2 = p.replace("\\", "/")
+        if p2.startswith(ws):
+            p = p2[len(ws):].lstrip("/")
+    except Exception:
+        pass
+    return ("…" + p[-55:]) if len(p) > 58 else p
+
+
+def _activity_line(name: str, args: dict, ok: bool, simulated: bool = False) -> str:
+    """Format one tool call as a compact human-readable line."""
+    check = "[dim](plan)[/dim]" if simulated else ("[green]✓[/green]" if ok else "[red]✗[/red]")
+
+    # Read-category tools
+    if name == "read_file":
+        desc = f"[dim]read    [/dim] {_short_path(args.get('path', '?'))}"
+    elif name in ("list_dir", "glob"):
+        tgt = args.get("path") or args.get("pattern") or "."
+        desc = f"[dim]list    [/dim] {_short_path(tgt)}"
+    elif name == "grep":
+        pat = str(args.get("pattern") or args.get("query") or "")[:45]
+        desc = f"[dim]grep    [/dim] {pat!r}"
+    elif name in ("find_symbol", "find_callers", "search_symbols"):
+        sym = str(args.get("name") or args.get("symbol") or args.get("query") or "")[:45]
+        label = {"find_symbol": "find", "find_callers": "callers", "search_symbols": "search"}.get(name, name)
+        desc = f"[dim]{label:<8}[/dim] {sym}"
+
+    # Write-category tools
+    elif name in ("write_file", "create_file"):
+        desc = f"[yellow]write   [/yellow] {_short_path(args.get('path', '?'))}"
+    elif name in ("edit_file", "patch_file", "str_replace_editor", "str_replace"):
+        desc = f"[yellow]edit    [/yellow] {_short_path(args.get('path', '?'))}"
+    elif name in ("delete_file", "remove_file"):
+        desc = f"[yellow]delete  [/yellow] {_short_path(args.get('path', '?'))}"
+
+    # Execution tools
+    elif name in ("run_command", "shell", "bash"):
+        cmd = str(args.get("command") or args.get("cmd") or "")
+        # Trim long commands but keep the meaningful part
+        if len(cmd) > 70:
+            cmd = cmd[:67] + "…"
+        desc = f"[cyan]run     [/cyan] {cmd}"
+    elif name == "run_tests":
+        cmd = str(args.get("command") or "auto-detect")[:60]
+        desc = f"[cyan]test    [/cyan] {cmd}"
+
+    # Fallback
+    else:
+        first = str(next(iter(args.values()), ""))[:50] if args else ""
+        desc = f"[dim]{name:<8}[/dim] {first}"
+
+    return f"  {check} {desc}"
+
+
+# ---------------------------------------------------------------------------
 # Executor
 # ---------------------------------------------------------------------------
 
@@ -613,13 +675,6 @@ def run_executor(
         saved = mask_saved + drop_saved
         if saved:
             total_saved += saved
-            ctx_now = _ctx_tokens(messages)
-            parts = []
-            if mask_saved:
-                parts.append(f"masked ~{mask_saved:,}")
-            if drop_saved:
-                parts.append(f"dropped ~{drop_saved:,}")
-            print(f"[executor] ctx: {' + '.join(parts)} tokens → ~{ctx_now:,} remaining")
         # ─────────────────────────────────────────────────────────────────────
 
         try:
@@ -678,10 +733,7 @@ def run_executor(
                 "output_preview": (result.output or result.error or "")[:200],
                 "simulated": result.simulated,
             })
-            print(
-                f"[executor] {name}({list(args.keys())}) -> {'ok' if result.ok else 'fail'}"
-                + (" [simulated]" if result.simulated else "")
-            )
+            print(_activity_line(name, args, result.ok, result.simulated))
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
             )

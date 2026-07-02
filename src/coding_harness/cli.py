@@ -423,20 +423,27 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
     session_id = new_session_id()
     t0 = _time.time()
 
+    _NODE_LABELS = {
+        "planner":   "[bold blue]Planning…[/bold blue]",
+        "architect": "[bold blue]Architecting…[/bold blue]",
+        "coder":     "[bold green]Coding…[/bold green]",
+        "tester":    "[bold yellow]Testing…[/bold yellow]",
+        "reviewer":  "[bold cyan]Reviewing…[/bold cyan]",
+        "finisher":  "[bold cyan]Finishing…[/bold cyan]",
+        "indexer":   "[dim]Indexing…[/dim]",
+    }
+
     if resume_ctx:
         console.print("[dim]Continuing from previous session...[/dim]")
-    console.print(f"\n[bold cyan]Executing:[/bold cyan] {text}\n")
+    console.print(f"\n[bold]Goal:[/bold] {text}\n")
 
     try:
         for update in app.stream(
             agent_state, config={"callbacks": callbacks}, stream_mode="updates"
         ):
             for node_name, node_state in update.items():
-                console.print(
-                    f"\n[bold magenta]>> {node_name.upper()} <<[/bold magenta]"
-                )
-                if not config.STREAM_OUTPUT:
-                    console.print(f"Completed step: {node_name}")
+                label = _NODE_LABELS.get(node_name, f"[bold]{node_name.title()}…[/bold]")
+                console.print(f"\n{label}")
                 for k, v in node_state.items():
                     agent_state[k] = v
 
