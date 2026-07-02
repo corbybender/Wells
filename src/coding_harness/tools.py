@@ -18,12 +18,14 @@ Design notes:
 
 from __future__ import annotations
 
+import base64
 import fnmatch
 import os
 import platform
 import re
 import shutil
 import subprocess
+import time as _time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -36,17 +38,71 @@ from coding_harness.compress import compress_output
 # Subprocess environment helpers
 # ---------------------------------------------------------------------------
 
+_cached_win_bundle: str | None = None
+
+
+def _windows_cert_bundle() -> str | None:
+    """Export Windows trusted root certs to a PEM file and return its path.
+
+    Uses ssl.enum_certificates() (Windows-only) to pull certs directly from
+    the Windows cert store — the same store that az, curl, and browsers use.
+    Cached for 24 h in the temp dir so it's only generated once per day.
+
+    Falls back to the certifi bundle if the Windows store isn't accessible.
+    """
+    global _cached_win_bundle
+    if _cached_win_bundle and os.path.exists(_cached_win_bundle):
+        return _cached_win_bundle
+
+    cache = Path(os.environ.get("TEMP", "/tmp")) / "wells_winroots.pem"
+    if cache.exists() and (_time.time() - cache.stat().st_mtime) < 86400:
+        _cached_win_bundle = str(cache)
+        return _cached_win_bundle
+
+    try:
+        import ssl
+        pem: list[bytes] = []
+        for store in ("ROOT", "CA"):
+            try:
+                for cert, enc, trust in ssl.enum_certificates(store):  # type: ignore[attr-defined]
+                    if enc == "x509_asn" and trust is True:
+                        b64 = base64.encodebytes(cert)
+                        pem += [b"-----BEGIN CERTIFICATE-----\n", b64,
+                                b"-----END CERTIFICATE-----\n"]
+            except Exception:
+                continue
+        if pem:
+            cache.write_bytes(b"".join(pem))
+            _cached_win_bundle = str(cache)
+            return _cached_win_bundle
+    except Exception:
+        pass
+
+    # Fallback: certifi (covers public Azure CAs; misses corporate roots)
+    try:
+        import certifi
+        _cached_win_bundle = certifi.where()
+        return _cached_win_bundle
+    except Exception:
+        pass
+
+    return None
+
+
 def _subprocess_env() -> dict[str, str]:
     """Build env for shell subprocesses.
 
-    Wells patches Python's SSL context via truststore (good) but may also set
-    REQUESTS_CA_BUNDLE/SSL_CERT_FILE/CURL_CA_BUNDLE in os.environ as a certifi
-    fallback. Those env vars bleed into every subprocess and override tools like
-    `az` that manage their own cert trust (Windows cert store). Strip them if
-    they point to Wells' own certifi bundle so subprocesses behave the same as
-    the user's native shell.
+    On Windows: injects the Windows cert store as REQUESTS_CA_BUNDLE /
+    SSL_CERT_FILE / CURL_CA_BUNDLE so that tools like `az` (which use the
+    Python requests library internally) trust the same root CAs as the user's
+    native shell — no manual $env:REQUESTS_CA_BUNDLE= prefix needed.
+
+    Strips any Wells-internal certifi path that might have leaked in via
+    config._configure_ca_bundle(), since the Windows store PEM is better.
     """
     env = os.environ.copy()
+
+    # Remove any certifi path Wells set at startup; replace with Windows store.
     try:
         import certifi
         certifi_path = certifi.where()
@@ -55,6 +111,15 @@ def _subprocess_env() -> dict[str, str]:
                 env.pop(var, None)
     except Exception:
         pass
+
+    # On Windows, auto-inject the Windows cert store bundle.
+    if _ON_WINDOWS and not env.get("REQUESTS_CA_BUNDLE"):
+        bundle = _windows_cert_bundle()
+        if bundle:
+            env["REQUESTS_CA_BUNDLE"] = bundle
+            env.setdefault("SSL_CERT_FILE", bundle)
+            env.setdefault("CURL_CA_BUNDLE", bundle)
+
     return env
 
 

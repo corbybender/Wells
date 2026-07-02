@@ -201,6 +201,14 @@ TOOL CALLING:
 - If your runtime exposes native tool/function calls, use them.
 - Otherwise, emit each call on its own line as: <tool_call>{{"name": "...", "args": {{...}}}}</tool_call>
   and nothing else on that line. The harness will execute it and reply with the result.
+- Batch related shell commands: chain multiple az/git/curl calls with semicolons in ONE
+  run_command call rather than calling run_command once per command. This cuts round trips
+  and token cost dramatically.
+- The harness injects REQUESTS_CA_BUNDLE / SSL_CERT_FILE / CURL_CA_BUNDLE automatically
+  into every subprocess. Do NOT prepend $env:REQUESTS_CA_BUNDLE=... yourself — it's already
+  set. If a command fails with an SSL/cert error, report it rather than retrying manually.
+- If the same operation has failed 3+ times with similar errors, STOP and report what is
+  blocking you rather than continuing to retry.
 """
     return inject_principles(base, workspace)
 
@@ -571,6 +579,18 @@ def _first_error_line(output: str) -> str:
     return ""
 
 
+def _strip_env_prefix(cmd: str) -> str:
+    """Remove leading $env:VAR='...' or $env:VAR="..." assignments from a command.
+
+    The harness now injects cert bundles (REQUESTS_CA_BUNDLE etc.) into every
+    subprocess automatically, so the agent no longer needs to prepend them.
+    When it does anyway (e.g., learned from publishing.md), strip from display
+    so the user sees the actual command rather than boilerplate.
+    """
+    # Matches one or more $env:NAME='value'; or $env:NAME="value"; prefixes
+    return re.sub(r'^(\$env:\w+=(?:\'[^\']*\'|"[^"]*");\s*)+', '', cmd).strip()
+
+
 def _short_path(path: str) -> str:
     """Shorten a path relative to the workspace root for display."""
     p = str(path or "?")
@@ -613,7 +633,7 @@ def _activity_line(name: str, args: dict, ok: bool, simulated: bool = False) -> 
     # Execution tools
     elif name in ("run_command", "shell", "bash"):
         cmd = str(args.get("command") or args.get("cmd") or "")
-        # Trim long commands but keep the meaningful part
+        cmd = _strip_env_prefix(cmd)   # remove $env:VAR='...'; boilerplate
         if len(cmd) > 70:
             cmd = cmd[:67] + "…"
         desc = f"[cyan]run     [/cyan] {cmd}"
@@ -697,7 +717,8 @@ def run_executor(
     steps = 0
     rounds = 0
     total_saved = 0
-    _reads: dict[str, int] = {}  # path → times read, for re-read detection
+    _reads: dict[str, int] = {}          # path → read count
+    _fail_patterns: dict[str, int] = {}  # command prefix → fail count
 
     while steps < cap:
         # ── Context management pipeline (order matters) ──────────────────────
@@ -797,6 +818,17 @@ def run_executor(
                 err = _first_error_line(result.output or result.error or "")
                 if err:
                     print(f"    [dim red]↳ {err}[/dim red]")
+
+                # Stuck-loop detection: same command prefix failing repeatedly.
+                if name in ("run_command", "shell", "bash"):
+                    raw_cmd = str(args.get("command") or args.get("cmd") or "")
+                    key = _strip_env_prefix(raw_cmd)[:50]
+                    _fail_patterns[key] = _fail_patterns.get(key, 0) + 1
+                    if _fail_patterns[key] == 3:
+                        print(
+                            f"  [bold yellow]⚠ same command has failed {_fail_patterns[key]} times "
+                            f"— the model should report a blocker instead of retrying.[/bold yellow]"
+                        )
 
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
