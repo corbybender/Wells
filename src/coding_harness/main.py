@@ -375,8 +375,11 @@ def _handle_resume_flag(flag_value: str, goal_args: list[str]) -> tuple[str, str
         print(f"Changes: {session['git_summary']}")
     print()
 
-    # Goal is whatever the user passed; fall back to original goal if none.
-    goal = " ".join(goal_args).strip() or session.get("goal", "")
+    # Goal is whatever the user passed on the command line.
+    # Do NOT fall back to the session's previous goal — the caller uses an
+    # empty goal to decide whether to launch the TUI or run a one-shot task.
+    # The resume context already contains the previous goal as readable text.
+    goal = " ".join(goal_args).strip()
     return goal, build_resume_context(session)
 
 
@@ -520,12 +523,13 @@ def main() -> None:
 
     if resume_flag is not None:
         goal, resume_ctx = _handle_resume_flag(resume_flag, goal_args)
-        if not goal:
-            # resume_flag only, no goal → launch REPL with context preloaded
+        if goal:
+            # User supplied a new goal on the CLI: run it once with context.
+            _run_goal(goal, resume_context=resume_ctx)
+        else:
+            # No new goal: enter the TUI with the session context preloaded.
             from coding_harness.cli import run_repl
             run_repl(resume_context=resume_ctx)
-            return
-        _run_goal(goal, resume_context=resume_ctx)
         return
 
     goal = " ".join(goal_args).strip()
