@@ -23,10 +23,14 @@ Your ONLY job right now is to INVESTIGATE the codebase and produce a CONCRETE pl
 Do NOT implement anything. Do NOT write code. Just read and plan.
 
 Investigation strategy:
-1. Use find_symbol / search_symbols to locate relevant functions, classes, or modules.
-2. Read only the specific sections you need — use offset/limit to avoid reading whole files.
-3. Use grep when you need to find all usages or wiring of a pattern.
-4. Stop reading once you have enough to write a specific plan.
+1. If the goal spans MULTIPLE independent areas (different modules, layers, or
+   concerns), start with ONE parallel_research call — 2-4 focused questions, one
+   per area. They run concurrently, so this is far faster than investigating
+   each area yourself sequentially. For single-area goals, skip it.
+2. Use find_symbol / search_symbols to locate relevant functions, classes, or modules.
+3. Read only the specific sections you need — use offset/limit to avoid reading whole files.
+4. Use grep when you need to find all usages or wiring of a pattern.
+5. Stop reading once you have enough to write a specific plan.
 
 Output format (use these exact headings):
 

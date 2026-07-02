@@ -186,6 +186,8 @@ class ToolContext:
     read_max_lines: int = 2000
     # In plan mode, write/shell tools describe instead of executing.
     plan_mode: bool = False
+    # True inside a spawned subagent — blocks recursive subagent spawning.
+    subagent: bool = False
 
     @classmethod
     def from_state(cls, state: dict) -> "ToolContext":
@@ -528,6 +530,8 @@ def _spawn_subagent(
     """
     if not task or not task.strip():
         return ToolResult(False, "", "task is required")
+    if ctx.subagent:
+        return ToolResult(False, "", "subagents cannot spawn subagents")
     # Local import to avoid a circular dependency at module load time.
     from coding_harness import subagents
 
@@ -541,6 +545,47 @@ def _spawn_subagent(
     return ToolResult(
         report.ok, report.as_context_block(), "" if report.ok else report.error
     )
+
+
+def _parallel_research(
+    ctx: ToolContext, questions: list | None = None, max_steps: int = 8
+) -> ToolResult:
+    """Run 2–4 read-only research subagents concurrently and merge their reports.
+
+    Wall-clock win only: the questions run in parallel threads (LLM calls are
+    I/O-bound), so investigation takes ~max(question) instead of the sum.
+    Subagents are read-only and run quiet — the combined findings come back as
+    one block. Recursion is blocked (a subagent cannot fan out again).
+    """
+    if ctx.subagent:
+        return ToolResult(False, "", "subagents cannot spawn subagents")
+    qs = [q.strip() for q in (questions or []) if isinstance(q, str) and q.strip()][:4]
+    if not qs:
+        return ToolResult(
+            False, "", "questions is required: a list of 1-4 focused research questions"
+        )
+
+    # Local imports avoid circular dependency at module load time.
+    from coding_harness import subagents
+    from coding_harness.control import CONTROL, ui
+
+    specs = [
+        subagents.research_subagent(f"research-{i}", q, max_steps=max_steps)
+        for i, q in enumerate(qs, 1)
+    ]
+    CONTROL.set_activity(f"parallel research ×{len(specs)}")
+    t0 = _time.time()
+    reports = subagents.dispatch_subagents(specs, ctx)
+    elapsed = _time.time() - t0
+
+    for r in reports:
+        mark = "[green]✓[/green]" if r.ok else "[red]✗[/red]"
+        ui("tool_line", f"    {mark} [dim]{r.name}[/dim] {r.steps_taken} steps")
+    ui("tool_line", f"    [dim]{len(reports)} research agents · {elapsed:.0f}s[/dim]")
+
+    combined = "\n\n".join(r.as_context_block() for r in reports)
+    ok = any(r.ok for r in reports)
+    return ToolResult(ok, combined, "" if ok else "all research subagents failed")
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +659,28 @@ READ_TOOLS: list[ToolDef] = [
             "required": ["pattern"],
         },
         handler=_grep_tool,
+    ),
+    ToolDef(
+        name="parallel_research",
+        description="Run 2-4 focused read-only research questions CONCURRENTLY via parallel "
+        "subagents and get their combined findings. Much faster than investigating "
+        "sequentially when a goal spans multiple independent areas (e.g. 'how does auth "
+        "work' + 'where are the API routes' + 'how is the DB accessed'). Subagents can "
+        "only read — they never edit or run commands.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "1-4 focused, independent research questions",
+                },
+                "max_steps": {"type": "integer", "default": 8},
+            },
+            "required": ["questions"],
+        },
+        handler=_parallel_research,
+        mutating=False,
     ),
 ] + _get_index_tools()
 

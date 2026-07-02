@@ -113,3 +113,107 @@ def test_deterministic_gate_simulated_in_plan_mode(tmp_path: Path):
     ctx = tools.ToolContext(workspace=str(tmp_path), safety="auto", plan_mode=True)
     passed, _ = tester._run_deterministic_gate(ctx)
     assert passed is None  # simulated runs are not ground truth
+
+
+# ---------------------------------------------------------------------------
+# Parallel research fan-out
+# ---------------------------------------------------------------------------
+
+import threading
+import time as _t
+from unittest.mock import patch
+
+from coding_harness import subagents
+from coding_harness.subagents import SubagentReport
+from coding_harness.tools import _parallel_research, get_tool
+
+
+def _fake_report(spec, ctx, *, profile=None, quiet=False):
+    _t.sleep(0.05)
+    return SubagentReport(
+        name=spec.name,
+        ok=True,
+        summary=f"answer for {spec.name} on {threading.current_thread().name}",
+        steps_taken=2,
+    )
+
+
+def test_parallel_research_merges_reports_in_order(tmp_path):
+    ctx = tools.ToolContext(workspace=str(tmp_path), safety="auto")
+    with patch.object(subagents, "run_subagent", side_effect=_fake_report):
+        result = _parallel_research(
+            ctx, questions=["how does auth work?", "where are routes?", "db layer?"]
+        )
+    assert result.ok
+    assert result.output.index("research-1") < result.output.index("research-2")
+    assert result.output.index("research-2") < result.output.index("research-3")
+
+
+def test_parallel_research_runs_concurrently(tmp_path):
+    ctx = tools.ToolContext(workspace=str(tmp_path), safety="auto")
+    threads_seen: set[str] = set()
+
+    def record(spec, ctx, *, profile=None, quiet=False):
+        threads_seen.add(threading.current_thread().name)
+        _t.sleep(0.05)
+        return SubagentReport(name=spec.name, ok=True, summary="x", steps_taken=1)
+
+    with patch.object(subagents, "run_subagent", side_effect=record):
+        _parallel_research(ctx, questions=["a?", "b?", "c?"])
+    assert len(threads_seen) > 1  # actually fanned out across threads
+
+
+def test_parallel_research_blocks_recursion(tmp_path):
+    ctx = tools.ToolContext(workspace=str(tmp_path), safety="auto", subagent=True)
+    result = _parallel_research(ctx, questions=["q?"])
+    assert not result.ok
+    assert "cannot spawn" in result.error
+
+
+def test_parallel_research_requires_questions(tmp_path):
+    ctx = tools.ToolContext(workspace=str(tmp_path), safety="auto")
+    result = _parallel_research(ctx, questions=[])
+    assert not result.ok
+
+
+def test_parallel_research_registered_and_readonly():
+    tool = get_tool("parallel_research")
+    assert tool is not None and tool.mutating is False
+    # Available in the read-only registry (planner/reviewer/tester toolsets).
+    assert any(t.name == "parallel_research" for t in tools.registry(include_mutating=False))
+
+
+def test_subagent_toolsets_exclude_spawning_tools():
+    for kind in ("readonly", "exec", "full"):
+        names = {t.name for t in subagents._resolve_toolset(kind)}
+        assert "parallel_research" not in names
+        assert "spawn_subagent" not in names
+
+
+def test_quiet_executor_emits_no_ui_events(tmp_path):
+    from langchain_core.messages import AIMessage
+    from coding_harness import config, executor
+    from coding_harness.control import CONTROL
+    from coding_harness.tokens import LEDGER
+
+    LEDGER.reset()
+    CONTROL.reset()
+    seen: list = []
+    CONTROL.set_listener(lambda ev: seen.append(ev))
+    script = iter([
+        AIMessage(content='<tool_call>{"name": "list_dir", "args": {}}</tool_call>'),
+        AIMessage(content="done"),
+    ])
+    ctx = tools.ToolContext(workspace=str(tmp_path), safety="auto")
+    try:
+        with (
+            patch.object(config, "_invoke_with_retry", side_effect=lambda l, m: next(script)),
+            patch.object(executor, "_try_bind_tools", return_value=None),
+        ):
+            result = executor.run_executor(
+                task="x", ctx=ctx, max_steps=3, step_label="t", quiet=True
+            )
+    finally:
+        CONTROL.set_listener(None)
+    assert result.stopped_reason == "done"
+    assert seen == []  # quiet run emitted nothing
