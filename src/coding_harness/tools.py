@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import platform
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +30,68 @@ from typing import Any, Callable
 
 from coding_harness import safety
 from coding_harness.compress import compress_output
+
+
+# ---------------------------------------------------------------------------
+# Subprocess environment helpers
+# ---------------------------------------------------------------------------
+
+def _subprocess_env() -> dict[str, str]:
+    """Build env for shell subprocesses.
+
+    Wells patches Python's SSL context via truststore (good) but may also set
+    REQUESTS_CA_BUNDLE/SSL_CERT_FILE/CURL_CA_BUNDLE in os.environ as a certifi
+    fallback. Those env vars bleed into every subprocess and override tools like
+    `az` that manage their own cert trust (Windows cert store). Strip them if
+    they point to Wells' own certifi bundle so subprocesses behave the same as
+    the user's native shell.
+    """
+    env = os.environ.copy()
+    try:
+        import certifi
+        certifi_path = certifi.where()
+        for var in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+            if env.get(var) == certifi_path:
+                env.pop(var, None)
+    except Exception:
+        pass
+    return env
+
+
+# Cached PowerShell executable path (None = not found, falls back to cmd.exe).
+_PWSH: str | None = shutil.which("pwsh") or shutil.which("powershell")
+_ON_WINDOWS: bool = platform.system() == "Windows"
+
+
+def _run_shell(command: str, cwd: str, timeout: float) -> subprocess.CompletedProcess:
+    """Run *command* in the appropriate shell for the current OS.
+
+    On Windows: use PowerShell (pwsh/powershell) so commands the agent
+    generates — which assume PS syntax ($env:VAR, Select-String, ;-chains) —
+    actually work. cmd.exe is the shell=True default on Windows and silently
+    misinterprets most PS syntax.
+
+    On Linux/macOS: use shell=True (bash/sh) as before.
+    """
+    env = _subprocess_env()
+    if _ON_WINDOWS and _PWSH:
+        return subprocess.run(
+            [_PWSH, "-NoProfile", "-NonInteractive", "-Command", command],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    return subprocess.run(
+        command,
+        shell=True,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
 
 
 def _get_index_tools() -> list:
@@ -335,14 +399,7 @@ def _run_command(ctx: ToolContext, command: str) -> ToolResult:
         return ToolResult(True, decision.reason, simulated=decision.simulated)
 
     try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=ctx.workspace,
-            capture_output=True,
-            text=True,
-            timeout=ctx.shell_timeout,
-        )
+        proc = _run_shell(command, cwd=ctx.workspace, timeout=ctx.shell_timeout)
     except subprocess.TimeoutExpired:
         return ToolResult(
             False, "", f"Command timed out after {ctx.shell_timeout}s: {command}"
