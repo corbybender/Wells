@@ -621,6 +621,7 @@ _REPL_STATE: dict = {
     "last_state": {},
     "resume_context": None,
     "resume_session_id": None,
+    "busy_since": None,   # monotonic timestamp set while a run is in progress
 }
 
 
