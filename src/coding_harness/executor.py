@@ -717,8 +717,8 @@ def run_executor(
     steps = 0
     rounds = 0
     total_saved = 0
-    _reads: dict[str, int] = {}          # path → read count
-    _fail_patterns: dict[str, int] = {}  # command prefix → fail count
+    _read_ranges: dict[str, list[tuple[int, int]]] = {}  # path → [(offset, end), ...]
+    _fail_patterns: dict[str, int] = {}                  # command prefix → fail count
 
     while steps < cap:
         # ── Context management pipeline (order matters) ──────────────────────
@@ -801,34 +801,58 @@ def run_executor(
                 "output_preview": (result.output or result.error or "")[:200],
                 "simulated": result.simulated,
             })
-            # Track file reads; warn when the same file is read multiple times.
+
+            # ── Re-read detection ──────────────────────────────────────────
+            # Track which line ranges of each file have been read.
+            # On the 2nd+ read, inject a harness note INTO obs_text so the
+            # model actually sees it (a terminal-only warning is invisible to
+            # the model and has no effect on its behaviour).
             if name == "read_file":
-                fpath = _short_path(str(args.get("path", "")))
-                _reads[fpath] = _reads.get(fpath, 0) + 1
-                if _reads[fpath] == 2:
-                    print(f"  [yellow]⚠ re-reading {fpath} — consider grep or find_symbol instead[/yellow]")
-                elif _reads[fpath] > 2:
-                    print(f"  [yellow]⚠ reading {fpath} for the {_reads[fpath]}th time[/yellow]")
+                raw_path = str(args.get("path", ""))
+                fpath = _short_path(raw_path)
+                offset = int(args.get("offset") or 1)
+                limit  = int(args.get("limit")  or 2000)
+                ranges = _read_ranges.setdefault(raw_path, [])
+                ranges.append((offset, offset + limit - 1))
+                count = len(ranges)
 
-            print(_activity_line(name, args, result.ok, result.simulated))
+                if count >= 2:
+                    prior = ", ".join(f"{s}–{e}" for s, e in ranges[:-1])
+                    note = (
+                        f"\n\n[HARNESS: You have now read '{fpath}' {count} time(s) "
+                        f"(previously lines {prior}). "
+                        f"Avoid reading this file again — use grep with a specific "
+                        f"pattern to find the exact lines you need instead.]"
+                    )
+                    obs_text = obs_text + note
+                    lbl = "re-reading" if count == 2 else f"reading ×{count}"
+                    print(f"  [yellow]⚠ {lbl} {fpath} — consider grep or find_symbol instead[/yellow]")
 
-            # On failure, show the first meaningful error line so the user
-            # knows what went wrong without having to dig through logs.
+            # ── Stuck-loop detection ───────────────────────────────────────
+            # Inject a note into obs_text when the same command fails 3+ times
+            # so the model knows to stop retrying and report the blocker.
             if not result.ok and not result.simulated:
                 err = _first_error_line(result.output or result.error or "")
                 if err:
                     print(f"    [dim red]↳ {err}[/dim red]")
 
-                # Stuck-loop detection: same command prefix failing repeatedly.
                 if name in ("run_command", "shell", "bash"):
                     raw_cmd = str(args.get("command") or args.get("cmd") or "")
                     key = _strip_env_prefix(raw_cmd)[:50]
                     _fail_patterns[key] = _fail_patterns.get(key, 0) + 1
-                    if _fail_patterns[key] == 3:
-                        print(
-                            f"  [bold yellow]⚠ same command has failed {_fail_patterns[key]} times "
-                            f"— the model should report a blocker instead of retrying.[/bold yellow]"
+                    if _fail_patterns[key] >= 3:
+                        blocker_note = (
+                            f"\n\n[HARNESS: This command (or a close variant) has failed "
+                            f"{_fail_patterns[key]} times. Stop retrying. Report what is "
+                            f"blocking you and what you have tried so far.]"
                         )
+                        obs_text = obs_text + blocker_note
+                        print(
+                            f"  [bold yellow]⚠ same command failed {_fail_patterns[key]}× "
+                            f"— model told to report blocker[/bold yellow]"
+                        )
+
+            print(_activity_line(name, args, result.ok, result.simulated))
 
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
