@@ -442,6 +442,13 @@ class WellsApp(App[None]):
                 pass
 
     def _print_welcome(self) -> None:
+        try:
+            from coding_harness.logo import logo_lines
+            width = self.size.width or 80
+            for line in logo_lines(max_width=width):
+                self._log.write(line)  # not transcripted — /export stays clean
+        except Exception:
+            pass
         self.write_log("\n[bold blue]Wells Coding Harness[/bold blue]")
         self.write_log(f"[dim]Model:[/dim] [green]{config.model_name_for_task('coding')}[/green]")
         self.write_log(
