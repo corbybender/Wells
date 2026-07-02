@@ -29,7 +29,7 @@ so they can be exposed as a tool (``spawn_subagent``) the model itself can call.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from coding_harness import executor, tools
 from coding_harness.executor import ExecutorResult
@@ -77,15 +77,21 @@ class SubagentReport:
 # ---------------------------------------------------------------------------
 
 
+_NO_NESTING = ("spawn_subagent", "parallel_research")
+
+
 def _resolve_toolset(name: str) -> list[tools.ToolDef]:
+    """Toolset for a subagent — never includes the spawning tools themselves
+    (recursion guard; ctx.subagent enforces the same rule at dispatch time)."""
     if name == "readonly":
-        return tools.registry(include_mutating=False)
-    if name == "exec":
-        return tools.registry(include_mutating=False) + [
+        base = tools.registry(include_mutating=False)
+    elif name == "exec":
+        base = tools.registry(include_mutating=False) + [
             t for t in tools.EXEC_TOOLS if t.name in ("run_tests", "run_command")
         ]
-    # full
-    return tools.ALL_TOOLS
+    else:  # full
+        base = tools.ALL_TOOLS
+    return [t for t in base if t.name not in _NO_NESTING]
 
 
 # ---------------------------------------------------------------------------
@@ -94,19 +100,29 @@ def _resolve_toolset(name: str) -> list[tools.ToolDef]:
 
 
 def run_subagent(
-    spec: SubagentSpec, ctx: ToolContext, *, profile: str | None = None
+    spec: SubagentSpec,
+    ctx: ToolContext,
+    *,
+    profile: str | None = None,
+    quiet: bool = False,
 ) -> SubagentReport:
-    """Run a single subagent synchronously and return its report."""
+    """Run a single subagent synchronously and return its report.
+
+    ``quiet=True`` suppresses the subagent's per-step output (used for parallel
+    fan-out where concurrent runs would interleave in the log).
+    """
     toolset = _resolve_toolset(spec.toolset)
+    sub_ctx = replace(ctx, subagent=True)
     try:
         result: ExecutorResult = executor.run_executor(
             task=spec.task,
-            ctx=ctx,
+            ctx=sub_ctx,
             toolset=toolset,
             max_steps=spec.max_steps,
             profile=profile,
             temperature=spec.temperature,
             step_label=f"subagent-{spec.name}",
+            quiet=quiet,
         )
     except Exception as e:
         return SubagentReport(
@@ -149,7 +165,11 @@ def dispatch_subagents(
     with ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="wells-subagent"
     ) as pool:
-        futures = {pool.submit(run_subagent, s, ctx, profile): s.name for s in specs}
+        # quiet=True: concurrent runs must not interleave in the log.
+        futures = {
+            pool.submit(run_subagent, s, ctx, profile=profile, quiet=True): s.name
+            for s in specs
+        }
         by_name: dict[str, SubagentReport] = {}
         for fut in futures:
             by_name[futures[fut]] = fut.result()
