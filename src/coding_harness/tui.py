@@ -236,6 +236,13 @@ class WellsApp(App[None]):
         Binding("ctrl+d", "quit", "Quit"),
         Binding("escape", "cancel_task", "Cancel task"),
         Binding("ctrl+l", "clear_log", "Clear output"),
+        # Scroll bindings — priority=True so they fire even when Input has focus.
+        # mouse=False hands mouse-wheel events to the terminal (for copy-paste),
+        # so keyboard is the only scroll path inside the TUI.
+        Binding("pageup",    "scroll_up",     "Scroll up",      show=False, priority=True),
+        Binding("pagedown",  "scroll_down",   "Scroll down",    show=False, priority=True),
+        Binding("ctrl+home", "scroll_top",    "Scroll to top",  show=False, priority=True),
+        Binding("ctrl+end",  "scroll_bottom", "Scroll to end",  show=False, priority=True),
     ]
 
     def __init__(self, resume_context: str | None = None) -> None:
@@ -606,6 +613,18 @@ class WellsApp(App[None]):
 
     def action_clear_log(self) -> None:
         self._log.clear()
+
+    def action_scroll_up(self) -> None:
+        self._log.scroll_page_up(animate=False)
+
+    def action_scroll_down(self) -> None:
+        self._log.scroll_page_down(animate=False)
+
+    def action_scroll_top(self) -> None:
+        self._log.scroll_home(animate=False)
+
+    def action_scroll_bottom(self) -> None:
+        self._log.scroll_end(animate=False)
 
 
 # ---------------------------------------------------------------------------
