@@ -115,19 +115,32 @@ class StatusBar(Static):
 
         try:
             import coding_harness.cli as _cli
-            force = _cli._REPL_STATE.get("force_mode")
+            state = _cli._REPL_STATE
+            force = state.get("force_mode")
+            busy_since = state.get("busy_since")
         except Exception:
             force = None
+            busy_since = None
 
         if force == "task":
             mode = "[bold magenta]mode: orchestrate[/bold magenta]"
         else:
             mode = "[dim]mode: auto[/dim]"
 
+        if busy_since is not None:
+            secs = int(_time.monotonic() - busy_since)
+            if secs >= 60:
+                elapsed = f"[yellow]{secs // 60}m {secs % 60:02d}s[/yellow]"
+            else:
+                elapsed = f"[dim]{secs}s[/dim]"
+            elapsed_s = f"  {elapsed}"
+        else:
+            elapsed_s = ""
+
         return (
             f"[dim]{wd}[/dim]  "
             f"[green]{model}[/green]  "
-            f"[cyan]{tokens_s}[/cyan]  "
+            f"[cyan]{tokens_s}[/cyan]{elapsed_s}  "
             f"{mode}"
         )
 
@@ -532,9 +545,11 @@ class WellsApp(App[None]):
     # ------------------------------------------------------------------
 
     def _start_run(self, text: str) -> None:
+        import coding_harness.cli as _cli
         self._busy = True
         self._input.disabled = True
         self._input.placeholder = "Working…"
+        _cli._REPL_STATE["busy_since"] = _time.monotonic()
         self.write_log(f"\n[bold cyan]>[/bold cyan] {text}\n")
         self._run_input(text)
 
@@ -591,6 +606,8 @@ class WellsApp(App[None]):
             self.call_from_thread(self._restore_input)
 
     def _restore_input(self) -> None:
+        import coding_harness.cli as _cli
+        _cli._REPL_STATE["busy_since"] = None
         self._input.disabled = False
         self._input.placeholder = (
             "Ask a question or give a task… (/ for commands, Ctrl+C to quit)"

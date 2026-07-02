@@ -538,6 +538,35 @@ def _safety_drop(messages: list[BaseMessage]) -> tuple[list[BaseMessage], int]:
 # Activity display helpers
 # ---------------------------------------------------------------------------
 
+def _extract_llm_text(resp: BaseMessage) -> str:
+    """Pull narrative text out of an LLM response (the part before/around tool calls)."""
+    c = getattr(resp, "content", "") or ""
+    if isinstance(c, str):
+        return c.strip()
+    if isinstance(c, list):
+        parts = [
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in c
+            if (isinstance(block, dict) and block.get("type") == "text") or isinstance(block, str)
+        ]
+        return " ".join(parts).strip()
+    return ""
+
+
+def _first_error_line(output: str) -> str:
+    """Return the first meaningful error line from command output."""
+    _skip = {"", "$", "---", "EXIT="}
+    _skip_prefixes = ("[exit", "[stderr", "# ", "PS ", "> ")
+    for line in output.splitlines():
+        s = line.strip()
+        if not s or s in _skip:
+            continue
+        if any(s.startswith(p) for p in _skip_prefixes):
+            continue
+        return s[:120]
+    return ""
+
+
 def _short_path(path: str) -> str:
     """Shorten a path relative to the workspace root for display."""
     p = str(path or "?")
@@ -662,21 +691,20 @@ def run_executor(
 
     history: list[dict] = []
     steps = 0
+    rounds = 0
     total_saved = 0
 
     while steps < cap:
         # ── Context management pipeline (order matters) ──────────────────────
-        # 1. Working memory — always-in-context structural state, never pruned
         messages = _inject_wm(messages, wm)
-        # 2. Observation masking — primary compression, keeps AI reasoning intact
         messages, mask_saved = _apply_observation_masking(messages, _tool_meta)
-        # 3. Safety drop — absolute fallback, should rarely fire after masking
         messages, drop_saved = _safety_drop(messages)
         saved = mask_saved + drop_saved
         if saved:
             total_saved += saved
         # ─────────────────────────────────────────────────────────────────────
 
+        rounds += 1
         try:
             resp = config._invoke_with_retry(llm, messages)
         except Exception as e:
@@ -693,9 +721,26 @@ def run_executor(
 
         calls = _extract_calls(resp, native_tools=native_tools)
 
+        # Show the LLM's reasoning text (if any) before we execute the tool calls.
+        # This tells the user WHY the agent is doing what it's about to do.
+        llm_text = _extract_llm_text(resp)
+        if llm_text:
+            # Trim to ~200 chars; collapse newlines so it reads as one line.
+            preview = " ".join(llm_text.split())[:200]
+            if len(llm_text) > 200:
+                preview += "…"
+            print(f"\n[dim italic]{preview}[/dim italic]")
+        elif calls:
+            # No narrative text — at least show the round number so the user
+            # knows progress is being made.
+            print(f"\n[dim]Round {rounds}  (step {steps + 1}/{cap})[/dim]")
+
         if not calls:
+            # No tool calls = final answer.
+            if llm_text:
+                print()  # blank line before final summary
             return ExecutorResult(
-                summary=(getattr(resp, "content", "") or "").strip() or "(no output)",
+                summary=llm_text or "(no output)",
                 steps_taken=steps,
                 tool_calls=history,
                 stopped_reason="done",
@@ -717,13 +762,10 @@ def run_executor(
                 )
                 continue
 
-            # Store metadata so the masker can produce type-aware summaries later.
             _tool_meta[tcid] = (name, args)
 
             result = tools.dispatch(name, args, ctx)
             obs_text = result.to_model_text()
-
-            # Update working memory with the structural facts from this result.
             wm.update_from_tool(name, args, obs_text, result.ok)
 
             history.append({
@@ -734,6 +776,14 @@ def run_executor(
                 "simulated": result.simulated,
             })
             print(_activity_line(name, args, result.ok, result.simulated))
+
+            # On failure, show the first meaningful error line so the user
+            # knows what went wrong without having to dig through logs.
+            if not result.ok and not result.simulated:
+                err = _first_error_line(result.output or result.error or "")
+                if err:
+                    print(f"    [dim red]↳ {err}[/dim red]")
+
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
             )
