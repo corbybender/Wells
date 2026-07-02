@@ -14,6 +14,7 @@ dependencies = [
     "textual>=1.0.0",
     "rich>=15.0.0",
     "truststore>=0.9.1",
+    "watchdog>=4.0",
     "wells-index>=0.1.0",
 ]
 

@@ -124,52 +124,52 @@ def _index_age_hours(last_indexed_at) -> float | None:
         return None
 
 
-def ensure_index(workspace: str, *, max_age_hours: float = 24.0,
-                 auto_build: bool = True, prompt_fn=None) -> str:
-    """Ensure the repo index exists and is fresh; build/update if needed.
+def ensure_index(workspace: str, *, auto_build: bool = True,
+                 prompt_fn=None) -> str:
+    """Ensure the repo index exists and is current before running a task.
 
-    This is the single entry point for auto-indexing. It:
-      1. Checks index presence. If missing and ``auto_build`` is True, builds it
-         immediately. If ``auto_build`` is False, calls ``prompt_fn`` to ask the
-         user (default: prints a message and skips).
-      2. Checks index age. If older than ``max_age_hours`` and ``auto_build`` is
-         True, updates silently. If not auto, calls ``prompt_fn``.
-      3. Returns a short status string describing what happened.
+    Behaviour depends on whether the background file watcher is running:
 
-    ``prompt_fn(message)`` should return True to proceed, False to skip. When
-    ``prompt_fn`` is None a non-interactive default is used (auto-build if
-    ``auto_build``, else skip with a message).
+    * **Watcher active**: index is being kept live by the background thread.
+      Only check existence (build once if missing); skip the incremental scan
+      since the watcher already handled any file changes.
+    * **Watcher inactive**: always run an incremental update so the index
+      reflects any edits made since the last Wells run. The Rust engine uses
+      BLAKE3 per-file hashing, so only changed files are re-parsed — the scan
+      of an unchanged repo takes under 200 ms.
     """
     if not INDEXER_AVAILABLE:
         return "index-unavailable"
 
     status = index_status(workspace)
-
     if status.get("error"):
         return f"index-check-failed: {status['error']}"
 
-    # Case 1: no index at all.
+    from coding_harness import index_watcher
+
     if not status["exists"]:
+        # No index at all — build it regardless of watcher state.
         if auto_build:
-            return _do_index(workspace, verb="Building")
+            with index_watcher.lock():
+                return _do_index(workspace, verb="Building")
         if prompt_fn and prompt_fn(
             "No repository index found. Build one now? (recommended) [Y/n] "
         ):
-            return _do_index(workspace, verb="Building")
+            with index_watcher.lock():
+                return _do_index(workspace, verb="Building")
         return "index-skipped-missing"
 
-    # Case 2: index exists but may be stale.
-    age = status.get("age_hours")
-    if age is not None and age > max_age_hours:
-        if auto_build:
-            return _do_index(workspace, verb=f"Updating (index {age:.0f}h old)")
-        if prompt_fn and prompt_fn(
-            f"Repository index is {age:.0f} hours old. Update it? [Y/n] "
-        ):
-            return _do_index(workspace, verb="Updating")
-        return f"index-skipped-stale ({age:.0f}h old)"
+    if index_watcher.is_active():
+        # Watcher keeps the index live — nothing to do.
+        return (
+            f"index-ready ({status['total_symbols']:,} symbols, "
+            f"{status['total_files']:,} files)"
+        )
 
-    return f"index-ready ({status['total_symbols']:,} symbols, {status['total_files']:,} files)"
+    # No watcher: run an incremental scan to pick up any changes since the
+    # last run.  Acquire the shared lock so concurrent calls are serialised.
+    with index_watcher.lock():
+        return _do_index(workspace, verb="Updating")
 
 
 def _do_index(workspace: str, *, verb: str) -> str:
