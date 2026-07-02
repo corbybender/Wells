@@ -517,6 +517,19 @@ def main() -> None:
 
     if not goal_args and resume_flag is None:
         # No goal and no resume flag — launch the interactive REPL.
+        # Start the file-system watcher before entering the TUI so the index
+        # stays live while the dev works (changes indexed within ~1.5s).
+        if config.INDEX_AUTO_UPDATE:
+            try:
+                from coding_harness import index_watcher, index_tools
+                ws = config.WORKSPACE_ROOT
+                started = index_watcher.start(ws)
+                if started:
+                    # Build index on first launch if missing; watcher handles
+                    # all subsequent updates automatically.
+                    index_tools.ensure_index(ws, auto_build=True)
+            except Exception:
+                pass  # watcher is optional — Wells works without it
         from coding_harness.cli import run_repl
         run_repl()
         return
