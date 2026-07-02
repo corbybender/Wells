@@ -19,12 +19,12 @@ from coding_harness.executor import run_executor
 from coding_harness.tools import ToolContext
 
 
-CODER_TASK_TEMPLATE = """Implement the following development goal in the workspace at {workspace}.
+CODER_TASK_TEMPLATE = """You are implementing a pre-researched plan in the workspace at {workspace}.
 
 GOAL:
 {goal}
 
-ARCHITECTURE / PLAN CONTEXT:
+CONCRETE PLAN (produced by a planner that already read the codebase):
 {context}
 
 REVIEW FEEDBACK TO ADDRESS (if any):
@@ -32,10 +32,15 @@ REVIEW FEEDBACK TO ADDRESS (if any):
 
 {memory}
 
-Use the available tools to read the relevant files, make the necessary edits,
-then verify your work (re-read changed files, run lint/build/tests). When done,
-reply with a concise summary of every file you changed and the verification
-result. Do not call tools further once you are done.
+The plan above already names the exact files, functions, and line numbers you need.
+Follow it step by step:
+1. Read ONLY the specific sections called out in the plan (use offset/limit — do not
+   re-read whole files the planner already investigated).
+2. Make the changes exactly as described.
+3. Verify each change (re-read the edited section; run the verification step from the plan).
+4. When done, reply with a concise summary of every file changed and the verification result.
+
+Do not call tools further once you are done. Do not re-discover code the plan already identified.
 """
 
 

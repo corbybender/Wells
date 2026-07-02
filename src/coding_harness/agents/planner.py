@@ -1,33 +1,78 @@
-"""Planner: turns the raw goal into a structured development plan."""
+"""Planner: investigates the codebase and produces a concrete implementation plan.
+
+The planner is an *agentic* step — it uses read-only tools (find_symbol, grep,
+read_file, list_dir, glob) to actually explore the repo before writing a plan.
+This grounds every downstream node in reality: the coder receives exact file
+paths, function names, and line numbers rather than vague prose, so it can
+execute with minimal additional discovery.
+
+For less-capable models this is especially important: a concrete plan acts as
+rails that guide the model step-by-step rather than leaving it to rediscover
+the codebase from scratch inside the coder loop.
+"""
 
 from coding_harness import memory
-from coding_harness.runtime import run_step
+from coding_harness.executor import run_executor
+from coding_harness.tools import ToolContext
+import coding_harness.tools as _tools
 
-PLANNER_SYSTEM = """You are a senior software planner.
-Break the given development goal into a clear, actionable development plan.
-Produce a concise plan with:
-- Project objectives
-- Phases / milestones
-- Key deliverables
-- Out-of-scope items
-- Success criteria
 
-If PROJECT MEMORY is provided, use it to ground the plan in this repo's known
-files, conventions, and prior gotchas — do not contradict established facts."""
+_PLANNER_PREFIX = """\
+You are a senior software investigator and planner.
+Your ONLY job right now is to INVESTIGATE the codebase and produce a CONCRETE plan.
+Do NOT implement anything. Do NOT write code. Just read and plan.
+
+Investigation strategy:
+1. Use find_symbol / search_symbols to locate relevant functions, classes, or modules.
+2. Read only the specific sections you need — use offset/limit to avoid reading whole files.
+3. Use grep when you need to find all usages or wiring of a pattern.
+4. Stop reading once you have enough to write a specific plan.
+
+Output format (use these exact headings):
+
+## Summary
+One sentence: what will be done.
+
+## Affected files
+- relative/path/to/file.ext — what changes and roughly where (line numbers if known)
+
+## Implementation steps
+Numbered, specific steps. Each step must name the exact file and what to change.
+Reference line numbers wherever possible.
+Example: "3. Edit admin/index.html line 147 — add <button id='cancel'>Cancel</button> after the Save button div."
+
+## Verification
+What to run or check to confirm the task is complete.
+
+## Risks / gotchas
+Non-obvious constraints, naming collisions, side-effects to watch for.
+"""
 
 
 def planner(state: dict) -> dict:
-    print("[planner] drafting development plan ...")
+    print("[planner] investigating codebase and drafting concrete plan ...")
 
-    goal = memory.inject_into_prompt(
-        f"Goal:\n{state.get('goal', '')}", state.get("workspace_root")
+    goal = state.get("goal", "")
+    workspace = state.get("workspace_root")
+
+    # Weave in project memory so the planner knows established facts
+    # about this repo (file layout, conventions, prior gotchas).
+    task = memory.inject_into_prompt(
+        f"Investigate the codebase and write a concrete implementation plan for:\n\n{goal}",
+        workspace,
     )
-    chunks = {"user_request": goal}
-    plan, _ = run_step(
-        step="planner",
-        task_type="planning",
-        system=PLANNER_SYSTEM,
-        chunks=chunks,
-        workspace=state.get("workspace_root"),
+
+    ctx = ToolContext.from_state(state)
+
+    result = run_executor(
+        task=task,
+        ctx=ctx,
+        toolset=_tools.READ_TOOLS,   # find_symbol, grep, read, list, glob — no writes, no shell
+        system_prefix=_PLANNER_PREFIX,
+        max_steps=25,                # enough to explore; not enough to drift
+        step_label="planner",
     )
+
+    plan = result.summary or "(planner produced no output)"
+    print(f"[planner] plan ready ({len(plan)} chars)")
     return {"development_plan": plan}
