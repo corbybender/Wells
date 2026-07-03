@@ -1,6 +1,6 @@
 [package]
 name = "wells-index"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Wells Contributors"]
 description = "Fast structural repository indexer for wells-coding-harness"

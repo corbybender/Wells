@@ -504,8 +504,9 @@ class WellsApp(App[None]):
 
     def _connect_mcp_servers(self) -> None:
         """Connect configured MCP servers in the background (never blocks UI)."""
-        from coding_harness.mcp_client import load_config
+        from coding_harness.mcp_client import ensure_template, load_config
 
+        ensure_template()  # first run: write ~/.wells/mcp.json with samples
         if not load_config():
             return
 

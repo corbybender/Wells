@@ -220,3 +220,54 @@ def test_mcp_wrapped_tool_calls_through_and_gates(tmp_path: Path):
     ctx_dry = tools.ToolContext(workspace=str(tmp_path), safety="dryrun")
     r2 = tooldef.handler(ctx_dry, q="hello")
     assert r2.simulated
+
+
+# ---------------------------------------------------------------------------
+# MCP config template + stale-core repair
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_template_created_and_examples_ignored(tmp_path, monkeypatch):
+    from coding_harness import mcp_client
+    cfg_file = tmp_path / "mcp.json"
+    monkeypatch.delenv("MCP_SERVERS", raising=False)
+    with patch.object(mcp_client, "_CONFIG_FILE", cfg_file):
+        mcp_client.ensure_template()
+        assert cfg_file.exists()
+        # Template ships only samples under "_" keys — nothing auto-connects.
+        assert mcp_client.load_config() == {}
+        # Enabling a server = moving it to the top level.
+        import json as _json
+        data = _json.loads(cfg_file.read_text(encoding="utf-8"))
+        data["fetch"] = data["_examples"]["fetch"]
+        cfg_file.write_text(_json.dumps(data), encoding="utf-8")
+        cfg = mcp_client.load_config()
+        assert list(cfg) == ["fetch"]
+
+
+def test_mcp_template_does_not_overwrite(tmp_path, monkeypatch):
+    from coding_harness import mcp_client
+    cfg_file = tmp_path / "mcp.json"
+    cfg_file.write_text('{"mine": {"command": "x"}}', encoding="utf-8")
+    with patch.object(mcp_client, "_CONFIG_FILE", cfg_file):
+        mcp_client.ensure_template()
+        assert "mine" in cfg_file.read_text(encoding="utf-8")
+
+
+def test_repair_index_core_reports_when_no_bundle(monkeypatch, tmp_path):
+    from coding_harness import setup as setup_mod
+    # Point the bundled-core lookup at an empty directory.
+    fake_root = tmp_path / "fake_pkg" / "coding_harness"
+    fake_root.mkdir(parents=True)
+    monkeypatch.setattr(setup_mod, "__file__", str(fake_root / "setup.py"))
+    ok, msg = setup_mod.repair_index_core()
+    assert not ok
+    assert "no bundled core" in msg or "not installed" in msg
+
+
+def test_repair_index_core_finds_real_bundle():
+    # In this repo the bundled cores exist for the running interpreter, so the
+    # only acceptable failures are lock-related swap errors, never "no bundle".
+    from coding_harness import setup as setup_mod
+    ok, msg = setup_mod.repair_index_core()
+    assert "no bundled core" not in msg

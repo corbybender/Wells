@@ -37,6 +37,9 @@ from coding_harness.tools import ToolContext, ToolDef, ToolResult
 # Module-level cache of engines per workspace
 _engine_cache: Dict[str, Optional[Any]] = {}
 
+# Stale-core auto-repair runs at most once per process (see ensure_index).
+_REPAIR_ATTEMPTED = False
+
 
 def _get_engine(ctx: ToolContext) -> Optional[Any]:
     """Return or create cached IndexEngine for the given workspace."""
@@ -144,6 +147,23 @@ def ensure_index(workspace: str, *, auto_build: bool = True,
     status = index_status(workspace)
     if status.get("error"):
         return f"index-check-failed: {status['error']}"
+
+    # Stale-core detection: the 0.1.0 PyPI wheels index files but extract no
+    # symbols. Auto-repair once per process from the repo-bundled core.
+    global _REPAIR_ATTEMPTED
+    if (
+        not _REPAIR_ATTEMPTED
+        and status["exists"]
+        and status["total_files"] > 0
+        and status["total_symbols"] == 0
+    ):
+        _REPAIR_ATTEMPTED = True
+        try:
+            from coding_harness import setup as _setup
+            fixed, msg = _setup.repair_index_core()
+            print(f"[index] stale native core (0 symbols): {msg}")
+        except Exception:
+            pass
 
     from coding_harness import index_watcher
 

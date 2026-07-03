@@ -837,9 +837,11 @@ def _handle_doctor() -> None:
             elif not st["exists"]:
                 table.add_row("repo index", WARN, "not built yet — /index to build")
             elif st["total_files"] > 0 and st["total_symbols"] == 0:
+                from coding_harness.setup import repair_index_core
+                fixed, msg = repair_index_core()
                 table.add_row(
-                    "repo index", FAIL,
-                    "files indexed but 0 symbols — stale native core; rebuild wells-index",
+                    "repo index", WARN if fixed else FAIL,
+                    f"stale native core (0 symbols) — {msg}",
                 )
             else:
                 age = st.get("age_hours")

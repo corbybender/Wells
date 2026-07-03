@@ -8,5 +8,5 @@ except ImportError as e:
         "Make sure to build with: `maturin develop` in the wells-index directory"
     ) from e
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["IndexEngine"]
