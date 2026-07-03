@@ -157,6 +157,55 @@ def _ensure_indexer_built() -> bool:
     )
 
 
+def repair_index_core() -> tuple[bool, str]:
+    """Hot-swap a stale wells_index native core with the repo-bundled one.
+
+    The 0.1.0 wheels on PyPI index files but extract zero symbols. When that
+    stale core is detected (files > 0, symbols == 0), this copies the current
+    ``_core.cpXY-*.pyd`` bundled in the repo over the installed one. Windows
+    locks a loaded DLL against overwrite but allows *renaming* it, so the old
+    core is renamed aside first; the swap takes effect on the next start.
+
+    Returns (repaired, message).
+    """
+    import shutil
+
+    try:
+        import wells_index
+        installed_dir = Path(wells_index.__file__).parent
+    except ImportError:
+        return False, "wells_index is not installed"
+
+    tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    wells_root = Path(__file__).parent.parent.parent
+    bundled_dir = wells_root / "wells-index" / "python" / "wells_index"
+    candidates = sorted(bundled_dir.glob(f"_core.{tag}-*.pyd"))
+    if not candidates:
+        return False, (
+            f"no bundled core for {tag} at {bundled_dir} — "
+            "update wells-index from PyPI once fixed wheels are published"
+        )
+    bundled = candidates[-1]
+
+    targets = sorted(installed_dir.glob(f"_core.{tag}-*.pyd"))
+    target = targets[-1] if targets else installed_dir / bundled.name
+    try:
+        if target.exists():
+            old = target.with_suffix(".pyd.stale")
+            try:
+                old.unlink()  # leftover from a previous repair
+            except OSError:
+                pass
+            target.rename(old)  # allowed on Windows even while loaded
+        shutil.copyfile(bundled, installed_dir / bundled.name)
+    except Exception as e:
+        return False, f"could not swap native core: {e}"
+    return True, (
+        f"replaced stale index core with {bundled.name} — restart wells, "
+        "then run /index force to rebuild symbols"
+    )
+
+
 def _prompt_for_workspace() -> str | None:
     """Ask user for workspace path on first run."""
     from pathlib import Path

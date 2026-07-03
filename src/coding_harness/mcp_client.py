@@ -37,8 +37,65 @@ _BRIDGE: "_Bridge | None" = None
 _LOCK = threading.Lock()
 
 
+_TEMPLATE = {
+    "_readme": [
+        "Wells MCP client configuration. Servers listed at the top level are",
+        "connected on startup and their tools appear to the agent as",
+        "mcp_<server>_<tool>. Keys starting with '_' are ignored — move an",
+        "entry from _examples to the top level (and fill in paths/keys) to",
+        "enable it. The MCP_SERVERS environment variable overrides this file.",
+    ],
+    "_examples": {
+        "fetch": {
+            "command": "uvx",
+            "args": ["mcp-server-fetch"],
+        },
+        "filesystem": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem",
+                     "C:/path/to/allowed/dir"],
+        },
+        "github": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"},
+        },
+        "postgres": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-postgres",
+                     "postgresql://user:pass@localhost/db"],
+        },
+        "sqlite": {
+            "command": "uvx",
+            "args": ["mcp-server-sqlite", "--db-path", "C:/path/to/data.db"],
+        },
+        "memory": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-memory"],
+        },
+    },
+}
+
+
+def ensure_template() -> None:
+    """Create ~/.wells/mcp.json with documented samples if it doesn't exist."""
+    try:
+        if _CONFIG_FILE.exists():
+            return
+        _CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _CONFIG_FILE.write_text(
+            json.dumps(_TEMPLATE, indent=2) + "\n", encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def load_config() -> dict:
-    """Read the MCP server config (env first, then ~/.wells/mcp.json)."""
+    """Read the MCP server config (env first, then ~/.wells/mcp.json).
+
+    Keys starting with ``_`` (docs/samples in the template) and non-dict
+    values are ignored.
+    """
     raw = os.environ.get("MCP_SERVERS", "").strip()
     if not raw and _CONFIG_FILE.exists():
         try:
@@ -49,7 +106,12 @@ def load_config() -> dict:
         return {}
     try:
         cfg = json.loads(raw)
-        return cfg if isinstance(cfg, dict) else {}
+        if not isinstance(cfg, dict):
+            return {}
+        return {
+            k: v for k, v in cfg.items()
+            if not k.startswith("_") and isinstance(v, dict)
+        }
     except Exception:
         return {}
 
