@@ -387,8 +387,330 @@ class SettingsScreen(ModalScreen["dict | None"]):
 
 
 # ---------------------------------------------------------------------------
+# MCP server manager (/mcp) — same interaction model as the settings modal.
+# ---------------------------------------------------------------------------
+
+class MCPAddScreen(ModalScreen["dict | None"]):
+    """Small form to add an MCP server: name, command, args, env."""
+
+    CSS = """
+    MCPAddScreen { align: center middle; }
+    #mcp-add-panel {
+        width: 80; max-width: 96%; height: auto;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #mcp-add-panel Static { height: auto; }
+    #mcp-add-panel Input { margin-bottom: 1; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="mcp-add-panel"):
+            yield Static("[bold]Add MCP server[/bold]  [dim](Enter moves to next field; "
+                         "Enter on the last field saves · Esc cancels)[/dim]", markup=True)
+            yield Static("Name [dim](e.g. fetch)[/dim]", markup=True)
+            yield Input(id="mcp-name", placeholder="server name")
+            yield Static("Command [dim](e.g. uvx or npx)[/dim]", markup=True)
+            yield Input(id="mcp-command", placeholder="executable")
+            yield Static("Arguments [dim](space separated, e.g. -y @modelcontextprotocol/server-filesystem C:/data)[/dim]", markup=True)
+            yield Input(id="mcp-args", placeholder="(optional)")
+            yield Static("Environment [dim](KEY=VALUE pairs, space separated)[/dim]", markup=True)
+            yield Input(id="mcp-env", placeholder="(optional, e.g. GITHUB_PERSONAL_ACCESS_TOKEN=ghp_…)")
+            yield Static("", id="mcp-add-error", markup=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#mcp-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        order = ["mcp-name", "mcp-command", "mcp-args", "mcp-env"]
+        cur = event.input.id or ""
+        if cur in order[:-1]:
+            self.query_one(f"#{order[order.index(cur) + 1]}", Input).focus()
+            return
+        # Last field — validate and dismiss with the spec.
+        name = self.query_one("#mcp-name", Input).value.strip()
+        command = self.query_one("#mcp-command", Input).value.strip()
+        if not name or not command:
+            self.query_one("#mcp-add-error", Static).update(
+                "[red]Name and command are required.[/red]"
+            )
+            return
+        spec: dict = {"command": command}
+        args = self.query_one("#mcp-args", Input).value.split()
+        if args:
+            spec["args"] = args
+        env_pairs = self.query_one("#mcp-env", Input).value.split()
+        env = {k: v for k, _, v in (p.partition("=") for p in env_pairs) if k and v}
+        if env:
+            spec["env"] = env
+        self.dismiss({"name": name, "spec": spec})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class MCPScreen(ModalScreen[None]):
+    """Modal MCP server manager: list, add, enable/disable, test, remove."""
+
+    CSS = """
+    MCPScreen { align: center middle; }
+    #mcp-panel {
+        width: 100; max-width: 96%; height: 75%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #mcp-title { height: 2; text-style: bold; }
+    #mcp-list { height: 1fr; border: none; }
+    #mcp-status { height: 2; color: $text-muted; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", priority=True),
+        Binding("a", "add", "Add"),
+        Binding("e", "toggle", "Enable/Disable"),
+        Binding("t", "test", "Test"),
+        Binding("d", "remove", "Remove"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="mcp-panel"):
+            yield Static(
+                "MCP Servers  [dim](a: add · e: enable/disable · t: test connection · "
+                "d: remove · Esc: close)[/dim]",
+                id="mcp-title", markup=True,
+            )
+            yield OptionList(id="mcp-list")
+            yield Static("", id="mcp-status", markup=True)
+
+    def on_mount(self) -> None:
+        self._populate()
+        self.query_one("#mcp-list", OptionList).focus()
+        from coding_harness import mcp_client as mc
+        if mc.env_override_active():
+            self._status(
+                "[yellow]MCP_SERVERS env var is set — it overrides mcp.json edits.[/yellow]"
+            )
+
+    # -- rendering ---------------------------------------------------------
+
+    def _status(self, text: str) -> None:
+        self.query_one("#mcp-status", Static).update(text)
+
+    def _row_state(self, name: str) -> str:
+        """State of the highlighted row: connected|enabled|disabled|example."""
+        from coding_harness import mcp_client as mc
+        data = mc.read_file_config()
+        if name in mc.connected():
+            return "connected"
+        if name in data and not name.startswith("_"):
+            return "enabled"
+        if name in (data.get("_disabled") or {}):
+            return "disabled"
+        return "example"
+
+    def _populate(self) -> None:
+        from coding_harness import mcp_client as mc
+
+        lst = self.query_one("#mcp-list", OptionList)
+        highlighted = lst.highlighted
+        lst.clear_options()
+        data = mc.read_file_config()
+        live = mc.connected()
+        active = {k: v for k, v in data.items()
+                  if not k.startswith("_") and isinstance(v, dict)}
+        disabled = data.get("_disabled") or {}
+        examples = data.get("_examples") or {}
+
+        def _cmd(spec: dict) -> str:
+            return (f"{spec.get('command', '?')} " + " ".join(spec.get("args") or []))[:52]
+
+        def _header(label: str) -> None:
+            lst.add_option(Option(f"[bold cyan]── {label} ──[/bold cyan]",
+                                  id=f"_hdr_{label}", disabled=True))
+
+        if active:
+            _header("Configured")
+            for name, spec in active.items():
+                if name in live:
+                    state = f"[green]connected · {len(live[name])} tool(s)[/green]"
+                else:
+                    state = "[yellow]enabled (not connected)[/yellow]"
+                lst.add_option(Option(
+                    f"{name:<14} {state}  [dim]{_cmd(spec)}[/dim]", id=name))
+        if disabled:
+            _header("Disabled")
+            for name, spec in disabled.items():
+                lst.add_option(Option(
+                    f"[dim]{name:<14} disabled  {_cmd(spec)}[/dim]", id=name))
+        shown = set(active) | set(disabled)
+        ex = {k: v for k, v in examples.items() if k not in shown}
+        if ex:
+            _header("Examples (press e to enable)")
+            for name, spec in ex.items():
+                lst.add_option(Option(
+                    f"[dim]{name:<14} example   {_cmd(spec)}[/dim]", id=name))
+        if lst.option_count == 0:
+            lst.add_option(Option("[dim]No servers configured — press a to add one.[/dim]",
+                                  id="_hdr_empty", disabled=True))
+        if highlighted is not None and lst.option_count:
+            lst.highlighted = min(highlighted, lst.option_count - 1)
+
+    def _selected(self) -> str | None:
+        lst = self.query_one("#mcp-list", OptionList)
+        if lst.highlighted is None:
+            return None
+        opt = lst.get_option_at_index(lst.highlighted)
+        name = opt.id or ""
+        return None if name.startswith("_hdr_") else name
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.action_test()  # Enter on a row = test its connection
+
+    # -- actions (connects run in threads; UI stays live) --------------------
+
+    def _bg(self, fn) -> None:
+        threading.Thread(target=fn, daemon=True).start()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def action_add(self) -> None:
+        def _done(result: dict | None) -> None:
+            if not result:
+                return
+            from coding_harness import mcp_client as mc
+            name, spec = result["name"], result["spec"]
+            mc.add_server(name, spec)
+            self._populate()
+            self._status(f"[dim]Added '{name}' — connecting…[/dim]")
+
+            def _connect() -> None:
+                ok, msg, names = mc.connect_server(name, spec)
+                text = (
+                    f"[green]{name}: {msg}[/green]" if ok
+                    else f"[yellow]{name}: saved, but connect failed — {msg}[/yellow]"
+                )
+                self.app.call_from_thread(self._status, text)
+                self.app.call_from_thread(self._populate)
+
+            self._bg(_connect)
+
+        self.app.push_screen(MCPAddScreen(), _done)
+
+    def action_toggle(self) -> None:
+        from coding_harness import mcp_client as mc
+        name = self._selected()
+        if not name:
+            return
+        state = self._row_state(name)
+        if state in ("connected", "enabled"):
+            mc.disconnect_server(name)
+            ok, msg = mc.set_enabled(name, False)
+            self._status(f"[dim]{name}: {msg if ok else msg}[/dim]")
+            self._populate()
+            return
+        # disabled or example -> enable + connect
+        ok, msg = mc.set_enabled(name, True)
+        if not ok:
+            self._status(f"[yellow]{msg}[/yellow]")
+            return
+        self._populate()
+        self._status(f"[dim]{name}: enabled — connecting…[/dim]")
+        spec = mc.load_config().get(name) or {}
+
+        def _connect() -> None:
+            ok2, msg2, _names = mc.connect_server(name, spec)
+            text = (
+                f"[green]{name}: {msg2}[/green]" if ok2
+                else f"[yellow]{name}: connect failed — {msg2}[/yellow]"
+            )
+            self.app.call_from_thread(self._status, text)
+            self.app.call_from_thread(self._populate)
+
+        self._bg(_connect)
+
+    def action_test(self) -> None:
+        from coding_harness import mcp_client as mc
+        name = self._selected()
+        if not name:
+            return
+        data = mc.read_file_config()
+        spec = (
+            (data.get(name) if not name.startswith("_") else None)
+            or (data.get("_disabled") or {}).get(name)
+            or (data.get("_examples") or {}).get(name)
+        )
+        if not isinstance(spec, dict):
+            self._status(f"[yellow]No spec found for {name}.[/yellow]")
+            return
+        self._status(f"[dim]Testing '{name}'…[/dim]")
+
+        def _test() -> None:
+            ok, msg, names = mc.connect_server(name, spec)
+            if ok:
+                tools_s = ", ".join(n.removeprefix(f"mcp_{name}_") for n in names[:8])
+                more = f" +{len(names) - 8} more" if len(names) > 8 else ""
+                text = f"[green]{name}: {msg}[/green]  [dim]{tools_s}{more}[/dim]"
+            else:
+                text = f"[red]{name}: {msg}[/red]"
+            self.app.call_from_thread(self._status, text)
+            self.app.call_from_thread(self._populate)
+
+        self._bg(_test)
+
+    def action_remove(self) -> None:
+        from coding_harness import mcp_client as mc
+        name = self._selected()
+        if not name:
+            return
+        if self._row_state(name) == "example":
+            self._status("[dim]Examples can't be removed — they're just templates.[/dim]")
+            return
+        mc.disconnect_server(name)
+        spec = mc.remove_server(name)
+        if spec is None:
+            self._status(f"[yellow]Not found: {name}[/yellow]")
+        else:
+            import json as _json
+            self._status(
+                f"[green]Removed '{name}'.[/green] [dim]Was: {_json.dumps(spec)[:70]}[/dim]"
+            )
+        self._populate()
+
+
+# ---------------------------------------------------------------------------
 # I/O capture helpers
 # ---------------------------------------------------------------------------
+
+class _MainThreadStdout:
+    """stdout shim for slash commands running on the event-loop thread.
+
+    Bare print() in command handlers (/info, index prints, …) would otherwise
+    go to the real stdout hidden behind the TUI.
+    """
+
+    def __init__(self, app: "WellsApp") -> None:
+        self._app = app
+        self._buf = ""
+
+    def write(self, text: str) -> int:
+        if text:
+            self._buf += text
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                self._app.write_log(line)
+        return len(text)
+
+    def flush(self) -> None:
+        if self._buf:
+            self._app.write_log(self._buf)
+            self._buf = ""
+
+    def isatty(self) -> bool:
+        return False
+
 
 class _TUIStdout:
     """Redirect sys.stdout → RichLog (used for streaming tokens + bare print())."""
@@ -822,11 +1144,17 @@ class WellsApp(App[None]):
             return
 
         if cmd == "/mcp":
-            # Server connects can take many seconds (npx downloads, etc.) —
-            # run in a worker thread so the UI stays responsive.
             if self._busy:
                 self.write_log("[yellow]Wait for the current run to finish before /mcp.[/yellow]")
                 return
+            if not args:
+                # No subcommand: open the visual manager (like /config).
+                from coding_harness.mcp_client import ensure_template
+                ensure_template()
+                self.push_screen(MCPScreen())
+                return
+            # Subcommands (power path) run in a worker thread — server
+            # connects can take many seconds (npx downloads, etc.).
             self._run_mcp_command(" ".join(args))
             return
 
@@ -863,10 +1191,16 @@ class WellsApp(App[None]):
         # -- All other commands are safe to run synchronously -----------------
         import coding_harness.cli as cli_mod
         orig = cli_mod.console
+        orig_stdout = sys.stdout
+        shim = _MainThreadStdout(self)
         cli_mod.console = _TUIConsole(self, thread_safe=False)
+        sys.stdout = shim  # bare print() in handlers must reach the log too
         try:
             keep_running = cli_mod.handle_slash_command(command)
         finally:
+            shim.flush()
+            if sys.stdout is shim:
+                sys.stdout = orig_stdout
             cli_mod.console = orig
 
         if not keep_running:
