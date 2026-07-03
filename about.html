@@ -140,6 +140,20 @@
 
 <div class="container">
 
+  <!-- 0. WHAT'S NEW -->
+  <section>
+    <h2><span class="num">★</span>Current Capabilities (July 2026)</h2>
+    <p class="lead">Beyond the core loop described below, Wells now ships:</p>
+    <ul style="color: var(--text); margin: 0 0 14px 22px; line-height: 1.9;">
+      <li><strong>Full-screen TUI</strong> — multi-line prompt with persistent history, live status bar (tokens + dollar cost + agent activity), Escape-to-cancel, streamed answers, modal <code>/config</code> settings and <code>/mcp</code> server manager.</li>
+      <li><strong>Deterministic verification</strong> — the harness runs the real test suite as a gate (fail-fast back to the coder), lint/syntax self-heal after every edit, and whitespace-tolerant edits with live colorized diffs.</li>
+      <li><strong>Structural repo index</strong> (<code>wells-index</code>, Rust/tree-sitter, on PyPI) — instant symbol lookups plus a goal-ranked repo map injected into planner/coder prompts.</li>
+      <li><strong>Git safety net</strong> — every run snapshots the working tree; <code>/undo</code> reverts a run; per-node session checkpoints make <code>/resume</code> crash-proof; opt-in auto-commits.</li>
+      <li><strong>MCP both directions</strong> — Wells is an MCP server for other agents <em>and</em> an MCP client that pulls external tools (databases, docs, GitHub) into the agent's toolset, all behind the safety gate.</li>
+      <li><strong>Operating modes</strong> — <code>/mode plan | approve | auto | dryrun</code>, parallel read-only research fan-out, per-run token budgets, cheap-model routing for verification.</li>
+    </ul>
+  </section>
+
   <!-- 1. THE BIG PICTURE -->
   <section>
     <h2><span class="num">1</span>The Big Picture</h2>
