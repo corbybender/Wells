@@ -900,6 +900,14 @@ def register_external(defs: list[ToolDef]) -> None:
             _TOOLS_BY_NAME[t.name] = t
 
 
+def unregister_external(names: list[str]) -> None:
+    """Remove previously registered external tools (MCP server disconnect)."""
+    drop = set(names)
+    ALL_TOOLS[:] = [t for t in ALL_TOOLS if t.name not in drop]
+    for n in drop:
+        _TOOLS_BY_NAME.pop(n, None)
+
+
 def registry(*, include_mutating: bool = True) -> list[ToolDef]:
     """Return the available tools. Pass include_mutating=False for a read-only set."""
     return ALL_TOOLS if include_mutating else READ_TOOLS

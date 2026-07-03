@@ -117,6 +117,12 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "Diagnose the environment",
         "Checks model reachability, API key, TLS, repo index health, git, and fast checkers.",
     ),
+    (
+        "/mcp",
+        "Manage MCP servers",
+        "Usage: /mcp [list] | add <name> <command> [args…] | remove <name> | "
+        "enable <name> | disable <name> | test <name>. Backed by ~/.wells/mcp.json.",
+    ),
 ]
 
 
@@ -193,6 +199,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_context()
     elif cmd == "/doctor":
         _handle_doctor()
+    elif cmd == "/mcp":
+        _handle_mcp(arg)
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         console.print("[dim]Type / for a list of commands.[/dim]")
@@ -877,6 +885,141 @@ def _handle_doctor() -> None:
         table.add_row("pinned files", WARN, f"missing: {', '.join(missing[:5])}")
 
     console.print(table)
+
+
+def _handle_mcp(arg: str) -> None:
+    """Manage MCP servers: list / add / remove / enable / disable / test."""
+    from coding_harness import mcp_client as mc
+
+    parts = arg.strip().split()
+    sub = parts[0].lower() if parts else "list"
+
+    if mc.env_override_active() and sub != "list":
+        console.print(
+            "[yellow]MCP_SERVERS env var is set — it overrides mcp.json, so file "
+            "edits won't take effect until you unset it.[/yellow]"
+        )
+
+    if sub == "list":
+        _mcp_list(mc)
+    elif sub == "add":
+        if len(parts) < 3:
+            console.print("[red]Usage: /mcp add <name> <command> [args…][/red]")
+            return
+        name, command, args = parts[1], parts[2], parts[3:]
+        spec: dict = {"command": command}
+        if args:
+            spec["args"] = args
+        mc.add_server(name, spec)
+        console.print(f"[green]Added '{name}' to mcp.json.[/green] [dim]Connecting…[/dim]")
+        ok, msg, names = mc.connect_server(name, spec)
+        if ok:
+            console.print(f"[green]{name}: {msg}[/green] [dim]{', '.join(names)}[/dim]")
+        else:
+            console.print(
+                f"[yellow]{name}: saved, but connect failed — {msg}[/yellow]\n"
+                "[dim]Fix the command/env in ~/.wells/mcp.json, then /mcp test "
+                f"{name}.[/dim]"
+            )
+    elif sub in ("remove", "rm", "delete"):
+        if len(parts) < 2:
+            console.print("[red]Usage: /mcp remove <name>[/red]")
+            return
+        name = parts[1]
+        mc.disconnect_server(name)
+        spec = mc.remove_server(name)
+        if spec is None:
+            console.print(f"[yellow]Not found: {name}[/yellow]")
+        else:
+            import json as _json
+            console.print(
+                f"[green]Removed '{name}'.[/green] "
+                f"[dim]Was: {_json.dumps(spec)} — /mcp add to restore.[/dim]"
+            )
+    elif sub == "disable":
+        if len(parts) < 2:
+            console.print("[red]Usage: /mcp disable <name>[/red]")
+            return
+        name = parts[1]
+        mc.disconnect_server(name)
+        ok, msg = mc.set_enabled(name, False)
+        console.print(f"[green]{name}: {msg}[/green]" if ok else f"[yellow]{msg}[/yellow]")
+    elif sub == "enable":
+        if len(parts) < 2:
+            console.print("[red]Usage: /mcp enable <name>[/red]")
+            return
+        name = parts[1]
+        ok, msg = mc.set_enabled(name, True)
+        if not ok:
+            console.print(f"[yellow]{msg}[/yellow]")
+            return
+        spec = mc.load_config().get(name) or mc.read_file_config().get(name) or {}
+        console.print(f"[green]{name}: enabled.[/green] [dim]Connecting…[/dim]")
+        ok, msg, names = mc.connect_server(name, spec)
+        if ok:
+            console.print(f"[green]{name}: {msg}[/green] [dim]{', '.join(names)}[/dim]")
+        else:
+            console.print(f"[yellow]{name}: connect failed — {msg}[/yellow]")
+    elif sub == "test":
+        if len(parts) < 2:
+            console.print("[red]Usage: /mcp test <name>[/red]")
+            return
+        name = parts[1]
+        cfg = mc.load_config()
+        spec = cfg.get(name) or (mc.read_file_config().get("_disabled") or {}).get(name) \
+            or (mc.read_file_config().get("_examples") or {}).get(name)
+        if not spec:
+            console.print(f"[yellow]Not found: {name}[/yellow]")
+            return
+        console.print(f"[dim]Connecting to '{name}'…[/dim]")
+        ok, msg, names = mc.connect_server(name, spec)
+        if ok:
+            console.print(f"[green]{name}: {msg}[/green]")
+            for n in names:
+                console.print(f"  [dim]{n}[/dim]")
+        else:
+            console.print(f"[red]{name}: {msg}[/red]")
+    else:
+        console.print(
+            "[red]Usage: /mcp [list] | add <name> <command> [args…] | remove <name> | "
+            "enable <name> | disable <name> | test <name>[/red]"
+        )
+
+
+def _mcp_list(mc) -> None:
+    from rich.table import Table
+
+    data = mc.read_file_config()
+    live = mc.connected()
+    active = {k: v for k, v in data.items() if not k.startswith("_") and isinstance(v, dict)}
+    disabled = data.get("_disabled") or {}
+    examples = data.get("_examples") or {}
+
+    table = Table(show_header=True, header_style="bold cyan", expand=False)
+    table.add_column("Server", no_wrap=True)
+    table.add_column("State", no_wrap=True)
+    table.add_column("Command")
+    table.add_column("Tools", justify="right")
+
+    def _cmd(spec: dict) -> str:
+        return (f"{spec.get('command', '?')} " + " ".join(spec.get("args") or []))[:60]
+
+    for name, spec in active.items():
+        state = "[green]connected[/green]" if name in live else "[yellow]enabled[/yellow]"
+        table.add_row(name, state, _cmd(spec), str(len(live.get(name, []))) if name in live else "-")
+    for name, spec in disabled.items():
+        table.add_row(name, "[dim]disabled[/dim]", f"[dim]{_cmd(spec)}[/dim]", "-")
+    for name, spec in examples.items():
+        if name not in active and name not in disabled:
+            table.add_row(f"[dim]{name}[/dim]", "[dim]example[/dim]", f"[dim]{_cmd(spec)}[/dim]", "-")
+
+    console.print(table)
+    if mc.env_override_active():
+        console.print("[yellow]Note: MCP_SERVERS env var is set and overrides this file.[/yellow]")
+    console.print(
+        "[dim]/mcp add <name> <command> [args…] · enable/disable/test/remove <name> — "
+        "file: ~/.wells/mcp.json[/dim]"
+    )
 
 
 def _save_undo_checkpoint() -> None:

@@ -271,3 +271,67 @@ def test_repair_index_core_finds_real_bundle():
     from coding_harness import setup as setup_mod
     ok, msg = setup_mod.repair_index_core()
     assert "no bundled core" not in msg
+
+
+# ---------------------------------------------------------------------------
+# /mcp CRUD
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mcp_file(tmp_path, monkeypatch):
+    from coding_harness import mcp_client
+    cfg = tmp_path / "mcp.json"
+    monkeypatch.delenv("MCP_SERVERS", raising=False)
+    with patch.object(mcp_client, "_CONFIG_FILE", cfg):
+        yield mcp_client
+
+
+def test_mcp_add_remove_roundtrip(mcp_file):
+    mc = mcp_file
+    mc.add_server("mysrv", {"command": "uvx", "args": ["some-server"]})
+    assert "mysrv" in mc.load_config()
+    spec = mc.remove_server("mysrv")
+    assert spec == {"command": "uvx", "args": ["some-server"]}
+    assert "mysrv" not in mc.load_config()
+    assert mc.remove_server("mysrv") is None
+
+
+def test_mcp_enable_disable_cycle(mcp_file):
+    mc = mcp_file
+    mc.add_server("srv", {"command": "x"})
+    ok, msg = mc.set_enabled("srv", False)
+    assert ok and "srv" not in mc.load_config()
+    assert "srv" in mc.read_file_config()["_disabled"]
+    ok, msg = mc.set_enabled("srv", True)
+    assert ok and "srv" in mc.load_config()
+
+
+def test_mcp_enable_from_examples(mcp_file):
+    mc = mcp_file
+    ok, msg = mc.set_enabled("fetch", True)  # exists in template _examples
+    assert ok
+    assert mc.load_config()["fetch"]["command"] == "uvx"
+
+
+def test_mcp_enable_unknown_fails(mcp_file):
+    ok, msg = mcp_file.set_enabled("nope", True)
+    assert not ok
+
+
+def test_mcp_disconnect_unregisters_tools(mcp_file):
+    from coding_harness import tools
+    from coding_harness.tools import ToolDef, ToolResult
+
+    mc = mcp_file
+    fake = ToolDef(
+        name="mcp_fakesrv_ping", description="x",
+        input_schema={"type": "object", "properties": {}},
+        handler=lambda ctx, **kw: ToolResult(True, "pong"),
+    )
+    tools.register_external([fake])
+    mc._REGISTERED["fakesrv"] = ["mcp_fakesrv_ping"]
+    assert tools.get_tool("mcp_fakesrv_ping") is not None
+    mc.disconnect_server("fakesrv")
+    assert tools.get_tool("mcp_fakesrv_ping") is None
+    assert "fakesrv" not in mc._REGISTERED
