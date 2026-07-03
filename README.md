@@ -4,45 +4,102 @@
 
 <h1 align="center">Wells</h1>
 
-A local, **model-agnostic agentic coding harness**. Give it a software
-development goal and it runs an orchestration loop of
-`planner → architect → coder → tester → reviewer → finisher`, where the
-coder/tester/reviewer are **autonomous tool-using agents** that actually
+<p align="center">
+  <a href="https://github.com/corbybender/Wells-Coding-Harness/actions/workflows/ci.yml"><img src="https://github.com/corbybender/Wells-Coding-Harness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/wells-index/"><img src="https://img.shields.io/pypi/v/wells-index?label=wells-index" alt="wells-index on PyPI"></a>
+</p>
+
+A local, **model-agnostic agentic coding platform**: a full-screen terminal TUI
+plus an orchestration engine of autonomous tool-using agents
+(`planner → architect → coder → tester → reviewer → finisher`) that actually
 read files, make edits, run tests, and verify their own work — Claude-Code /
-OpenHands style. The harness is **provider-agnostic**: drive it with Z.ai GLM,
-OpenAI, Anthropic, OpenRouter, Ollama, or any OpenAI-compatible endpoint.
+OpenCode style. **Provider-agnostic**: drive it with Z.ai GLM, OpenAI,
+Anthropic, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Ships with a
+Rust structural repo index (`wells-index`), an MCP server *and* MCP client,
+git-checkpointed undo, and a deterministic verification layer.
 
 ## What it does
 
 ```
-START → planner → architect → coder → tester → reviewer → decision
-         ^                                           |
-         |____ summarizer ← (if INCOMPLETE) _________|
-                                                     ↓
-                                          finisher (memory + git/PR) → END
+START → indexer → planner ──(simple plan)──────────┐
+                     │ (complex)                    ▼
+                  architect ─────────────────────► coder → tester ──(tests FAIL)──┐
+                                                     ▲         │ (pass/unknown)   │
+                                                     │         ▼                  │
+                                                summarizer ◄─ reviewer ◄──────────┘
+                                                     ▲         │(INCOMPLETE)
+                                                     └─────────┘
+                                                               │(COMPLETE / cap)
+                                                    finisher (memory + git/PR) → END
 ```
 
-- **Planner / architect** turn the goal into a plan + architecture (reads
-  `AGENTS.md` project memory).
-- **Coder** is an agentic loop: it uses `read_file` / `glob` / `grep` /
-  `write_file` / `edit_file` / `run_command` / `run_tests` / `spawn_subagent`
-  to actually implement the goal in your workspace, then verifies its work.
-- **Tester** runs the real test suite and reports pass/fail with file:line refs.
-- **Reviewer** independently re-checks the work (reads changed files, re-runs
-  tests) and emits `COMPLETE` / `INCOMPLETE`.
-- On `INCOMPLETE`, the **summarizer** condenses durable context and the loop
-  returns to the coder (bounded by `MAX_ITERATIONS`).
-- **Finisher** writes a lesson to `AGENTS.md` (so the harness learns across
-  runs) and optionally creates a `wells/<slug>` branch + commit + PR.
+- **Indexer** builds/refreshes the structural repo index (symbols, references,
+  call graph) before anything else runs.
+- **Planner** is agentic: it investigates the codebase with read-only tools
+  (index-first lookups, plus a `parallel_research` fan-out that runs 2–4
+  read-only subagents concurrently), then writes a concrete plan with exact
+  files and line numbers — and labels it `SIMPLE` or `COMPLEX`.
+- **Architect** validates complex plans; simple plans skip straight to the
+  coder (one less LLM call).
+- **Coder** drives the agentic executor: reads, edits, creates files, and runs
+  verification inside your workspace. Edits are whitespace-tolerant
+  (an indentation slip in the model's match string no longer wastes a
+  round-trip) and every applied change shows a colorized diff live.
+  After each write, the harness itself runs the fastest checker for the file
+  type (ruff/py_compile, `node --check`, JSON parse) and injects failures
+  into the model's next observation — broken code is caught in milliseconds,
+  not a tester round-trip later.
+- **Tester** runs a *deterministic gate first*: if the repo has a recognizable
+  test setup, the harness executes the suite and records the exit code as
+  ground truth. Green suite → the LLM interpretation pass is skipped entirely.
+  Red suite → routes straight back to the coder (reviewer skipped) with the
+  failure report as feedback.
+- **Reviewer** independently verifies the work (reads changed files, re-runs
+  tests) and emits `COMPLETE` / `INCOMPLETE`. Tester + reviewer route to the
+  cheap model profile when one is configured (`CHEAP_VERIFY`).
+- **Summarizer** condenses durable context on loop iterations (bounded by
+  `MAX_ITERATIONS`).
+- **Finisher** writes a lesson to `AGENTS.md` project memory and optionally
+  creates a `wells/<slug>` branch + commit + PR.
 
-Everything goes through a **token-optimization layer** (estimator + calibration,
-per-category context trimming, log compression, rolling summaries, model router,
-cache-friendly prompts) and a **workspace confinement + safety policy** layer.
+The session is **checkpointed after every node**, so a crash loses at most one
+node's work and `/resume` continues from the last state. Every run also
+snapshots your working tree first — `/undo` reverts everything a run changed.
+
+## The TUI
+
+Running `wells` with no arguments opens the full-screen TUI: scrollable output
+log, multi-line prompt (Shift+Enter for newlines, ↑/↓ history, persisted
+across sessions), and an always-on status bar showing workspace, model, live
+token count **and dollar cost**, operating mode, pinned-file count, and — while
+running — the current agent activity (`coder-1 · step 12/60`, current tool).
+**Escape cancels a running task** cooperatively at the next step boundary.
+Answers stream token-by-token.
+
+| Command | What it does |
+|---|---|
+| `/mode plan\|approve\|auto\|dryrun` | Switch operating mode (read-only / confirm each change / full autonomy / simulate) |
+| `/add <path>` / `/drop <path>` / `/context` | Pin files into every prompt (guaranteed context, token-trimmed) |
+| `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
+| `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env` |
+| `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
+| `/orchestrate` | Route the next message through the full planning graph |
+| `/resume` / `/sessions` | Continue a previous session / browse history |
+| `/index` | Build or refresh the structural repo index |
+| `/doctor` | Diagnose the environment (model ping + latency, API key, TLS, index health, git, checkers) |
+| `/export [path]` | Save the session transcript to a file |
+| `/status` `/info` `/help` `/clear` `/quit` | Status panel, effective config, command list, clear history, exit |
+
+Under `approve` mode, destructive tool calls (writes, shell commands, MCP
+calls) pause the run and ask y/N in the TUI. `AUTO_COMMIT=1` (opt-in) commits
+each successful run with an LLM-generated Conventional Commits message and a
+Wells authorship trailer.
 
 ## Provider profiles (model-agnostic)
 
 Models are configured as named **profiles**. Any number can coexist; one is
-*active*, one optionally *cheap* (used for summarization/compression).
+*active*, one optionally *cheap* (used for summarization/classification and,
+with `CHEAP_VERIFY`, the tester/reviewer).
 
 | Profile name | Provider kind | Notes |
 |---|---|---|
@@ -75,6 +132,10 @@ Optional provider packages are imported lazily — the harness runs out-of-the-b
 with only `langchain-openai` (the OpenAI-compatible path covers Z.ai, OpenAI,
 OpenRouter, Together, Groq, Fireworks, local vLLM, Ollama's OpenAI shim, …).
 
+Dollar costs are estimated from a built-in rate table (GLM / GPT / Claude /
+DeepSeek / local); pin exact rates per profile with
+`MODEL_PRICE_<profile>=<in>,<out>` ($/1M tokens).
+
 ## Quick start
 
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.12.
@@ -88,9 +149,10 @@ venv automatically — no `cd`, no `uv run`, no install step:
 git clone https://github.com/corbybender/Wells-Coding-Harness.git
 cd Wells-Coding-Harness
 
-./wells config          # first run: set up your provider (interactive menu)
+./wells config          # first run: set up your provider
 ./wells info            # show effective configuration
-./wells "your goal"     # run the harness on THIS repo
+./wells                 # open the TUI
+./wells "your goal"     # run the harness single-shot on THIS repo
 ```
 
 Windows: use `wells.bat` instead of `./wells`.
@@ -124,26 +186,9 @@ wells "your goal"                        # from any directory
 wells --workspace /path/to/project "goal"
 ```
 
-**Note:** During installation, `uv` may show a warning about hardlinks across filesystems:
-```
-WARN: Hardlink or symlink copy required, try setting UV_LINK_MODE=copy
-```
-
-This is harmless and cosmetic. It happens when `uv` tries to link package files across different filesystems (e.g., C: and D: drives on Windows, or different mount points on Linux). To suppress the warning, set the environment variable before install:
-
-```bash
-# Windows (PowerShell)
-$env:UV_LINK_MODE = "copy"
-uv tool install Wells-Coding-Harness
-
-# Windows (cmd)
-set UV_LINK_MODE=copy && uv tool install Wells-Coding-Harness
-
-# macOS / Linux
-UV_LINK_MODE=copy uv tool install Wells-Coding-Harness
-```
-
-Once installed, the harness itself handles this automatically — you won't see the warning again.
+**Note:** During installation, `uv` may show a warning about hardlinks across
+filesystems (`WARN: Hardlink or symlink copy required…`). It's harmless;
+suppress it with `UV_LINK_MODE=copy`.
 
 ### Manual setup (any option)
 
@@ -158,76 +203,53 @@ cp .env.example .env             # then edit .env with your API key
 Both `wells` and `coding-harness` work identically (they're the same entry point).
 
 ```
-wells                                     # launch the interactive chat REPL
+wells                                     # launch the TUI
 wells "<goal>"                            # run the full harness (single-shot)
 wells --workspace /path "fix the bug"     # run against another project
 wells --safety dryrun "goal"              # force dry-run (preview only)
 wells --plan "<goal>"                     # plan mode: plan edits, don't apply
-wells config                              # interactive settings menu
+wells config                              # interactive settings menu (terminal)
 wells info                                # show effective configuration
 wells principles                          # show active operating principles (AGENT.md)
 wells --version                           # show version
 wells "<goal>" MAX_ITERATIONS=5           # inline setting override
 ```
 
-Flags can be combined and work with subcommands:
-
-```
-wells --workspace . --safety approve info   # show config for THIS dir, approve mode
-wells --workspace ../other-repo config      # edit settings (writes .env in repo root)
-```
-
-Running `wells` with no arguments opens a rich, interactive TUI (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Type goals naturally, or use slash commands:
-
-| Command | What it does |
-|---|---|
-| `/mode plan\|approve\|auto\|dryrun` | Switch operating mode (read-only / confirm each change / full autonomy / simulate) |
-| `/add <path>` / `/drop <path>` / `/context` | Pin files into every prompt (guaranteed context) |
-| `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
-| `/orchestrate` | Route the next message through the full planner→coder→tester→reviewer graph |
-| `/resume` / `/sessions` | Continue a previous session / browse history |
-| `/index` | Build or refresh the structural repo index |
-| `/doctor` | Diagnose the environment (model, TLS, index, git, checkers) |
-| `/export [path]` | Save the session transcript to a file |
-| `/status` `/config` `/help` `/quit` | Status panel, settings, command list, exit |
-
-The status bar always shows workspace, model, live token count + dollar cost, operating mode, and (while running) the current agent activity — Escape cancels a running task, ↑/↓ recall prompt history, Shift+Enter inserts a newline.
-
-External MCP servers can be plugged in via `MCP_SERVERS` (JSON) or `~/.wells/mcp.json` — their tools appear to the agent as `mcp_<server>_<tool>`. Opt-in `AUTO_COMMIT=1` commits each successful run with a generated Conventional Commits message.
-
-### Interactive settings menu
-
-`coding-harness config` shows every setting grouped (Providers, Run, Tokens,
-LLM) and lets you change any value by number/name, switch or add provider
-profiles, and persist to `.env` — all in one place. Changes apply live and are
-written back comment-preserving.
-
-```
-================================================================
- Wells harness — current settings
-================================================================
-[Providers]
-  MODEL_PROFILE                openrouter
-  ...
-> p) Switch / edit provider profile (fast path)
-> +) Add a new provider profile
-> MAX_ITERATIONS        edit by env-var name
-> s) Save & exit     q) Quit without saving     w) Write .env now
-```
+In the TUI, `/config` opens the modal settings panel instead (same schema,
+same `.env` persistence).
 
 ## Safety model
 
 The agent operates inside a **workspace root** (path escapes blocked) and a
-**safety policy** for writes and shell commands:
+**safety policy** for writes, shell commands, and MCP tool calls:
 
-| `HARNESS_SAFETY` | Behaviour |
+| Mode (`/mode` or `HARNESS_SAFETY`) | Behaviour |
 |---|---|
 | `auto` (default) | Execute immediately, confined to `WORKSPACE_ROOT`. Destructive commands (`rm -rf /`, `mkfs`, …) are always blocked. |
-| `approve` | Require an approval callback; degrades to dry-run when no callback is wired. |
+| `approve` | Every destructive action pauses the run and asks y/N in the TUI. |
 | `dryrun` | Never execute — describe what *would* happen. Truly side-effect free. |
+| `plan` (`PLAN_MODE=1`) | All mutating tools simulate; reads still work. Preview exactly what would change. |
 
-`PLAN_MODE=1` forces all mutating tools to simulate (reads still work), so you
-can preview exactly what the agent would change.
+Two extra safety nets regardless of mode: every run **snapshots the working
+tree** (including untracked files) to a hidden git commit before starting —
+`/undo` restores it — and `MAX_RUN_TOKENS` hard-caps a run's spend.
+
+## Repository index (wells-index)
+
+Wells ships a Rust structural indexer ([`wells-index`](wells-index/) —
+[on PyPI](https://pypi.org/project/wells-index/)): tree-sitter parsing for 8
+languages, SQLite + LZ4 storage, BLAKE3 incremental hashing. It powers:
+
+- **Index-first tools** — `find_symbol`, `find_references`, `find_callers`,
+  `search_symbols`, `list_symbols`: exact file:line answers instead of grep
+  walls (~98% fewer tokens per lookup).
+- **The repo map** — a compressed *files → key symbols* map injected into
+  planner/coder prompts, **ranked by relevance to the current goal**, so the
+  model starts knowing where things live instead of spending steps on
+  discovery.
+- A **background file watcher** keeps the index live during a session; the
+  indexer node refreshes it before every orchestrate run. `/doctor` detects a
+  stale native core and self-repairs from the repo-bundled binaries.
 
 ## Behavioral principles (AGENT.md)
 
@@ -259,94 +281,25 @@ This is distinct from per-project `AGENTS.md` memory:
    harness. Always present as a baseline.
 
 Inspect the active principles with `wells principles` or the MCP
-`get_principles` tool. Override by dropping an `AGENT.md` in your project root
-or setting `WELLS_PRINCIPLES=/path/to/your-rules.md`.
+`get_principles` tool.
 
-## Project structure
+## MCP — server *and* client
 
-```
-src/coding_harness/
-├── main.py            # CLI entry: run / config / info
-├── settings.py        # interactive settings menu + .env persistence
-├── config.py          # env vars, budgets, workspace/safety knobs
-├── providers.py       # named provider profiles → chat-model factory (Layer 0)
-├── state.py           # TypedDict LangGraph state
-├── graph.py           # LangGraph workflow (planner→…→reviewer→finisher)
-├── runtime.py         # run_step(): LLM call + usage capture (reasoning nodes)
-├── executor.py        # agentic tool-calling loop (Layer 2) — native + text fallback
-├── tools.py           # repo tools: read/list/glob/grep/write/edit/shell/subagent
-├── safety.py          # workspace confinement + auto/approve/dryrun gate
-├── subagents.py       # parallel research/fix subagents (Layer 3)
-├── memory.py          # AGENTS.md project memory (Layer 3)
-├── gitops.py          # branch/commit/diff/PR via git + gh (Layer 3)
-├── finisher.py        # post-run memory write-back + git/PR node
-├── tokens.py          # token estimation, ledger, usage report
-├── context.py         # categorized, budget-trimmed prompt assembly
-├── compress.py        # log/output compressor
-├── summarize.py       # rolling task-state summarizer
-├── mcp_server.py      # MCP server exposing all capabilities
-└── agents/            # planner / architect / coder / tester / reviewer
-```
+### Server: drive Wells from other agents
 
-## Configuration reference
-
-| Variable | Default | Description |
-|---|---|---|
-| `MODEL_PROFILES` | `zai` | Comma-separated list of configured profile names |
-| `MODEL_PROFILE` | `zai` | Active profile for main reasoning/coding |
-| `MODEL_PROFILE_CHEAP` | _(blank)_ | Profile for low-stakes subtasks (defaults to active) |
-| `MODEL_<name>` | — | Model id for profile `<name>` |
-| `API_KEY_<name>` | — | API key for profile `<name>` |
-| `BASE_URL_<name>` | — | OpenAI-compatible base URL for profile `<name>` |
-| `WORKSPACE_ROOT` | `cwd` | Directory the agent is confined to |
-| `HARNESS_SAFETY` | `auto` | `auto` / `approve` / `dryrun` |
-| `PLAN_MODE` | `0` | When on, coder plans but does not apply edits |
-| `MAX_ITERATIONS` | `3` | Max coder↔reviewer loops |
-| `MAX_TOOL_STEPS` | `25` | Max tool-call rounds per executor run |
-| `SHELL_TIMEOUT` | `120` | Max seconds for a single shell command |
-| `TOKEN_BUDGET_MAX_INPUT` | `24000` | Input budget per call (above this, trims) |
-| `SUMMARIZE_ON_LOOP` | `1` | Replace durable context with a summary on loop iterations |
-| `SUMMARIZE_THRESHOLD` | `1500` | Tokens above which durable context is summarized |
-| `LLM_TIMEOUT` | `180` | Per-call timeout |
-| `LLM_MAX_RETRIES` | `5` | Retry attempts for transient errors |
-| `WELLS_OPEN_PR` | `0` | When `1`, the finisher pushes + opens a PR via `gh` |
-| `BLOCKED_COMMANDS` | _(see source)_ | `\|`-separated regex patterns always refused |
-
-### Legacy `ZAI_*` variables
-
-Existing `.env` files using `ZAI_API_KEY` / `ZAI_MODEL` / `ZAI_ENDPOINT` keep
-working unchanged — they seed the built-in `zai` profile. Explicit
-`MODEL_zai` / `BASE_URL_zai` / `API_KEY_zai` vars take precedence.
-
-## MCP server
-
-The harness exposes its capabilities as a [Model Context Protocol](https://modelcontextprotocol.io)
-server over stdio, so external agent clients (Claude Code, OpenCode, Codex CLIs,
-Gemini CLI, …) can invoke the harness.
+The harness exposes its capabilities as a
+[Model Context Protocol](https://modelcontextprotocol.io) server over stdio,
+so external agent clients (Claude Code, OpenCode, Codex CLIs, Gemini CLI, …)
+can invoke the harness:
 
 ```bash
 coding-harness-mcp          # console script
-python -m coding_harness    # same thing
 ```
 
-### Exposed tools (13)
-
-| Tool | Description |
-|---|---|
-| `run_agent_task` | Full harness loop (planner→…→reviewer→finisher) with workspace + safety overrides |
-| `plan_task` | Planner + architect only (fast) |
-| `review_code` | Reviewer only on provided context |
-| `run_executor` | Single autonomous executor loop for an arbitrary task |
-| `spawn_subagent` | Focused research (read-only) or fix subagent |
-| `search_repo` | Glob + grep search (read-only) |
-| `read_file` | Read a workspace file (read-only) |
-| `run_command` | Run a shell command (confined, blocklisted, gated) |
-| `git_status` | Git status + diff stat (read-only) |
-| `get_memory` | Read project memory (`AGENTS.md`) |
-| `compress_logs` | Compress log output (ANSI/dup/tail) |
-| `get_harness_info` | Effective configuration |
-
-### Client configuration
+Exposed tools include `run_agent_task` (full loop), `plan_task`,
+`review_code`, `run_executor`, `spawn_subagent`, `search_repo`, `read_file`,
+`run_command`, `git_status`, `get_memory`, `compress_logs`,
+`get_harness_info`, and `get_principles`.
 
 ```json
 {
@@ -356,32 +309,120 @@ python -m coding_harness    # same thing
 }
 ```
 
-## Token optimization
+### Client: give Wells external tools
+
+Wells also connects *out* to stdio MCP servers (databases, docs, GitHub,
+memory banks) and registers their tools for the agent as
+`mcp_<server>_<tool>`. Configure via the **`/mcp` modal manager** in the TUI
+(add / enable / disable / test / remove — no JSON editing), the `/mcp add …`
+subcommands, or by editing `~/.wells/mcp.json` directly (created on first run
+with ready-to-enable samples: fetch, filesystem, github, postgres, sqlite,
+memory). The `MCP_SERVERS` env var (JSON) overrides the file. Every external
+call passes the safety gate, so `approve` and `dryrun` apply to MCP tools too.
+
+## Project structure
+
+```
+src/coding_harness/
+├── main.py            # CLI entry: run / config / info / principles
+├── cli.py             # REPL command layer: slash commands, run paths
+├── tui.py             # Textual TUI: log, prompt, status bar, modals
+├── control.py         # run control: cooperative cancel, activity, UI events
+├── settings.py        # settings schema + .env persistence
+├── config.py          # env vars, budgets, workspace/safety knobs
+├── providers.py       # named provider profiles → chat-model factory
+├── pricing.py         # dollar-cost estimation from the token ledger
+├── state.py           # TypedDict LangGraph state
+├── graph.py           # LangGraph workflow with conditional routing
+├── runtime.py         # run_step(): LLM call + usage capture (reasoning nodes)
+├── executor.py        # agentic tool loop: native+text tools, masking, streaming
+├── tools.py           # repo tools: read/glob/grep/write/edit/shell/subagents
+├── checkers.py        # post-edit self-heal: ruff / node --check / json
+├── repomap.py         # goal-ranked repo map (files → key symbols)
+├── safety.py          # workspace confinement + auto/approve/dryrun gate
+├── subagents.py       # parallel read-only research fan-out
+├── memory.py          # AGENTS.md project memory
+├── gitops.py          # branch/commit/PR + working-tree snapshots (/undo)
+├── finisher.py        # post-run memory write-back + git/PR node
+├── sessions.py        # session persistence, /resume, per-node checkpoints
+├── tokens.py          # token estimation, thread-safe ledger, usage report
+├── context.py         # categorized, budget-trimmed prompt assembly
+├── compress.py        # log/output compressor
+├── summarize.py       # rolling task-state summarizer
+├── index_tools.py     # wells-index bindings + stale-core self-repair
+├── index_watcher.py   # background incremental re-indexing
+├── mcp_server.py      # MCP server (Wells as a tool provider)
+├── mcp_client.py      # MCP client (external tools for the agent)
+├── logo.py            # TUI glyph lockup
+├── principles.py      # AGENT.md injection
+└── agents/            # planner / architect / coder / tester / reviewer
+wells-index/           # Rust structural indexer (tree-sitter + SQLite)
+.github/workflows/     # ci.yml (pytest) + release-index.yml (PyPI wheels)
+```
+
+## Configuration reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `MODEL_PROFILES` | `zai` | Comma-separated list of configured profile names |
+| `MODEL_PROFILE` | `zai` | Active profile for main reasoning/coding |
+| `MODEL_PROFILE_CHEAP` | _(blank)_ | Profile for low-stakes subtasks (defaults to active) |
+| `MODEL_<name>` / `API_KEY_<name>` / `BASE_URL_<name>` | — | Per-profile model, key, endpoint |
+| `MODEL_PRICE_<name>` | _(rate table)_ | Exact $/1M rates: `in,out` |
+| `WORKSPACE_ROOT` | `cwd` | Directory the agent is confined to |
+| `HARNESS_SAFETY` | `auto` | `auto` / `approve` / `dryrun` (or use `/mode`) |
+| `PLAN_MODE` | `0` | When on, mutating tools simulate |
+| `MAX_ITERATIONS` | `3` | Max coder↔reviewer loops |
+| `MAX_TOOL_STEPS` | `60` | Max tool-call rounds per executor run |
+| `MAX_RUN_TOKENS` | `0` (off) | Hard token cap per run; warns at 80% |
+| `SELF_CHECK` | `1` | Post-edit lint/syntax self-heal |
+| `CHEAP_VERIFY` | `1` | Route tester/reviewer to the cheap profile |
+| `AUTO_COMMIT` | `0` | Commit each successful run (Conventional Commits) |
+| `STREAM_OUTPUT` | `1` | Stream answers token-by-token |
+| `INDEX_AUTO_UPDATE` | `1` | Keep the repo index fresh automatically |
+| `MCP_SERVERS` | _(blank)_ | JSON server map; overrides `~/.wells/mcp.json` |
+| `SHELL_TIMEOUT` | `120` | Max seconds for a single shell command |
+| `TOKEN_BUDGET_MAX_INPUT` | `24000` | Input budget per call (above this, trims) |
+| `SUMMARIZE_ON_LOOP` | `1` | Replace durable context with a summary on loops |
+| `LLM_TIMEOUT` / `LLM_MAX_RETRIES` | `180` / `5` | Per-call timeout / transient-error retries |
+| `WELLS_OPEN_PR` | `0` | When `1`, the finisher pushes + opens a PR via `gh` |
+| `WELLS_PRINCIPLES` | _(bundled)_ | Path to a custom AGENT.md constitution |
+| `BLOCKED_COMMANDS` | _(see source)_ | `\|`-separated regex patterns always refused |
+
+Legacy `ZAI_*` variables keep working unchanged — they seed the built-in `zai`
+profile.
+
+## Token & cost optimization
 
 | Component | What it does |
 |---|---|
-| **Estimator** | tiktoken-based, auto-calibrated against actual API responses |
-| **TokenLedger** | Per-step actuals (input/output/reasoning/cache_read) from `usage_metadata` |
-| **Token Usage Report** | End-of-run report with per-step table + category breakdown + savings |
-| **ContextManager** | Categorized chunks, stable-prefix ordering, priority budget trimming |
-| **Compressor** | ANSI strip, duplicate/blank collapse, tail-window, traceback preserve |
-| **Summarizer** | Rolling task-state summary on loop iterations (threshold-guarded) |
-| **Model Router** | Cheaper model for summarization/compression via `MODEL_PROFILE_CHEAP` |
-| **Prompt-Cache Prefix** | `SystemMessage` + deterministic chunk order (cache-friendly) |
+| **Estimator + Ledger** | tiktoken-based, auto-calibrated; thread-safe per-step actuals from `usage_metadata` |
+| **Dollar pricing** | Live cost in the status bar and run footers |
+| **Observation masking** | Old tool outputs compressed to typed one-liners; AI reasoning turns kept verbatim |
+| **Working memory** | Compact structured state (files read/modified, failed approaches, test status) injected every round — prevents re-reads and repeated failures |
+| **Repo map** | Goal-ranked structure injection — fewer discovery steps |
+| **Deterministic gates** | Real test runs and fast checkers replace LLM judgment calls where possible |
+| **Summarizer + trimming** | Rolling task-state summary on loops; categorized budget trimming |
+| **Model router** | Cheap profile for summarization/classification/verification |
 
-## Tests
+## Tests & CI
 
 ```bash
-uv run python -m pytest tests/ -v
+uv run pytest -q          # 224 tests
 ```
 
-The suite covers provider-profile resolution, the coding-endpoint precedence,
-tool confinement + every safety mode, the agentic executor loop (with a mock
-model so it runs without API credits), MCP tool registration, and the
-settings-menu `.env` persistence.
+The suite covers provider resolution, tool confinement + every safety mode,
+the executor loop (mocked model — no API credits needed), cancellation and
+budget stops, graph routing (complexity skip, test-gate fail-fast), fuzzy
+edits, self-heal checkers, repo-map ranking, git snapshot/undo, pricing, MCP
+client CRUD, and the settings persistence. GitHub Actions runs it on every
+push/PR (`ci.yml`); `release-index.yml` builds and publishes `wells-index`
+wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
 
 ## Roadmap
 
-- Async task tracking for MCP `run_agent_task` (return a task ID, poll later).
-- Per-call ledger isolation for concurrent MCP requests.
-- Embedding-based code retrieval (replace full-repo injection for large repos).
+- Parallel *write* steps via worktree-per-subagent isolation (reads already fan out).
+- SSE/HTTP MCP client transport (stdio today).
+- Prompt-cache-friendly masking batches (measure `cache_read` deltas first).
+- Embedding-based retrieval for very large repos.
+- Async task tracking for MCP `run_agent_task`.

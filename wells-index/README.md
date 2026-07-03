@@ -2,6 +2,18 @@
 
 Fast structural repository indexer for [wells-coding-harness](https://github.com/corbybender/Wells-Coding-Harness). Uses Tree-sitter for language parsing, SQLite for storage, and BLAKE3 for incremental hashing.
 
+## Install
+
+Prebuilt wheels (Linux / macOS / Windows, Python 3.12 + 3.13) are on PyPI:
+
+```bash
+pip install wells-index
+```
+
+> **Note:** the 0.1.0 wheels had a defect — files were indexed but zero
+> symbols were extracted. Use **0.1.1 or later**. Wells detects the stale core
+> at runtime (`/doctor`) and self-repairs from the repo-bundled binaries.
+
 ## Features
 
 - **Multi-language symbol extraction** — Python, JavaScript, TypeScript, Go, Rust, Java, C, C++
@@ -169,7 +181,6 @@ On a typical large repository (10k+ files, 1M+ symbols):
 
 ## Known Limitations
 
-- Parser extraction is stubbed (TODO: tree-sitter queries per language)
 - No semantic analysis (only syntax-based extraction)
 - Symbol deduplication not yet implemented
 - Cross-file call resolution is name-based (not type-aware)
@@ -186,6 +197,21 @@ Build in release mode:
 ```bash
 maturin build --release
 ```
+
+## Releasing
+
+Wheels are built and published by the repo's
+[`release-index.yml`](../.github/workflows/release-index.yml) workflow
+(maturin on Linux/macOS/Windows × Python 3.12/3.13, PyPI trusted publishing):
+
+```bash
+# bump version in Cargo.toml + pyproject.toml + python/wells_index/__init__.py
+git tag index-v0.1.2 && git push origin index-v0.1.2
+```
+
+The prebuilt `.pyd` files committed under `python/wells_index/` are the
+no-toolchain fallback used by `wells.bat` and Wells' stale-core self-repair;
+refresh them from the built wheels when the Rust source changes.
 
 ## License
 
