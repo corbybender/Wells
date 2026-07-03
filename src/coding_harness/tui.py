@@ -821,6 +821,15 @@ class WellsApp(App[None]):
             self._export_transcript(" ".join(args))
             return
 
+        if cmd == "/mcp":
+            # Server connects can take many seconds (npx downloads, etc.) —
+            # run in a worker thread so the UI stays responsive.
+            if self._busy:
+                self.write_log("[yellow]Wait for the current run to finish before /mcp.[/yellow]")
+                return
+            self._run_mcp_command(" ".join(args))
+            return
+
         if cmd == "/undo":
             from coding_harness.cli import undo_preview
             sha, stat = undo_preview()
@@ -862,6 +871,21 @@ class WellsApp(App[None]):
 
         if not keep_running:
             self.exit()
+
+    @work(thread=True)
+    def _run_mcp_command(self, arg: str) -> None:
+        """Run /mcp in a worker thread (connects can block for seconds)."""
+        import coding_harness.cli as cli_mod
+
+        orig = cli_mod.console
+        cli_mod.console = _TUIConsole(self, thread_safe=True)
+        try:
+            cli_mod._handle_mcp(arg)
+        except Exception as e:
+            self.call_from_thread(self.write_log, f"[red]/mcp failed: {e}[/red]")
+        finally:
+            if isinstance(cli_mod.console, _TUIConsole):
+                cli_mod.console = orig
 
     def _open_settings(self) -> None:
         def _done(staged: dict | None) -> None:
