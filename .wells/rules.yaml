@@ -19,8 +19,8 @@ rules:
   # ── R1: paid resources are liabilities until proven closed ───────────────
   - id: gpu-rental-teardown
     severity: liability
-    open: '\b(vastai|vast\.ai)\s+(create|launch)|\brunpod(ctl)?\s+(create|start|resume)|\blambda\s+cloud.*(launch|start)|\bgcloud\s+compute\s+instances\s+create|\baws\s+ec2\s+run-instances|\baz\s+vm\s+create'
-    close: '\b(vastai|vast\.ai)\s+(destroy|stop)|\brunpod(ctl)?\s+(remove|stop|terminate)|\blambda\s+cloud.*(terminate|delete)|\bgcloud\s+compute\s+instances\s+(delete|stop)|\baws\s+ec2\s+(terminate|stop)-instances|\baz\s+vm\s+(delete|deallocate)'
+    open: '\b(vastai|vast\.ai)\s+(create|launch)|\brunpod(ctl)?\s+(create|start|resume)|\brunpod\.(create_pod|resume_pod)|\blambda\s+cloud.*(launch|start)|\bgcloud\s+compute\s+instances\s+create|\baws\s+ec2\s+run-instances|\baz\s+vm\s+create'
+    close: '\b(vastai|vast\.ai)\s+(destroy|stop)|\brunpod(ctl)?\s+(remove|stop|terminate)|\brunpod\.(terminate_pod|stop_pod)|\blambda\s+cloud.*(terminate|delete)|\bgcloud\s+compute\s+instances\s+(delete|stop)|\baws\s+ec2\s+(terminate|stop)-instances|\baz\s+vm\s+(delete|deallocate)'
     message: >-
       RULE R1: You just started a PAID cloud resource. It is now a tracked
       liability. You MUST terminate it (and verify termination with a status
