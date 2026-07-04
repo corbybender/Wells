@@ -177,6 +177,11 @@ class StatusBar(Static):
 
         route_s = "  [bold magenta]route: orchestrate[/bold magenta]" if force == "task" else ""
         pin_s = f"  [yellow]📌{pinned}[/yellow]" if pinned else ""
+        try:
+            nq = len(self.app._queue)  # type: ignore[attr-defined]
+            queue_s = f"  [yellow]⏳{nq}[/yellow]" if nq else ""
+        except Exception:
+            queue_s = ""
 
         # Open rule liabilities (e.g. a rented GPU still running) — always red.
         liab_s = ""
@@ -204,7 +209,7 @@ class StatusBar(Static):
             f"[dim]{wd}[/dim]  "
             f"[green]{model}[/green]  "
             f"[cyan]{tokens_s}[/cyan]{elapsed_s}  "
-            f"{mode}{route_s}{pin_s}{liab_s}"
+            f"{mode}{route_s}{pin_s}{queue_s}{liab_s}"
         )
 
 
@@ -322,7 +327,13 @@ class InfoPanel(Static):
             act = CONTROL.activity()
             if act:
                 L.append(f"[magenta]{act[:31]}[/magenta]")
-            L.append("[dim]esc: cancel[/dim]")
+            L.append("[dim]esc: cancel · /btw: side chat[/dim]")
+        try:
+            queued = len(self.app._queue)  # type: ignore[attr-defined]
+        except Exception:
+            queued = 0
+        if queued:
+            row("queued", f"[yellow]⏳ {queued}[/yellow]")
 
         # -- context ---------------------------------------------------------------
         pinned = _cli._REPL_STATE.get("pinned") or []
@@ -1013,6 +1024,10 @@ class WellsApp(App[None]):
         # Pending interactive command waiting for a follow-up reply.
         # Format: {"kind": "resume_select"|"sessions_clear"|"approval", ...}
         self._pending: dict | None = None
+        # Messages typed during a run — executed in order when it finishes.
+        self._queue: list[str] = []
+        # /btw side-conversation history (session-lived).
+        self._btw_history: list[tuple[str, str]] = []
         # Prompt history (persisted) + browse state.
         self._history: list[str] = []
         self._hist_idx: int | None = None
@@ -1287,6 +1302,13 @@ class WellsApp(App[None]):
         self._cmdlist.display = False
         self._input.focus()
 
+    # Slash commands that are read-only/safe to run on the main thread while
+    # a worker run is active. Everything else typed mid-run gets queued.
+    _BUSY_SAFE_SLASH = {
+        "/status", "/help", "/info", "/context", "/rules", "/export",
+        "/queue", "/btw",
+    }
+
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         self._cmdlist.display = False
         text = event.value.strip()
@@ -1301,12 +1323,30 @@ class WellsApp(App[None]):
 
         self._history_add(text)
 
+        # /btw: concurrent side conversation — works busy or idle.
+        if text.lower().startswith("/btw"):
+            self._start_btw(text[4:].strip())
+            return
+
         if text.startswith("/"):
+            cmd = text.split()[0].lower()
+            if self._busy and cmd not in self._BUSY_SAFE_SLASH:
+                self._queue.append(text)
+                self.write_log(
+                    f"[yellow]⏳ queued #{len(self._queue)}[/yellow] "
+                    f"[dim]{text} — runs when the current task finishes[/dim]"
+                )
+                return
             self._dispatch_slash(text)
             return
 
         if self._busy:
-            self.write_log("[yellow]Still working… please wait.[/yellow]")
+            self._queue.append(text)
+            self.write_log(
+                f"[yellow]⏳ queued #{len(self._queue)}[/yellow] [dim]{text[:80]}"
+                f" — runs when the current task finishes. "
+                f"(/btw <msg> for a side chat now)[/dim]"
+            )
             return
 
         self._start_run(text)
@@ -1356,6 +1396,21 @@ class WellsApp(App[None]):
             # Subcommands (power path) run in a worker thread — server
             # connects can take many seconds (npx downloads, etc.).
             self._run_mcp_command(" ".join(args))
+            return
+
+        if cmd == "/queue":
+            if arg.lower() == "clear":
+                n = len(self._queue)
+                self._queue.clear()
+                self.write_log(f"[green]Cleared {n} queued message(s).[/green]")
+            elif not self._queue:
+                self.write_log("[dim]Queue is empty. Messages typed during a "
+                               "run are queued automatically.[/dim]")
+            else:
+                self.write_log(f"[bold]Queued ({len(self._queue)}):[/bold]")
+                for i, q in enumerate(self._queue, 1):
+                    self.write_log(f"  [yellow]{i}.[/yellow] {q[:90]}")
+                self.write_log("[dim]/queue clear to discard.[/dim]")
             return
 
         if cmd == "/undo":
@@ -1545,9 +1600,9 @@ class WellsApp(App[None]):
                 "[green]Approved.[/green]" if ok else "[dim]Denied.[/dim]"
             )
             if self._busy:
-                # Hand the input back to the running worker.
-                self._input.disabled = True
-                self._input.placeholder = "Working…"
+                self._input.placeholder = (
+                    "Working… type to queue · /btw <msg> side chat · Esc cancels"
+                )
             pend["event"].set()
 
     def _load_resume_session(self, session: dict) -> None:
@@ -1588,7 +1643,6 @@ class WellsApp(App[None]):
                 "\n[dim]Type [bold]y[/bold] to approve, anything else to deny.[/dim]"
             )
             self._pending = {"kind": "approval", "event": ev, "holder": holder}
-            self._input.disabled = False
             self._input.placeholder = "Approve? y/N"
             self._input.focus()
 
@@ -1611,8 +1665,11 @@ class WellsApp(App[None]):
         self._agent_state["plan_mode"] = config.PLAN_MODE
         self._agent_state["workspace_root"] = config.WORKSPACE_ROOT
         self._busy = True
-        self._input.disabled = True
-        self._input.placeholder = "Working…"
+        # Input stays ENABLED: messages typed mid-run are queued, /btw chats
+        # on the side, and the *_BUSY_SAFE_SLASH* commands run immediately.
+        self._input.placeholder = (
+            "Working… type to queue · /btw <msg> side chat · Esc cancels"
+        )
         _cli._REPL_STATE["busy_since"] = _time.monotonic()
         self.write_log(f"\n[bold cyan]>[/bold cyan] {text}\n")
         self._run_input(text)
@@ -1683,6 +1740,76 @@ class WellsApp(App[None]):
             "Ask a question or give a task… (/ commands, Shift+Enter newline)"
         )
         self._input.focus()
+
+        # Drain the mid-run queue: next message starts automatically.
+        if self._queue and not self._busy:
+            nxt = self._queue.pop(0)
+            self.write_log(
+                f"\n[yellow]▶ from queue ({len(self._queue)} left):[/yellow] {nxt[:80]}"
+            )
+            if nxt.startswith("/") and not nxt.lower().startswith("/btw"):
+                self._dispatch_slash(nxt)
+                # Slash commands are synchronous — keep draining.
+                if self._queue and not self._busy:
+                    self.call_later(self._restore_input)
+            else:
+                self._start_run(nxt)
+
+    # ------------------------------------------------------------------
+    # /btw — concurrent side conversation (never touches the main run)
+    # ------------------------------------------------------------------
+
+    def _start_btw(self, msg: str) -> None:
+        if not msg:
+            self.write_log("[dim]Usage: /btw <message> — side chat that runs "
+                           "even while a task is working.[/dim]")
+            return
+        self.write_log(f"\n[bold cyan]btw ▸[/bold cyan] {msg}")
+        self._btw_history.append(("user", msg))
+        # Snapshot context on the UI thread (widget access isn't thread-safe).
+        try:
+            tail = "\n".join(s.text for s in self._log.lines[-30:])[-3000:]
+        except Exception:
+            tail = ""
+        threading.Thread(
+            target=self._btw_worker, args=(msg, tail),
+            name="wells-btw", daemon=True,
+        ).start()
+
+    def _btw_worker(self, msg: str, log_tail: str) -> None:
+        import coding_harness.cli as cli_mod
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+        try:
+            goal = (cli_mod._REPL_STATE.get("last_state") or {}).get("goal", "")
+            activity = CONTROL.activity()
+            mem = cli_mod._REPL_STATE["memory"].last_run_summary
+            system = (
+                "You are Wells' side-channel assistant (/btw). The user is talking "
+                "to you WHILE a main agent task may be running in parallel. You "
+                "have no tools and must not interfere with the main task — you "
+                "observe and answer. Be brief and direct.\n\n"
+                f"Main task goal: {goal or '(none currently)'}\n"
+                f"Current activity: {activity or '(idle)'}\n"
+                + (f"\nLast run summary:\n{mem}\n" if mem else "")
+                + (f"\nRecent session log tail:\n{log_tail}\n" if log_tail else "")
+            )
+            msgs: list = [SystemMessage(content=system)]
+            for role, content in self._btw_history[-8:]:
+                msgs.append(HumanMessage(content=content) if role == "user"
+                            else AIMessage(content=content))
+            # Cheap profile; independent of the main run's model/loop.
+            llm = config.get_llm_for_task("classification", temperature=0.3)
+            resp = config._invoke_with_retry(llm, msgs)
+            text = (resp.content or "").strip() or "(no reply)"
+            self._btw_history.append(("assistant", text))
+            self.call_from_thread(
+                self.write_log, f"[cyan]btw ◂[/cyan] {text}\n"
+            )
+        except Exception as e:
+            self.call_from_thread(
+                self.write_log, f"[red]btw failed: {type(e).__name__}: {e}[/red]"
+            )
 
     # ------------------------------------------------------------------
     # Actions

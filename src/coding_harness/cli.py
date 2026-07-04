@@ -129,6 +129,18 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "Usage: /rules [list|reload|discharge <id>]. Rules are enforced at the "
         "tool boundary (.wells/rules.yaml) and injected from RULES.md.",
     ),
+    (
+        "/btw",
+        "Side chat while a task runs",
+        "Usage: /btw <message>. Independent conversation that works even mid-"
+        "orchestration — no tools, aware of the running task's goal and log.",
+    ),
+    (
+        "/queue",
+        "Messages queued during a run",
+        "Messages typed while a task runs are queued and executed in order "
+        "when it finishes. Usage: /queue [clear].",
+    ),
 ]
 
 
