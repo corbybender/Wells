@@ -386,6 +386,15 @@ _AUTO_SYSTEM_PREFIX = (
 )
 
 
+def reply_timestamp() -> str:
+    """Plain-text timestamp for the start of every reply (RULES R0 lineage):
+    '7:23:41am 7-4-2026'."""
+    t = _time.localtime()
+    hour = t.tm_hour % 12 or 12
+    ampm = "am" if t.tm_hour < 12 else "pm"
+    return f"{hour}:{t.tm_min:02d}:{t.tm_sec:02d}{ampm} {t.tm_mon}-{t.tm_mday}-{t.tm_year}"
+
+
 def _run_auto(text: str, agent_state: dict, callbacks) -> None:
     """Run ``text`` via the direct executor — handles Q&A and tasks alike."""
     from coding_harness.executor import run_executor
@@ -418,6 +427,7 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
     t0 = _time.time()
     _save_undo_checkpoint()
 
+    console.print(f"[bold #39FF14]{reply_timestamp()}[/bold #39FF14]")
     if resume_ctx:
         console.print("[dim]Continuing from previous session...[/dim]")
 
@@ -569,6 +579,7 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
         "indexer":   "[dim]Indexing…[/dim]",
     }
 
+    console.print(f"[bold #39FF14]{reply_timestamp()}[/bold #39FF14]")
     if resume_ctx:
         console.print("[dim]Continuing from previous session...[/dim]")
     console.print(f"\n[bold]Goal:[/bold] {text}\n")
