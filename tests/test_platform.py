@@ -335,3 +335,10 @@ def test_mcp_disconnect_unregisters_tools(mcp_file):
     mc.disconnect_server("fakesrv")
     assert tools.get_tool("mcp_fakesrv_ping") is None
     assert "fakesrv" not in mc._REGISTERED
+
+
+def test_reply_timestamp_format():
+    import re
+    ts = cli.reply_timestamp()
+    # e.g. '7:23:41am 7-4-2026' — 12-hour, no leading zero, am/pm, m-d-yyyy
+    assert re.fullmatch(r"([1-9]|1[0-2]):[0-5]\d:[0-5]\d(am|pm) \d{1,2}-\d{1,2}-\d{4}", ts), ts
