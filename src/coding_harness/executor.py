@@ -172,6 +172,17 @@ def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool,
     # executor run is governed by the constitution, regardless of model.
     from coding_harness.principles import inject_into_prompt as inject_principles
     env = _build_env_context()
+
+    # Workspace operating rules (RULES.md) + any open liabilities. The
+    # machine-checkable subset is ALSO enforced at the tool boundary — this
+    # block is the always-visible layer.
+    rules_block = ""
+    try:
+        from coding_harness import rules as _rules
+        if workspace:
+            rules_block = _rules.engine_for(workspace).prompt_block()
+    except Exception:
+        pass
     base = f"""You are an autonomous software engineering agent working inside a real code repository.
 You operate by calling tools to read files, search code, make edits, and run commands/tests,
 then observing the results, until the task is complete.
@@ -189,7 +200,7 @@ TASK:
 AVAILABLE TOOLS:
 {catalog}
 {plan_note}
-
+{rules_block}
 WORKING RULES:
 1. Index-first lookup: when you need to find where a function/class/variable is defined,
    call find_symbol(name) first. It returns the exact file:line instantly. Only fall back
@@ -299,6 +310,7 @@ class WorkingMemory:
     files_read: list[str] = field(default_factory=list)
     failed_commands: list[str] = field(default_factory=list)
     test_status: str = ""
+    open_liabilities: str = ""  # undischarged rule obligations (never pruned)
 
     def update_from_tool(self, name: str, args: dict, result_text: str, ok: bool) -> None:
         path = (
@@ -333,7 +345,8 @@ class WorkingMemory:
 
     def is_empty(self) -> bool:
         return not any([self.files_modified, self.files_read,
-                        self.failed_commands, self.test_status])
+                        self.failed_commands, self.test_status,
+                        self.open_liabilities])
 
     def to_xml(self) -> str:
         parts = [_WM_TAG]
@@ -354,6 +367,11 @@ class WorkingMemory:
             parts.append("  </failed_approaches>")
         if self.test_status:
             parts.append(f"  <test_status>{self.test_status}</test_status>")
+        if self.open_liabilities:
+            parts.append(
+                "  <open_liabilities>MUST be discharged before the task is "
+                f"complete: {self.open_liabilities}</open_liabilities>"
+            )
         parts.append("</working_memory>")
         return "\n".join(parts)
 
@@ -730,6 +748,14 @@ def run_executor(
     wm = WorkingMemory(task=task)
     _tool_meta: dict[str, tuple[str, dict]] = {}  # tool_call_id → (name, args)
 
+    rules_engine = None
+    if config.RULES_ENFORCE:
+        try:
+            from coding_harness import rules as _rules_mod
+            rules_engine = _rules_mod.engine_for(ctx.workspace)
+        except Exception:
+            rules_engine = None
+
     history: list[dict] = []
     steps = 0
     rounds = 0
@@ -847,9 +873,62 @@ def run_executor(
 
             _tool_meta[tcid] = (name, args)
 
+            # ── Rules gate: deterministic enforcement before execution ─────
+            rule_notes: list[str] = []
+            decision = None
+            if rules_engine is not None:
+                decision = rules_engine.check(name, args)
+                rule_notes = list(decision.notes)
+                if not decision.allow:
+                    obs_text = "\n".join(rule_notes) or "[RULES: action blocked]"
+                    _ui("warn", f"  [bold red]⛔ rule "
+                                f"{decision.rule.id if decision.rule else '?'} "
+                                f"blocked {name}[/bold red]")
+                    history.append({"name": name, "args": args, "ok": False,
+                                    "output_preview": obs_text[:200]})
+                    messages.append(_tool_message(
+                        obs_text, tool_call_id=tcid, name=name, ai_message=resp))
+                    continue
+                if decision.confirm:
+                    from coding_harness import safety as _safety
+                    ap = ctx.approver or _safety.get_approver()
+                    rid = decision.rule.id if decision.rule else "rule"
+                    detail = str(args.get("command") or args)[:160]
+                    approved = bool(ap(f"rule:{rid}", detail)) if ap else False
+                    if not approved:
+                        why = ("denied by user" if ap else
+                               "no approver available — confirm-severity rules "
+                               "require an interactive session")
+                        obs_text = (
+                            f"[RULES {rid}: action NOT executed ({why}). "
+                            f"{decision.rule.message if decision.rule else ''} "
+                            f"Choose a compliant alternative or ask the user.]"
+                        )
+                        _ui("warn", f"  [yellow]⛔ rule {rid}: {name} not "
+                                    f"executed ({why})[/yellow]")
+                        history.append({"name": name, "args": args, "ok": False,
+                                        "output_preview": obs_text[:200]})
+                        messages.append(_tool_message(
+                            obs_text, tool_call_id=tcid, name=name, ai_message=resp))
+                        continue
+
             _act(f"{name} · step {steps}/{cap}")
             result = tools.dispatch(name, args, ctx)
             obs_text = result.to_model_text()
+            if rules_engine is not None and decision is not None:
+                # Liability transitions apply only after the command actually
+                # ran (a failed `vastai create` starts nothing).
+                rule_notes += rules_engine.apply_liability(
+                    decision, ok=result.ok, simulated=result.simulated
+                )
+            if rule_notes:
+                # Moment-of-relevance injection: the fired rule lands in the
+                # observation the model reads next, not a wall of text at the top.
+                obs_text = obs_text + "\n\n" + "\n".join(rule_notes)
+                for n in rule_notes:
+                    _ui("warn", f"  [magenta]§ {n[:110]}[/magenta]")
+            if rules_engine is not None:
+                wm.open_liabilities = rules_engine.liability_summary()
             wm.update_from_tool(name, args, obs_text, result.ok)
 
             history.append({

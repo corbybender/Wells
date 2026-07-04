@@ -123,6 +123,12 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "Usage: /mcp [list] | add <name> <command> [args…] | remove <name> | "
         "enable <name> | disable <name> | test <name>. Backed by ~/.wells/mcp.json.",
     ),
+    (
+        "/rules",
+        "Operating rules + open liabilities",
+        "Usage: /rules [list|reload|discharge <id>]. Rules are enforced at the "
+        "tool boundary (.wells/rules.yaml) and injected from RULES.md.",
+    ),
 ]
 
 
@@ -201,6 +207,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_doctor()
     elif cmd == "/mcp":
         _handle_mcp(arg)
+    elif cmd == "/rules":
+        _handle_rules(arg)
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         console.print("[dim]Type / for a list of commands.[/dim]")
@@ -454,9 +462,13 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
             f"({t['input']:,} in / {t['output']:,} out){cost_part}[/dim]"
         )
 
+        # A run with an undischarged liability (e.g. a still-running rented
+        # GPU) is NOT complete, whatever the model says.
+        liabilities_clear = _enforce_liabilities(ctx.workspace)
+
         try:
             final_state = {
-                "review_complete": result.stopped_reason == "done",
+                "review_complete": result.stopped_reason == "done" and liabilities_clear,
                 "implementation_steps": result.summary,
                 "review_result": result.stopped_reason,
                 "iteration": 1,
@@ -599,6 +611,14 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
                 ))
             except Exception:
                 pass
+
+        # Liability enforcement before the run may be called complete.
+        if not _enforce_liabilities(config.WORKSPACE_ROOT):
+            agent_state["review_complete"] = False
+            agent_state["review_result"] = (
+                (agent_state.get("review_result") or "")
+                + "\n\n[RULES: run has UNDISCHARGED liabilities — see /rules]"
+            ).strip()
 
         _REPL_STATE["last_state"] = dict(agent_state)
         _print_final_summary(agent_state)
@@ -884,6 +904,22 @@ def _handle_doctor() -> None:
     if missing:
         table.add_row("pinned files", WARN, f"missing: {', '.join(missing[:5])}")
 
+    # Rules engine + open liabilities
+    try:
+        from coding_harness import rules as rules_mod
+        eng = rules_mod.engine_for(config.WORKSPACE_ROOT)
+        open_l = eng.open_liabilities()
+        if open_l:
+            table.add_row(
+                "rules", FAIL,
+                f"{len(eng.rules)} rules; [bold red]{len(open_l)} OPEN "
+                f"LIABILITY(IES)[/bold red] — /rules",
+            )
+        else:
+            table.add_row("rules", OK, f"{len(eng.rules)} enforced, no open liabilities")
+    except Exception as e:
+        table.add_row("rules", WARN, str(e)[:80])
+
     console.print(table)
 
 
@@ -1019,6 +1055,124 @@ def _mcp_list(mc) -> None:
     console.print(
         "[dim]/mcp add <name> <command> [args…] · enable/disable/test/remove <name> — "
         "file: ~/.wells/mcp.json[/dim]"
+    )
+
+
+def _enforce_liabilities(workspace: str) -> bool:
+    """Run-end liability enforcement. Returns True when all clear.
+
+    If open liabilities remain (e.g. a rented GPU was started but never
+    terminated), optionally runs ONE bounded follow-up agent pass to discharge
+    them, then re-checks. Still open → loud red warning; the run must not be
+    treated as complete.
+    """
+    from coding_harness import rules as rules_mod
+
+    if not config.RULES_ENFORCE:
+        return True
+    try:
+        eng = rules_mod.engine_for(workspace)
+    except Exception:
+        return True
+    open_l = eng.open_liabilities()
+    if not open_l:
+        return True
+
+    summary = eng.liability_summary()
+    console.print(
+        f"\n[bold red]⚠ OPEN LIABILITIES ({len(open_l)}):[/bold red] {summary}"
+    )
+
+    if config.RULES_AUTODISCHARGE and config.HARNESS_SAFETY != "dryrun" and not config.PLAN_MODE:
+        console.print("[yellow]Attempting automatic discharge…[/yellow]")
+        try:
+            from coding_harness.executor import run_executor
+            from coding_harness.tools import ToolContext
+            lines = "\n".join(
+                f"- [{l['rule_id']}] opened {l['opened_at']}: {l['detail']}"
+                for l in open_l
+            )
+            run_executor(
+                task=(
+                    "MANDATORY CLEANUP — the run cannot end until these open "
+                    "liabilities are discharged. For each one, run the "
+                    "termination/close command, then VERIFY with a status "
+                    "check and quote the evidence:\n" + lines
+                ),
+                ctx=ToolContext(workspace=workspace, safety=config.HARNESS_SAFETY),
+                max_steps=10,
+                step_label="liability-discharge",
+            )
+        except Exception as e:
+            console.print(f"[yellow]Auto-discharge failed: {e}[/yellow]")
+        open_l = eng.open_liabilities()
+
+    if open_l:
+        console.print(
+            f"[bold red]⚠ STILL OPEN ({len(open_l)}): {eng.liability_summary()}[/bold red]\n"
+            "[red]This may be COSTING MONEY RIGHT NOW. Close it manually, then "
+            "run [bold]/rules discharge <id>[/bold] to acknowledge — or ask me "
+            "to terminate it.[/red]"
+        )
+        return False
+    console.print("[green]All liabilities discharged and verified.[/green]")
+    return True
+
+
+def _handle_rules(arg: str) -> None:
+    """Handle /rules [list|reload|discharge <id>]."""
+    from rich.table import Table
+    from coding_harness import rules as rules_mod
+
+    eng = rules_mod.engine_for(config.WORKSPACE_ROOT)
+    parts = arg.strip().split()
+    sub = parts[0].lower() if parts else "list"
+
+    if sub == "reload":
+        rules_mod.reload_all()
+        console.print(f"[green]Rules reloaded ({len(eng.rules)} active).[/green]")
+        return
+    if sub == "discharge":
+        if len(parts) < 2:
+            console.print("[red]Usage: /rules discharge <rule-id>[/red]")
+            return
+        n = eng.discharge(parts[1])
+        console.print(
+            f"[green]Discharged {n} liability(ies) for '{parts[1]}'.[/green]"
+            if n else f"[yellow]No open liabilities for '{parts[1]}'.[/yellow]"
+        )
+        return
+
+    # list
+    table = Table(show_header=True, header_style="bold cyan", expand=False)
+    table.add_column("Rule", no_wrap=True)
+    table.add_column("Severity", no_wrap=True)
+    table.add_column("Trigger")
+    sev_color = {"block": "red", "confirm": "yellow", "warn": "cyan",
+                 "liability": "magenta"}
+    for r in eng.rules:
+        c = sev_color.get(r.severity, "white")
+        trig = (f"open: {r.open[:44]}…" if r.severity == "liability"
+                else f"{r.tool or 'any'}: {r.pattern[:44]}")
+        table.add_row(r.id, f"[{c}]{r.severity}[/{c}]", f"[dim]{trig}[/dim]")
+    console.print(table)
+
+    open_l = eng.open_liabilities()
+    if open_l:
+        console.print(f"\n[bold red]⚠ Open liabilities ({len(open_l)}):[/bold red]")
+        for l in open_l:
+            console.print(
+                f"  [red]{l['rule_id']}[/red] opened {l['opened_at']} — "
+                f"[dim]{l['detail'][:80]}[/dim]"
+            )
+        console.print(
+            "[dim]Close the resource, then /rules discharge <id> to acknowledge.[/dim]"
+        )
+    else:
+        console.print("\n[green]No open liabilities.[/green]")
+    console.print(
+        "[dim]Enforced rules: .wells/rules.yaml (workspace) + ~/.wells/rules.yaml "
+        "(global). Prompt/audit layer: RULES.md.[/dim]"
     )
 
 

@@ -36,6 +36,11 @@ VERIFY BY DOING, not by trusting the claims:
 Mark COMPLETE when the changed code plausibly implements the goal, even if you
 cannot run it. Mark INCOMPLETE only when code is genuinely missing or wrong.
 
+RULES AUDIT: your system prompt contains OPERATING RULES. Audit the coder's
+claims against them (especially: paid resources terminated + verified, claims
+backed by quoted evidence, credentials verified before long jobs). ANY rule
+violation or open liability = INCOMPLETE, citing the violated rule id.
+
 Then reply in EXACTLY this format on your FIRST line:
     DECISION: COMPLETE
 or
