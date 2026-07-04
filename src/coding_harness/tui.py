@@ -1026,6 +1026,8 @@ class WellsApp(App[None]):
         self._pending: dict | None = None
         # Messages typed during a run — executed in order when it finishes.
         self._queue: list[str] = []
+        # /exit was requested during a run: leave as soon as the worker stops.
+        self._exit_after_run = False
         # /btw side-conversation history (session-lived).
         self._btw_history: list[tuple[str, str]] = []
         # Prompt history (persisted) + browse state.
@@ -1330,6 +1332,22 @@ class WellsApp(App[None]):
 
         if text.startswith("/"):
             cmd = text.split()[0].lower()
+            # Quit must never queue: cancel the run, exit when it stops.
+            if cmd in ("/exit", "/quit"):
+                if not self._busy:
+                    self.exit()
+                    return
+                if self._exit_after_run:
+                    import os as _os
+                    _os._exit(0)  # second /exit = force-quit immediately
+                self._exit_after_run = True
+                CONTROL.cancel()
+                CONTROL.set_activity("cancelling…")
+                self.write_log(
+                    "[yellow]Cancelling the running task — exiting when it "
+                    "stops. Type /exit again to force-quit now.[/yellow]"
+                )
+                return
             if self._busy and cmd not in self._BUSY_SAFE_SLASH:
                 self._queue.append(text)
                 self.write_log(
@@ -1752,6 +1770,9 @@ class WellsApp(App[None]):
         import coding_harness.cli as _cli
         _cli._REPL_STATE["busy_since"] = None
         CONTROL.set_activity("")
+        if self._exit_after_run:
+            self.exit()
+            return
         self._input.disabled = False
         self._input.placeholder = (
             "Ask a question or give a task… (/ commands, Shift+Enter newline)"
