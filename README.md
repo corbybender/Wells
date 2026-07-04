@@ -83,6 +83,7 @@ Answers stream token-by-token.
 | `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
 | `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env` |
 | `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
+| `/rules` | Operating rules + open liabilities (`list` / `reload` / `discharge <id>`) |
 | `/orchestrate` | Route the next message through the full planning graph |
 | `/resume` / `/sessions` | Continue a previous session / browse history |
 | `/index` | Build or refresh the structural repo index |
@@ -233,6 +234,35 @@ The agent operates inside a **workspace root** (path escapes blocked) and a
 Two extra safety nets regardless of mode: every run **snapshots the working
 tree** (including untracked files) to a hidden git commit before starting —
 `/undo` restores it — and `MAX_RUN_TOKENS` hard-caps a run's spend.
+
+## Operating rules — deterministic, not hopeful
+
+Prompted rules are probabilistic: every model eventually forgets a wall of
+rules at prompt top. Wells enforces rules in tiers, strongest first:
+
+1. **Tool-boundary enforcement** (`.wells/rules.yaml`, merged over
+   `~/.wells/rules.yaml`): every tool call is checked *before* execution.
+   `block` refuses outright, `confirm` pauses for y/N, `warn` injects the rule
+   into the model's next observation, and `liability` registers a stateful
+   obligation — e.g. *a rented GPU was started and must be terminated*.
+   **A run cannot silently end with an open liability**: Wells attempts an
+   automatic discharge pass, marks the run INCOMPLETE otherwise, shows a red
+   `⚠ LIABILITY` badge in the status bar, warns on next startup, and keeps
+   the ledger in `~/.wells/liabilities.json` so even a crash can't lose track
+   of a running paid resource.
+2. **Moment-of-relevance injection**: when a rule fires, its text lands in
+   the exact tool observation the model reads next — one rule, at the moment
+   it applies — plus open liabilities pinned into the never-pruned working
+   memory.
+3. **Prompt + audit**: the workspace `RULES.md` (universal, incident-derived
+   rules) is injected into every system prompt, and the reviewer audits
+   compliance — violations force the INCOMPLETE loop.
+
+Manage with `/rules` (list, reload after editing, `discharge <id>` to
+acknowledge a manually-closed resource). Default rules ship globally on first
+run: GPU-rental teardown tracking, force-push/hard-reset confirmation,
+bulk-rsync confirmation, auth-preflight and monitor-quality warnings.
+Kill-switch: `RULES_ENFORCE=0`; auto-discharge: `RULES_AUTODISCHARGE`.
 
 ## Repository index (wells-index)
 

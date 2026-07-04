@@ -135,6 +135,13 @@ HARNESS_SAFETY: str = os.getenv("HARNESS_SAFETY", "auto").strip().lower() or "au
 # Max tool-call steps in a single executor run before the loop is forced to stop.
 MAX_TOOL_STEPS: int = int(os.getenv("MAX_TOOL_STEPS", "60"))
 
+# Rules engine: deterministic enforcement of .wells/rules.yaml at the tool
+# boundary (block/confirm/warn/liability). RULES_AUTODISCHARGE runs a bounded
+# follow-up agent pass to close open liabilities (e.g. terminate a rented GPU)
+# when a run tries to finish with one open.
+RULES_ENFORCE: bool = os.getenv("RULES_ENFORCE", "1") not in ("0", "false", "no", "")
+RULES_AUTODISCHARGE: bool = os.getenv("RULES_AUTODISCHARGE", "1") not in ("0", "false", "no", "")
+
 # Auto-commit (opt-in): after each successful auto-mode run that changed the
 # working tree, create a git commit with an LLM-generated Conventional Commits
 # message and a Wells authorship trailer. /undo still works (checkpoint ref).

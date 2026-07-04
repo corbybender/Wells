@@ -162,6 +162,16 @@ class StatusBar(Static):
         route_s = "  [bold magenta]route: orchestrate[/bold magenta]" if force == "task" else ""
         pin_s = f"  [yellow]📌{pinned}[/yellow]" if pinned else ""
 
+        # Open rule liabilities (e.g. a rented GPU still running) — always red.
+        liab_s = ""
+        try:
+            from coding_harness import rules as _rules
+            n_liab = len(_rules.engine_for(config.WORKSPACE_ROOT).open_liabilities())
+            if n_liab:
+                liab_s = f"  [bold red blink]⚠{n_liab} LIABILITY[/bold red blink]"
+        except Exception:
+            pass
+
         if busy_since is not None:
             secs = int(_time.monotonic() - busy_since)
             if secs >= 60:
@@ -178,7 +188,7 @@ class StatusBar(Static):
             f"[dim]{wd}[/dim]  "
             f"[green]{model}[/green]  "
             f"[cyan]{tokens_s}[/cyan]{elapsed_s}  "
-            f"{mode}{route_s}{pin_s}"
+            f"{mode}{route_s}{pin_s}{liab_s}"
         )
 
 
@@ -878,6 +888,17 @@ class WellsApp(App[None]):
 
         # Typed UI events from the executor render directly (no stdout hop).
         CONTROL.set_listener(self._on_ui_event)
+        # Seed the global rules file so every workspace gets the defaults.
+        try:
+            from coding_harness import rules as _rules
+            _rules.ensure_global_template()
+            if _rules.engine_for(config.WORKSPACE_ROOT).open_liabilities():
+                self.write_log(
+                    "[bold red]⚠ OPEN LIABILITIES from a previous session — "
+                    "run /rules to see them. This may be costing money.[/bold red]"
+                )
+        except Exception:
+            pass
         # Under HARNESS_SAFETY=approve, destructive tool calls ask the user here.
         safety.set_approver(self._tui_approver)
 
