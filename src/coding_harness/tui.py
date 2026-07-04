@@ -1304,13 +1304,6 @@ class WellsApp(App[None]):
         self._cmdlist.display = False
         self._input.focus()
 
-    # Slash commands that are read-only/safe to run on the main thread while
-    # a worker run is active. Everything else typed mid-run gets queued.
-    _BUSY_SAFE_SLASH = {
-        "/status", "/help", "/info", "/context", "/rules", "/export",
-        "/queue", "/btw", "/steer",
-    }
-
     def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
         self._cmdlist.display = False
         text = event.value.strip()
@@ -1348,13 +1341,9 @@ class WellsApp(App[None]):
                     "stops. Type /exit again to force-quit now.[/yellow]"
                 )
                 return
-            if self._busy and cmd not in self._BUSY_SAFE_SLASH:
-                self._queue.append(text)
-                self.write_log(
-                    f"[yellow]⏳ queued #{len(self._queue)}[/yellow] "
-                    f"[dim]{text} — runs when the current task finishes[/dim]"
-                )
-                return
+            # Every other slash command runs immediately, busy or not — only
+            # plain messages queue. (Settings/mode changes made mid-run apply
+            # from the next run; the in-flight run keeps its snapshot.)
             self._dispatch_slash(text)
             return
 
@@ -1402,9 +1391,6 @@ class WellsApp(App[None]):
             return
 
         if cmd == "/mcp":
-            if self._busy:
-                self.write_log("[yellow]Wait for the current run to finish before /mcp.[/yellow]")
-                return
             if not args:
                 # No subcommand: open the visual manager (like /config).
                 from coding_harness.mcp_client import ensure_template
@@ -1449,6 +1435,14 @@ class WellsApp(App[None]):
             return
 
         if cmd == "/undo":
+            if self._busy:
+                # Restoring the tree while the agent writes to it would
+                # corrupt both — this is a refusal, not a queue.
+                self.write_log(
+                    "[yellow]/undo can't run while a task is writing to the "
+                    "workspace — press Esc to cancel it first.[/yellow]"
+                )
+                return
             from coding_harness.cli import undo_preview
             sha, stat = undo_preview()
             if not sha:
