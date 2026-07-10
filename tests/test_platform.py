@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from coding_harness import cli, config, gitops, pricing, repomap
-from coding_harness.tokens import StepUsage
+from wells import cli, config, gitops, pricing, repomap
+from wells.tokens import StepUsage
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def test_cheap_verify_default_on():
 
 
 def test_mcp_load_config_env(monkeypatch):
-    from coding_harness import mcp_client
+    from wells import mcp_client
     monkeypatch.setenv("MCP_SERVERS", '{"fetch": {"command": "uvx", "args": ["x"]}}')
     cfg = mcp_client.load_config()
     assert cfg["fetch"]["command"] == "uvx"
@@ -183,14 +183,14 @@ def test_mcp_load_config_env(monkeypatch):
 
 
 def test_mcp_register_without_config_is_noop(monkeypatch):
-    from coding_harness import mcp_client
+    from wells import mcp_client
     monkeypatch.delenv("MCP_SERVERS", raising=False)
     with patch.object(mcp_client, "_CONFIG_FILE", Path("Z:/definitely/missing.json")):
         assert mcp_client.register_mcp_tools() == []
 
 
 def test_mcp_wrapped_tool_calls_through_and_gates(tmp_path: Path):
-    from coding_harness import mcp_client, tools
+    from wells import mcp_client, tools
 
     class FakeBridge:
         def call(self, coro, timeout):
@@ -228,7 +228,7 @@ def test_mcp_wrapped_tool_calls_through_and_gates(tmp_path: Path):
 
 
 def test_mcp_template_created_and_examples_ignored(tmp_path, monkeypatch):
-    from coding_harness import mcp_client
+    from wells import mcp_client
     cfg_file = tmp_path / "mcp.json"
     monkeypatch.delenv("MCP_SERVERS", raising=False)
     with patch.object(mcp_client, "_CONFIG_FILE", cfg_file):
@@ -246,7 +246,7 @@ def test_mcp_template_created_and_examples_ignored(tmp_path, monkeypatch):
 
 
 def test_mcp_template_does_not_overwrite(tmp_path, monkeypatch):
-    from coding_harness import mcp_client
+    from wells import mcp_client
     cfg_file = tmp_path / "mcp.json"
     cfg_file.write_text('{"mine": {"command": "x"}}', encoding="utf-8")
     with patch.object(mcp_client, "_CONFIG_FILE", cfg_file):
@@ -255,9 +255,9 @@ def test_mcp_template_does_not_overwrite(tmp_path, monkeypatch):
 
 
 def test_repair_index_core_reports_when_no_bundle(monkeypatch, tmp_path):
-    from coding_harness import setup as setup_mod
+    from wells import setup as setup_mod
     # Point the bundled-core lookup at an empty directory.
-    fake_root = tmp_path / "fake_pkg" / "coding_harness"
+    fake_root = tmp_path / "fake_pkg" / "wells"
     fake_root.mkdir(parents=True)
     monkeypatch.setattr(setup_mod, "__file__", str(fake_root / "setup.py"))
     ok, msg = setup_mod.repair_index_core()
@@ -268,7 +268,7 @@ def test_repair_index_core_reports_when_no_bundle(monkeypatch, tmp_path):
 def test_repair_index_core_finds_real_bundle():
     # In this repo the bundled cores exist for the running interpreter, so the
     # only acceptable failures are lock-related swap errors, never "no bundle".
-    from coding_harness import setup as setup_mod
+    from wells import setup as setup_mod
     ok, msg = setup_mod.repair_index_core()
     assert "no bundled core" not in msg
 
@@ -280,7 +280,7 @@ def test_repair_index_core_finds_real_bundle():
 
 @pytest.fixture
 def mcp_file(tmp_path, monkeypatch):
-    from coding_harness import mcp_client
+    from wells import mcp_client
     cfg = tmp_path / "mcp.json"
     monkeypatch.delenv("MCP_SERVERS", raising=False)
     with patch.object(mcp_client, "_CONFIG_FILE", cfg):
@@ -320,8 +320,8 @@ def test_mcp_enable_unknown_fails(mcp_file):
 
 
 def test_mcp_disconnect_unregisters_tools(mcp_file):
-    from coding_harness import tools
-    from coding_harness.tools import ToolDef, ToolResult
+    from wells import tools
+    from wells.tools import ToolDef, ToolResult
 
     mc = mcp_file
     fake = ToolDef(

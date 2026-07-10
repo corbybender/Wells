@@ -1,6 +1,6 @@
 # wells-index
 
-Fast structural repository indexer for [wells-coding-harness](https://github.com/corbybender/Wells-Coding-Harness). Uses Tree-sitter for language parsing, SQLite for storage, and BLAKE3 for incremental hashing.
+Fast structural repository indexer for [wells-wells](https://github.com/corbybender/Wells). Uses Tree-sitter for language parsing, SQLite for storage, and BLAKE3 for incremental hashing.
 
 ## Install
 
@@ -35,7 +35,7 @@ pip install wells-index
 
 1. Clone the repository and navigate to the `wells-index` directory:
    ```bash
-   cd Wells-Coding-Harness/wells-index
+   cd Wells/wells-index
    ```
 
 2. **Vendor tree-sitter grammar sources** (one-time setup):

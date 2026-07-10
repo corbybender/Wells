@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from coding_harness import providers, settings
+from wells import providers, settings
 
 
 # ---------------------------------------------------------------------------

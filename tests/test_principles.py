@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from coding_harness import principles
+from wells import principles
 
 
 @pytest.fixture(autouse=True)
@@ -99,7 +99,7 @@ def test_principles_block_truncates_oversize(tmp_path: Path, monkeypatch):
 def test_runtime_injects_principles(tmp_path: Path, monkeypatch):
     """run_step() prepends the principles to its system prompt."""
     from unittest.mock import patch
-    from coding_harness import runtime
+    from wells import runtime
 
     monkeypatch.delenv("WELLS_PRINCIPLES", raising=False)
     captured_system = {}

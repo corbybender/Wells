@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 from langchain_core.messages import AIMessage
 
-from coding_harness import config, executor, tools
-from coding_harness.tokens import LEDGER
+from wells import config, executor, tools
+from wells.tokens import LEDGER
 
 
 @pytest.fixture
@@ -234,7 +234,7 @@ def test_loop_plan_mode_simulates_writes(ctx: tools.ToolContext, workspace: Path
 
 
 def test_loop_stops_on_cancel(ctx: tools.ToolContext):
-    from coding_harness.control import CONTROL
+    from wells.control import CONTROL
 
     LEDGER.reset()
     CONTROL.reset()
@@ -262,7 +262,7 @@ def test_loop_stops_on_cancel(ctx: tools.ToolContext):
 
 
 def test_loop_stops_on_token_budget(ctx: tools.ToolContext):
-    from coding_harness.control import CONTROL
+    from wells.control import CONTROL
 
     LEDGER.reset()
     CONTROL.reset()
@@ -282,7 +282,7 @@ def test_loop_stops_on_token_budget(ctx: tools.ToolContext):
 
 def test_cap_zero_means_no_limit(ctx: tools.ToolContext):
     """max_steps=0 runs until the model finishes, past any old default."""
-    from coding_harness.control import CONTROL
+    from wells.control import CONTROL
 
     LEDGER.reset()
     CONTROL.reset()
@@ -300,7 +300,7 @@ def test_cap_zero_means_no_limit(ctx: tools.ToolContext):
 
 
 def test_explicit_cap_still_enforced(ctx: tools.ToolContext):
-    from coding_harness.control import CONTROL
+    from wells.control import CONTROL
 
     LEDGER.reset()
     CONTROL.reset()
@@ -317,7 +317,7 @@ def test_explicit_cap_still_enforced(ctx: tools.ToolContext):
 
 
 def test_progress_published(ctx: tools.ToolContext):
-    from coding_harness.control import CONTROL
+    from wells.control import CONTROL
 
     LEDGER.reset()
     CONTROL.reset()

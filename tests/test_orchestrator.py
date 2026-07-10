@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coding_harness.agents.planner import _parse_complexity
-from coding_harness.agents import tester
-from coding_harness.graph import (
+from wells.agents.planner import _parse_complexity
+from wells.agents import tester
+from wells.graph import (
     _route_after_plan,
     _route_after_review,
     _route_after_tests,
     build_graph,
 )
-from coding_harness import tools
+from wells import tools
 
 
 # ---------------------------------------------------------------------------
@@ -123,9 +123,9 @@ import threading
 import time as _t
 from unittest.mock import patch
 
-from coding_harness import subagents
-from coding_harness.subagents import SubagentReport
-from coding_harness.tools import _parallel_research, get_tool
+from wells import subagents
+from wells.subagents import SubagentReport
+from wells.tools import _parallel_research, get_tool
 
 
 def _fake_report(spec, ctx, *, profile=None, quiet=False):
@@ -192,9 +192,9 @@ def test_subagent_toolsets_exclude_spawning_tools():
 
 def test_quiet_executor_emits_no_ui_events(tmp_path):
     from langchain_core.messages import AIMessage
-    from coding_harness import config, executor
-    from coding_harness.control import CONTROL
-    from coding_harness.tokens import LEDGER
+    from wells import config, executor
+    from wells.control import CONTROL
+    from wells.tokens import LEDGER
 
     LEDGER.reset()
     CONTROL.reset()
@@ -225,7 +225,7 @@ def test_quiet_executor_emits_no_ui_events(tmp_path):
 
 
 def test_ops_verbs_route_to_auto():
-    from coding_harness.chat import classify_intent
+    from wells.chat import classify_intent
     for text in [
         "push the previous changes up to our azure app service",
         "deploy the site to production",
@@ -262,9 +262,9 @@ def test_tester_auto_approves_simple_green(tmp_path: Path):
 def test_steer_injected_into_next_round(tmp_path: Path):
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from coding_harness import config, executor
-    from coding_harness.control import CONTROL
-    from coding_harness.tokens import LEDGER
+    from wells import config, executor
+    from wells.control import CONTROL
+    from wells.tokens import LEDGER
 
     LEDGER.reset()
     CONTROL.reset()

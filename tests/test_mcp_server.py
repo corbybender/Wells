@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from coding_harness.mcp_server import (
+from wells.mcp_server import (
     _compress_logs,
     _get_harness_info,
     _get_memory,
@@ -32,7 +32,7 @@ from coding_harness.mcp_server import (
 
 
 def test_server_name() -> None:
-    assert server.name == "coding-harness"
+    assert server.name == "wells"
 
 
 EXPECTED_TOOLS = {
@@ -112,7 +112,7 @@ def test_compress_logs_with_tail() -> None:
 def test_get_harness_info() -> None:
     result = _get_harness_info({})
     text = result[0].text
-    assert "coding-harness" in text
+    assert "wells" in text
     assert "active_profile" in text
     assert "workspace_root" in text
 

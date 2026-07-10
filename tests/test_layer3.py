@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from coding_harness import finisher, gitops, memory, subagents, tools
+from wells import finisher, gitops, memory, subagents, tools
 
 
 # ---------------------------------------------------------------------------
@@ -229,8 +229,8 @@ def test_run_subagent_with_scripted_model(tmp_path: Path, monkeypatch):
     """A research subagent should run end-to-end with a mock model."""
     from unittest.mock import patch
     from langchain_core.messages import AIMessage
-    from coding_harness import config, executor
-    from coding_harness.tokens import LEDGER
+    from wells import config, executor
+    from wells.tokens import LEDGER
 
     LEDGER.reset()
     (tmp_path / "a.py").write_text("x = 1\n")

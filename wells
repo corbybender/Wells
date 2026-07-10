@@ -36,4 +36,4 @@ fi
 
 # Run the harness directly from src/ — no package build, no install step.
 export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-exec uv run python -m coding_harness.main "$@"
+exec uv run python -m wells.main "$@"

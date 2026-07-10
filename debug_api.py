@@ -41,7 +41,7 @@ except Exception as e:
 
 print("\n=== Testing Wells Config ===")
 try:
-    from coding_harness.config import get_llm
+    from wells.config import get_llm
 
     llm = get_llm()
     result = llm.invoke("Say OK")
@@ -51,7 +51,7 @@ except Exception as e:
 
 print("\n=== Testing Wells Runtime ===")
 try:
-    from coding_harness.runtime import run_step
+    from wells.runtime import run_step
 
     result, report = run_step(
         step="test",
@@ -66,7 +66,7 @@ except Exception as e:
 
 print("\n=== Testing LangGraph ===")
 try:
-    from coding_harness.graph import build_graph
+    from wells.graph import build_graph
 
     app = build_graph()
     initial_state = {

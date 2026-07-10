@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-from coding_harness import checkers, gitops, repomap, tools
-from coding_harness.control import CONTROL
-from coding_harness.tools import ToolContext, _edit_file, _fuzzy_locate, _reindent
+from wells import checkers, gitops, repomap, tools
+from wells.control import CONTROL
+from wells.tools import ToolContext, _edit_file, _fuzzy_locate, _reindent
 
 
 @pytest.fixture
@@ -190,7 +190,7 @@ def test_restore_bad_sha_fails_cleanly(repo: Path):
 def test_stream_invoke_aggregates_and_flags(capsys):
     from langchain_core.messages import AIMessageChunk
 
-    from coding_harness import executor
+    from wells import executor
 
     class FakeLLM:
         def stream(self, messages):
@@ -207,7 +207,7 @@ def test_stream_invoke_aggregates_and_flags(capsys):
 def test_stream_invoke_falls_back_on_error():
     from langchain_core.messages import AIMessage
 
-    from coding_harness import config, executor
+    from wells import config, executor
 
     class BrokenLLM:
         def stream(self, messages):
@@ -222,8 +222,8 @@ def test_stream_invoke_falls_back_on_error():
 def test_run_executor_streams_final_answer(ctx: ToolContext, capsys):
     from langchain_core.messages import AIMessageChunk
 
-    from coding_harness import config, executor
-    from coding_harness.tokens import LEDGER
+    from wells import config, executor
+    from wells.tokens import LEDGER
 
     class FakeLLM:
         def stream(self, messages):

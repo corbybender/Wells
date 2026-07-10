@@ -5,7 +5,7 @@
 <h1 align="center">Wells</h1>
 
 <p align="center">
-  <a href="https://github.com/corbybender/Wells-Coding-Harness/actions/workflows/ci.yml"><img src="https://github.com/corbybender/Wells-Coding-Harness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/corbybender/Wells/actions/workflows/ci.yml"><img src="https://github.com/corbybender/Wells/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pypi.org/project/wells-index/"><img src="https://img.shields.io/pypi/v/wells-index?label=wells-index" alt="wells-index on PyPI"></a>
 </p>
 
@@ -16,7 +16,9 @@ read files, make edits, run tests, and verify their own work — Claude-Code /
 OpenCode style. **Provider-agnostic**: drive it with Z.ai GLM, OpenAI,
 Anthropic, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Ships with a
 Rust structural repo index (`wells-index`), an MCP server *and* MCP client,
-git-checkpointed undo, and a deterministic verification layer.
+git-checkpointed undo, a deterministic verification layer, **agent skills**
+(load-on-domain know-how), **CodeAct** (sandboxed code execution), and
+**background agents** (concurrent fan-out).
 
 ## What it does
 
@@ -84,6 +86,7 @@ Answers stream token-by-token.
 | `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env` |
 | `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
 | `/rules` | Operating rules + open liabilities (`list` / `reload` / `discharge <id>`) |
+| `/skills` | Modal skills manager — list / view / add / edit / remove `SKILL.md` know-how |
 | `/orchestrate` | Route the next message through the full planning graph |
 | `/resume` / `/sessions` | Continue a previous session / browse history |
 | `/index` | Build or refresh the structural repo index |
@@ -147,8 +150,8 @@ After `git clone`, use the launcher script at the repo root. It handles the
 venv automatically — no `cd`, no `uv run`, no install step:
 
 ```bash
-git clone https://github.com/corbybender/Wells-Coding-Harness.git
-cd Wells-Coding-Harness
+git clone https://github.com/corbybender/Wells.git
+cd Wells
 
 ./wells config          # first run: set up your provider
 ./wells info            # show effective configuration
@@ -165,13 +168,13 @@ point it at your project with `--workspace`:
 
 ```bash
 # From your project root, with Wells cloned as a subfolder:
-./Wells-Coding-Harness/wells --workspace . "add JWT auth to the Express app"
+./Wells/wells --workspace . "add JWT auth to the Express app"
 
 # Or an absolute path:
-./Wells-Coding-Harness/wells --workspace /home/me/myapp "fix the failing tests"
+./Wells/wells --workspace /home/me/myapp "fix the failing tests"
 
 # Preview only (plan mode — describe edits without applying):
-./Wells-Coding-Harness/wells --workspace . --plan "refactor the data layer"
+./Wells/wells --workspace . --plan "refactor the data layer"
 ```
 
 All file operations, shell commands, and tests run inside the `--workspace`
@@ -179,10 +182,10 @@ directory; Wells' own source is never touched.
 
 ### Option C — Global install (available everywhere)
 
-Install once, then `wells` (or `coding-harness`) is on your PATH:
+Install once, then `wells` (or `wells`) is on your PATH:
 
 ```bash
-uv tool install Wells-Coding-Harness    # or: pipx install .
+uv tool install Wells    # or: pipx install .
 wells "your goal"                        # from any directory
 wells --workspace /path/to/project "goal"
 ```
@@ -201,7 +204,7 @@ cp .env.example .env             # then edit .env with your API key
 
 ## CLI
 
-Both `wells` and `coding-harness` work identically (they're the same entry point).
+Both `wells` and `wells` work identically (they're the same entry point).
 
 ```
 wells                                     # launch the TUI
@@ -313,6 +316,278 @@ This is distinct from per-project `AGENTS.md` memory:
 Inspect the active principles with `wells principles` or the MCP
 `get_principles` tool.
 
+## Agent capabilities
+
+Three capability layers let the claw *teach itself*, *compute*, and *work in
+parallel* — each is a self-contained, feature-gated module that plugs into the
+same executor loop and safety model. Together they address the core insight
+from the [Microsoft Agent Framework "scaling the claw"](https://devblogs.microsoft.com/agent-framework/agent-harness-scaling-the-claw-or-harness-capabilities/)
+article: stuffing every instruction into the system prompt doesn't scale, some
+questions need *computation* not *reasoning*, and blocking fan-out wastes the
+parent agent's time.
+
+### Skills — load-on-demand know-how
+
+#### The problem
+
+Stuffing every how-to into the system prompt bloats context and dilutes focus.
+Wells already injects `AGENT.md` principles, `RULES.md`, a goal-ranked repo
+map, and pinned context into every prompt — adding domain-specific how-to
+(tutorials, runbooks, architecture deep-dives) to that always-on block would
+starve the budget for the actual task.
+
+#### The solution: progressive disclosure
+
+**Skills** are small `SKILL.md` files that package a chunk of know-how. The
+agent sees only each skill's **name and one-line description** up front
+(injected into the system prompt as a compact index), and loads the **full
+body** on demand via the `load_skill` tool — *only when a request matches that
+skill*. Context stays small and focused; domain how-to scales without bloating
+every call.
+
+This is the natural complement to `AGENTS.md` memory:
+
+| | `AGENTS.md` (project memory) | Skills |
+|---|---|---|
+| **Content** | *Accumulated facts* about a repo (what the harness learned) | *How-to procedures* authored by you |
+| **Visibility** | Always-on (small, trimmed by the budget) | Name + description always visible; body loads on demand |
+| **Who writes it** | The harness finisher + you | You (via `/skills` menu or by hand) |
+| **Size** | Kept small (budget-trimmed) | Can be large (only loaded when relevant) |
+
+#### SKILL.md format
+
+Each skill lives in `skills/<name>/SKILL.md` with YAML front-matter + markdown
+body:
+
+```markdown
+---
+name: release-checklist
+description: How to cut and publish a new release of this project.
+---
+
+1. Bump the version in `package.json` and `Cargo.toml`
+2. Update `CHANGELOG.md` with the changes since the last tag
+3. Run the full test suite: `uv run pytest -q`
+4. Tag: `git tag -a v0.x.0 -m "Release v0.x.0"`
+5. Push tags: `git push --tags`
+6. The CD pipeline publishes to PyPI automatically
+```
+
+The front-matter fields:
+
+| Field | Required | Purpose |
+|---|---|---|
+| `name` | Yes (defaults to folder name) | The identifier the agent uses with `load_skill` |
+| `description` | Recommended | One line shown in the always-on index — should help the agent decide when to load it |
+
+The body is free-form markdown — instructions, code blocks, links, diagrams.
+It's capped at ~8 KB when loaded (truncated with a notice) so a single skill
+can't blow the context budget.
+
+#### Discovery
+
+Skills are discovered from (first match wins, so earlier roots can shadow):
+
+1. `<workspace>/skills/` — the conventional location
+2. Any extra directory in `WELLS_SKILLS_PATHS` (path-separator list)
+
+Two layouts are supported:
+
+```
+skills/
+  release/SKILL.md        ← skill folder (recommended)
+  add-provider/SKILL.md
+  SKILL.md                ← a single skill at the skills/ root
+```
+
+Discovery is cached by directory mtime, so editing or adding a skill file
+invalidates the cache automatically. The `skills.clear_cache()` call after
+every mutation (create/update/delete) ensures the next read sees the change.
+
+#### How the agent uses skills
+
+1. Every system prompt includes a compact index:
+
+   ```
+   === AVAILABLE SKILLS (load with the load_skill tool) ===
+   - release-checklist: How to cut and publish a new release of this project.
+   - add-provider: How to add a new model provider profile.
+   Call load_skill(name) to load a skill's full instructions when a request
+   matches one. Do not load a skill unless it is relevant.
+   === END SKILLS ===
+   ```
+
+2. When a request matches a skill (e.g. "cut a release"), the agent calls
+   `load_skill("release-checklist")` and the full body lands in its context.
+3. If no skill matches, nothing is loaded — zero overhead.
+
+#### Managing skills with `/skills`
+
+Manage skills from the TUI or CLI:
+
+| Command | What it does |
+|---|---|
+| `/skills` | Open the modal manager — list, view, add, edit, remove (keyboard-driven) |
+| `/skills list` | List all discovered skills (name + description) |
+| `/skills show <name>` | Print the full `SKILL.md` file |
+| `/skills add <name>` | Create a new skill (interactive; or use the modal form with Ctrl+S) |
+| `/skills edit <name>` | Edit an existing skill's description and/or body |
+| `/skills remove <name>` | Delete a skill (its folder + file) |
+
+**TUI modal** — bare `/skills` opens a full-screen manager:
+
+| Key | Action |
+|---|---|
+| `↑` `↓` | Select a skill |
+| `Enter` | View the full `SKILL.md` |
+| `a` | Add a new skill (form: name, description, markdown body editor) |
+| `e` | Edit the selected skill |
+| `d` | Remove the selected skill |
+| `Esc` | Close |
+
+In the add/edit form: `Ctrl+S` saves, `Esc` cancels.
+
+All mutations go through the **safety gate** (plan/approve/dryrun apply),
+**validate the skill name** (lowercase letters, digits, hyphens — blocks path
+traversal), and only delete skills **under the workspace `skills/` tree**
+(skills loaded from `WELLS_SKILLS_PATHS` can't be deleted from the menu).
+
+**Configuration:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `WELLS_SKILLS` | `1` | Discover skills and expose `load_skill` (set `0` to disable) |
+| `WELLS_SKILLS_PATHS` | _(blank)_ | Extra skill search dirs (OS path-separator list) |
+
+### CodeAct — let it compute
+
+#### The problem
+
+Some questions are *calculations*, not lookups: "what's the total LOC across
+the changed files", "does this regex match all 12 of these strings", "generate
+the cartesian product of these test configurations", "count how many functions
+transitively call `auth_check`". Doing arithmetic in the model's head or
+eyeballing a regex is exactly what the harness's "Deterministic First" and
+"Verify Before Trust" principles say not to do.
+
+#### The solution: `run_code`
+
+**CodeAct** gives the agent a `run_code` tool: it writes a small Python
+snippet, the harness runs it in a **workspace-confined subprocess**, and
+returns structured `stdout` / `stderr` / `exit code`. The agent gets a clean,
+bounded result to reason over — no guessing.
+
+**Example tool calls the agent makes:**
+
+```python
+# Count lines changed in the working tree
+import subprocess
+diff = subprocess.check_output(["git", "diff", "--stat"]).decode()
+print(diff)
+
+# Validate a regex against test strings
+import re
+pat = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+for s in ["2024-01-15", "99-1-1", "2024-13-40"]:
+    print(f"{s}: {'match' if pat.match(s) else 'no match'}")
+```
+
+#### Confinement + guardrails
+
+| Guardrail | What it does |
+|---|---|
+| **Workspace-confined** | `cwd` = workspace, so `open("src/utils.py")` works for repo inspection |
+| **Source screening** | Refuses code containing `os.system`, `subprocess`, `popen`, `__import__`, or `fork()` — use `run_command` for shell work |
+| **Deny-list screening** | The same `BLOCKED_COMMANDS` regex list that screens `run_command` is applied to the source text (catches `rm -rf /` in a string literal) |
+| **Output truncation** | stdout capped at 8 KB, stderr at 4 KB — a runaway `print` in a loop can't blow the budget |
+| **Timeout** | Hard wall-clock cap (default 30s via `CODEACT_TIMEOUT`; also bounded by `SHELL_TIMEOUT`) |
+| **Safety gate** | Honours plan/dry-run/approve modes like every other mutating tool |
+
+**Why a confined subprocess, not Hyperlight/Monty?** Zero extra dependencies —
+works out of the box everywhere Python runs. Workspace confinement + the
+existing safety gate + the deny-list give the same first line of defense the
+article's `LocalShellExecutor` relies on. A Docker-isolated executor is a
+future option for untrusted input.
+
+**Configuration:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `WELLS_CODEACT` | `1` | Expose the `run_code` tool (set `0` to disable) |
+| `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
+
+### Background agents — concurrent fan-out
+
+#### The problem
+
+`parallel_research` already fans out 2–4 read-only research subagents in
+parallel — but it **blocks**: the parent agent waits for all subagents to
+finish before it can do anything else. If one subagent takes 30 seconds, the
+parent is stuck for 30 seconds. The fan-out timing is also the *tool's*
+decision, not the agent's.
+
+#### The solution: start / check / collect
+
+**Background agents** flip the blocking pattern to the async start / check /
+collect model from the article. The agent gets three tools:
+
+| Tool | What it does | Returns |
+|---|---|---|
+| `bg_start` | Launch a sub-agent on a background daemon thread | Handle id (e.g. `bg-1`) — immediately, does not block |
+| `bg_status` | Poll all background agents | List with status (`running`/`done`/`error`/`cancelled`) + elapsed seconds |
+| `bg_collect` | Collect a finished agent's report (once) | The subagent's full report, or "still running" if it isn't done |
+
+The fan-out becomes the **agent's decision**: it starts N tasks, keeps working
+(reading files, making edits, running tests), and collects results when
+convenient — checking back periodically with `bg_status`.
+
+**Example workflow the agent drives:**
+
+```
+bg_start(task="research the auth module's token validation flow")    → bg-1
+bg_start(task="research the database migration history")             → bg-2
+bg_start(task="find all callers of the deprecated API")              → bg-3
+
+  # Agent keeps working while they run:
+  read_file("src/main.py")
+  edit_file("src/main.py", ...)
+  run_tests()
+
+bg_status                                                            → bg-1: done, bg-2: done, bg-3: running
+bg_collect(id="bg-1")                                                → report from auth research
+bg_collect(id="bg-2")                                                → report from migration research
+  # bg-3 still running — collect later or move on
+```
+
+#### Lifecycle + safety
+
+| Property | Behaviour |
+|---|---|
+| **Concurrency** | Each sub-agent runs on a daemon thread (LLM calls are I/O-bound, matching `parallel_research`) |
+| **Registry** | Process-wide, keyed by short stable ids (`bg-1`, `bg-2`, …); resets at the start of each executor run so slots don't leak |
+| **Collect once** | A result is collected at most once, then cleared — keeps memory bounded across a long run |
+| **Recursion blocked** | A sub-agent cannot start its own background agents (`ctx.subagent` is checked at dispatch) |
+| **Cooperative cancellation** | Escape / `CONTROL.cancel()` marks running slots as cancelled; pending threads check at step boundaries |
+| **Roles** | `role=research` (read-only, default) or `role=fix` (scoped edit capability) |
+| **Safety gate** | Each sub-agent's tool calls pass through the same safety gate as the parent |
+
+**Contrast with `parallel_research`:**
+
+| | `parallel_research` | Background agents (`bg_*`) |
+|---|---|---|
+| **Blocking** | Yes — parent waits for all to finish | No — returns immediately, collect later |
+| **Fan-out timing** | Tool's decision (2–4 fixed) | Agent's decision (any number) |
+| **Parent works during?** | No | Yes |
+| **Read-only?** | Yes | `research` = yes; `fix` = can edit |
+| **Use case** | Quick parallel exploration | Long-running fan-out the parent checks back on |
+
+**Configuration:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `WELLS_BG_AGENTS` | `1` | Expose `bg_start`/`bg_status`/`bg_collect` (set `0` to disable) |
+
+
 ## MCP — server *and* client
 
 ### Server: drive Wells from other agents
@@ -323,7 +598,7 @@ so external agent clients (Claude Code, OpenCode, Codex CLIs, Gemini CLI, …)
 can invoke the harness:
 
 ```bash
-coding-harness-mcp          # console script
+wells-mcp          # console script
 ```
 
 Exposed tools include `run_agent_task` (full loop), `plan_task`,
@@ -334,7 +609,7 @@ Exposed tools include `run_agent_task` (full loop), `plan_task`,
 ```json
 {
   "mcpServers": {
-    "coding-harness": { "command": "coding-harness-mcp", "args": [] }
+    "wells": { "command": "wells-mcp", "args": [] }
   }
 }
 ```
@@ -353,7 +628,7 @@ call passes the safety gate, so `approve` and `dryrun` apply to MCP tools too.
 ## Project structure
 
 ```
-src/coding_harness/
+src/wells/
 ├── main.py            # CLI entry: run / config / info / principles
 ├── cli.py             # REPL command layer: slash commands, run paths
 ├── tui.py             # Textual TUI: log, prompt, status bar, modals
@@ -385,6 +660,9 @@ src/coding_harness/
 ├── mcp_client.py      # MCP client (external tools for the agent)
 ├── logo.py            # TUI glyph lockup
 ├── principles.py      # AGENT.md injection
+├── skills.py          # Agent skills: discoverable SKILL.md, load-on-demand
+├── codeact.py         # CodeAct: sandboxed run_code tool
+├── background.py      # Background agents: bg_start/bg_status/bg_collect
 └── agents/            # planner / architect / coder / tester / reviewer
 wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 .github/workflows/     # ci.yml (pytest) + release-index.yml (PyPI wheels)
@@ -419,6 +697,11 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `WELLS_OPEN_PR` | `0` | When `1`, the finisher pushes + opens a PR via `gh` |
 | `WELLS_PRINCIPLES` | _(bundled)_ | Path to a custom AGENT.md constitution |
 | `BLOCKED_COMMANDS` | _(see source)_ | `\|`-separated regex patterns always refused |
+| `WELLS_SKILLS` | `1` | Discover `skills/<name>/SKILL.md` and expose `load_skill` (on/off) |
+| `WELLS_SKILLS_PATHS` | _(blank)_ | Extra skill search dirs (path-separator list) |
+| `WELLS_CODEACT` | `1` | Expose the sandboxed `run_code` tool for in-context computation |
+| `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
+| `WELLS_BG_AGENTS` | `1` | Expose `bg_start` / `bg_status` / `bg_collect` for concurrent fan-out |
 
 Legacy `ZAI_*` variables keep working unchanged — they seed the built-in `zai`
 profile.
@@ -439,7 +722,7 @@ profile.
 ## Tests & CI
 
 ```bash
-uv run pytest -q          # 224 tests
+uv run pytest -q          # 360 tests
 ```
 
 The suite covers provider resolution, tool confinement + every safety mode,
@@ -452,8 +735,7 @@ wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
 
 ## Roadmap
 
-- Parallel *write* steps via worktree-per-subagent isolation (reads already fan out).
+- Parallel *write* steps via worktree-per-subagent isolation (reads already fan out; background agents now fan out concurrently).
 - SSE/HTTP MCP client transport (stdio today).
 - Prompt-cache-friendly masking batches (measure `cache_read` deltas first).
 - Embedding-based retrieval for very large repos.
-- Async task tracking for MCP `run_agent_task`.
