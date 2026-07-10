@@ -37,7 +37,7 @@ if exist "%PYD_SRC%" (
 )
 
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
-uv run --no-sync python -m coding_harness.main %*
+uv run --no-sync python -m wells.main %*
 goto :eof
 
 :syncfail

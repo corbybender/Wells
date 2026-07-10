@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from coding_harness import chat
-from coding_harness.chat import ConversationMemory, classify_intent
+from wells import chat
+from wells.chat import ConversationMemory, classify_intent
 
 
 # ---------------------------------------------------------------------------

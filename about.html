@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>How the Wells Coding Harness Works</title>
+<title>How the Wells Works</title>
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d;
@@ -134,7 +134,7 @@
 <body>
 
 <div class="hero">
-  <h1>Wells Coding Harness</h1>
+  <h1>Wells</h1>
   <p>A local, model-agnostic agentic coding harness. Give it a development goal and a crew of AI agents actually reads files, makes edits, runs tests, and ships a PR &mdash; Claude-Code style, driven by any model you choose.</p>
 </div>
 
@@ -367,7 +367,7 @@
       <span class="badge">compress_logs</span>
       <span class="badge">get_harness_info</span>
     </div>
-    <p style="margin-top: 14px;">Start it with <code class="inline">coding-harness-mcp</code> or <code class="inline">python -m coding_harness</code>. The MCP layer is deliberately thin &mdash; it delegates every call to the harness core, no duplicated logic.</p>
+    <p style="margin-top: 14px;">Start it with <code class="inline">wells-mcp</code> or <code class="inline">python -m wells</code>. The MCP layer is deliberately thin &mdash; it delegates every call to the harness core, no duplicated logic.</p>
   </section>
 
   <!-- 8. CLI -->
@@ -376,15 +376,15 @@
     <table>
       <thead><tr><th>Command</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>coding-harness</code></td><td>Launch the interactive chat REPL</td></tr>
-        <tr><td><code>coding-harness "&lt;goal&gt;"</code></td><td>Run the full harness on a goal (single-shot)</td></tr>
-        <tr><td><code>coding-harness --plan "&lt;goal&gt;"</code></td><td>Plan mode: plan edits without applying them</td></tr>
-        <tr><td><code>coding-harness config</code></td><td>Interactive settings menu (all 22 settings, persists to .env)</td></tr>
-        <tr><td><code>coding-harness info</code></td><td>Show effective configuration</td></tr>
-        <tr><td><code>coding-harness "&lt;goal&gt;" MAX_ITERATIONS=5</code></td><td>Inline setting override</td></tr>
+        <tr><td><code>wells</code></td><td>Launch the interactive chat REPL</td></tr>
+        <tr><td><code>wells "&lt;goal&gt;"</code></td><td>Run the full harness on a goal (single-shot)</td></tr>
+        <tr><td><code>wells --plan "&lt;goal&gt;"</code></td><td>Plan mode: plan edits without applying them</td></tr>
+        <tr><td><code>wells config</code></td><td>Interactive settings menu (all 22 settings, persists to .env)</td></tr>
+        <tr><td><code>wells info</code></td><td>Show effective configuration</td></tr>
+        <tr><td><code>wells "&lt;goal&gt;" MAX_ITERATIONS=5</code></td><td>Inline setting override</td></tr>
       </tbody>
     </table>
-    <p style="margin-top: 14px;">Running <code class="inline">coding-harness</code> with no arguments opens a rich, interactive chat REPL (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Inside the REPL, you can type your goals naturally or use slash commands (<code class="inline">/help</code>, <code class="inline">/config</code>, <code class="inline">/info</code>, <code class="inline">/plan</code>, <code class="inline">/quit</code>).</p>
+    <p style="margin-top: 14px;">Running <code class="inline">wells</code> with no arguments opens a rich, interactive chat REPL (similar to Claude Code or OpenCode). It maintains conversational context across multiple goals and streams output tokens live to your terminal. Inside the REPL, you can type your goals naturally or use slash commands (<code class="inline">/help</code>, <code class="inline">/config</code>, <code class="inline">/info</code>, <code class="inline">/plan</code>, <code class="inline">/quit</code>).</p>
   </section>
 
   <div class="note">
@@ -394,7 +394,7 @@
 </div>
 
 <footer>
-  Wells Coding Harness &middot; model-agnostic agentic coding &middot; <a href="readme.html" style="color: var(--accent);">View README</a>
+  Wells &middot; model-agnostic agentic coding &middot; <a href="readme.html" style="color: var(--accent);">View README</a>
 </footer>
 
 </body>

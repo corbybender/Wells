@@ -1,5 +1,5 @@
 [project]
-name = "coding-harness"
+name = "wells"
 version = "0.2.0"
 description = "Wells — a model-agnostic agentic coding harness (planner/architect/coder/tester/reviewer) that actually edits files and runs tests."
 readme = "README.md"
@@ -19,20 +19,18 @@ dependencies = [
 ]
 
 [project.scripts]
-coding-harness = "coding_harness.main:main"
-coding-harness-mcp = "coding_harness.mcp_server:main"
-wells = "coding_harness.main:main"
-wells-mcp = "coding_harness.mcp_server:main"
+wells = "wells.main:main"
+wells-mcp = "wells.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/coding_harness"]
+packages = ["src/wells"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/coding_harness/AGENT.md" = "coding_harness/AGENT.md"
+"src/wells/AGENT.md" = "wells/AGENT.md"
 
 [dependency-groups]
 dev = [

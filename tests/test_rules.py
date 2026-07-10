@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from coding_harness import rules as rules_mod
-from coding_harness.rules import RulesEngine
-from coding_harness.tools import ToolResult
+from wells import rules as rules_mod
+from wells.rules import RulesEngine
+from wells.tools import ToolResult
 
 
 RULES_YAML = r"""
@@ -147,9 +147,9 @@ def _scripted_executor_run(tmp_path, commands, dispatch_ok=True):
 
     from langchain_core.messages import AIMessage
 
-    from coding_harness import config, executor, tools
-    from coding_harness.control import CONTROL
-    from coding_harness.tokens import LEDGER
+    from wells import config, executor, tools
+    from wells.control import CONTROL
+    from wells.tokens import LEDGER
 
     ws = tmp_path / "ws"
     (ws / ".wells").mkdir(parents=True, exist_ok=True)
@@ -208,7 +208,7 @@ def test_executor_tracks_liability_lifecycle(tmp_path: Path):
 
 
 def test_executor_confirm_without_approver_refuses(tmp_path: Path):
-    from coding_harness import safety
+    from wells import safety
     orig = safety.get_approver()
     safety.set_approver(None)
     try:
@@ -222,7 +222,7 @@ def test_executor_confirm_without_approver_refuses(tmp_path: Path):
 
 
 def test_executor_confirm_with_approver_yes(tmp_path: Path):
-    from coding_harness import safety
+    from wells import safety
     orig = safety.get_approver()
     asked = []
     safety.set_approver(lambda action, detail: asked.append(action) or True)

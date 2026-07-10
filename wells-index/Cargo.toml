@@ -3,8 +3,8 @@ name = "wells-index"
 version = "0.1.1"
 edition = "2021"
 authors = ["Wells Contributors"]
-description = "Fast structural repository indexer for wells-coding-harness"
-repository = "https://github.com/corbybender/Wells-Coding-Harness"
+description = "Fast structural repository indexer for wells-wells"
+repository = "https://github.com/corbybender/Wells"
 license = "MIT OR Apache-2.0"
 
 [lib]

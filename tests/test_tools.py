@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from coding_harness import safety, tools
+from wells import safety, tools
 
 
 @pytest.fixture
