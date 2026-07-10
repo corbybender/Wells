@@ -1249,8 +1249,9 @@ class WellsApp(App[None]):
         Binding("ctrl+l", "clear_log", "Clear output"),
         Binding("f2", "toggle_panel", "Info panel", priority=True),
         # Scroll bindings — priority=True so they fire even when Input has focus.
-        # mouse=False hands mouse-wheel events to the terminal (for copy-paste),
-        # so keyboard is the only scroll path inside the TUI.
+        # Mouse capture is enabled (mouse=True) so the scroll wheel works in the
+        # output panel. Hold Shift while selecting to use the terminal's native
+        # copy-paste instead of Textual's mouse capture.
         Binding("pageup",    "scroll_up",     "Scroll up",      show=False, priority=True),
         Binding("pagedown",  "scroll_down",   "Scroll down",    show=False, priority=True),
         Binding("ctrl+home", "scroll_top",    "Scroll to top",  show=False, priority=True),
@@ -2205,4 +2206,4 @@ def run_tui(resume_context: str | None = None) -> None:
     if not _ensure_model_configured():
         return
 
-    WellsApp(resume_context=resume_context).run(mouse=False)
+    WellsApp(resume_context=resume_context).run(mouse=True)
