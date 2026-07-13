@@ -40,6 +40,8 @@ steps if you revised them.
 
 
 def architect(state: dict) -> dict:
+    from wells.control import CONTROL
+    CONTROL.set_activity("architect · validating plan")
     print("[architect] validating plan ...")
 
     chunks = {

@@ -157,17 +157,22 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
 
 
 class StreamingCallback(BaseCallbackHandler):
-    """Streams LLM tokens to the console."""
+    """Streams LLM tokens to the console (via the UI event bus when the TUI
+    is listening, stdout otherwise)."""
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
-        if config.STREAM_OUTPUT:
-            sys.stdout.write(token)
-            sys.stdout.flush()
+        if config.STREAM_OUTPUT and token:
+            from wells.control import CONTROL
+            if not CONTROL.emit("llm_chunk", token):
+                sys.stdout.write(token)
+                sys.stdout.flush()
 
     def on_llm_end(self, response, **kwargs) -> None:
         if config.STREAM_OUTPUT:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            from wells.control import CONTROL
+            if not CONTROL.emit("llm_done"):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
 
 
 
@@ -631,14 +636,29 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
     if pin_block:
         effective_task = f"{pin_block}\n{effective_task}"
 
+    from wells.control import CONTROL
+
     LEDGER.reset()
     session_id = new_session_id()
     t0 = _time.time()
-    _save_undo_checkpoint()
 
     console.print(f"[bold #39FF14]{reply_timestamp()}[/bold #39FF14]")
     if resume_ctx:
         console.print("[dim]Continuing from previous session...[/dim]")
+
+    # Pre-run setup phases used to be silent — several seconds of dead air
+    # before the first token. Publish each phase to the status bar, and print
+    # a dim line for any phase slow enough to notice.
+    def _phase(label: str, fn):
+        CONTROL.set_activity(label)
+        p0 = _time.monotonic()
+        out = fn()
+        secs = _time.monotonic() - p0
+        if secs >= 1.0:
+            console.print(f"[dim]  {label} ({secs:.1f}s)[/dim]")
+        return out
+
+    _phase("checkpointing…", _save_undo_checkpoint)
 
     ctx = ToolContext(
         workspace=agent_state.get("workspace_root", config.WORKSPACE_ROOT),
@@ -650,12 +670,16 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
     # find_symbol / search_symbols return real results (not empty).
     if config.INDEX_AUTO_UPDATE:
         from wells import index_tools
-        index_tools.ensure_index(ctx.workspace, auto_build=True)
+        _phase("refreshing index…",
+               lambda: index_tools.ensure_index(ctx.workspace, auto_build=True))
 
     # Repo map in the system prefix: the model starts knowing where things
     # live, ranked by relevance to this goal.
     from wells.repomap import repo_map_block
-    system_prefix = _AUTO_SYSTEM_PREFIX + repo_map_block(ctx.workspace, goal=text)
+    system_prefix = _AUTO_SYSTEM_PREFIX + _phase(
+        "building repo map…", lambda: repo_map_block(ctx.workspace, goal=text)
+    )
+    CONTROL.set_activity("waiting for model…")
 
     try:
         result = run_executor(
@@ -781,6 +805,37 @@ def _maybe_auto_commit(goal: str, summary: str) -> None:
         console.print(f"[yellow]auto-commit failed: {sha}[/yellow]")
 
 
+def _next_graph_node(cur: str, state: dict) -> str | None:
+    """Predict the next graph node from the routing rules.
+
+    Mirrors the conditional edges in :mod:`wells.graph` (without their
+    diagnostic prints) so the run log can announce ``▶ coder`` the moment the
+    planner finishes, instead of only reporting nodes after they complete.
+    The graph itself still routes authoritatively.
+    """
+    if cur == "indexer":
+        return "planner"
+    if cur == "planner":
+        return "coder" if state.get("plan_complexity") == "simple" else "architect"
+    if cur in ("architect", "summarizer"):
+        return "coder"
+    if cur == "coder":
+        return "tester"
+    cap = state.get("max_iterations", config.MAX_ITERATIONS)
+    iteration = state.get("iteration", 0)
+    if cur == "tester":
+        if state.get("tests_passed") is True and state.get("review_complete"):
+            return "finisher"
+        if state.get("tests_passed") is False and (cap == 0 or iteration < cap):
+            return "summarizer"
+        return "reviewer"
+    if cur == "reviewer":
+        if state.get("review_complete") or (cap and iteration >= cap):
+            return "finisher"
+        return "summarizer"
+    return None  # finisher → END
+
+
 def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
     """Run ``text`` through the full agentic graph."""
     from wells.sessions import (
@@ -806,14 +861,18 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
     _save_undo_checkpoint()
 
     _NODE_LABELS = {
-        "planner":   "[bold blue]Planning…[/bold blue]",
-        "architect": "[bold blue]Architecting…[/bold blue]",
-        "coder":     "[bold green]Coding…[/bold green]",
-        "tester":    "[bold yellow]Testing…[/bold yellow]",
-        "reviewer":  "[bold cyan]Reviewing…[/bold cyan]",
-        "finisher":  "[bold cyan]Finishing…[/bold cyan]",
-        "indexer":   "[dim]Indexing…[/dim]",
+        "planner":    "[bold blue]planner[/bold blue]",
+        "architect":  "[bold blue]architect[/bold blue]",
+        "coder":      "[bold green]coder[/bold green]",
+        "tester":     "[bold yellow]tester[/bold yellow]",
+        "reviewer":   "[bold cyan]reviewer[/bold cyan]",
+        "summarizer": "[dim]summarizer[/dim]",
+        "finisher":   "[bold cyan]finisher[/bold cyan]",
+        "indexer":    "[dim]indexer[/dim]",
     }
+
+    def _label(n: str) -> str:
+        return _NODE_LABELS.get(n, f"[bold]{n}[/bold]")
 
     console.print(f"[bold #39FF14]{reply_timestamp()}[/bold #39FF14]")
     if resume_ctx:
@@ -828,14 +887,17 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
     budget_hit = False
 
     try:
+        # stream_mode="updates" yields AFTER each node completes, so a node's
+        # label must be announced when the PREVIOUS node finishes — printing
+        # it on receipt would show "planner" only once planning is over.
+        CONTROL.stage_start("indexer")
+        console.print(f"▶ {_label('indexer')}")
         node_t0 = _time.monotonic()
         for update in app.stream(
             agent_state, config={"callbacks": callbacks}, stream_mode="updates"
         ):
             node_secs = _time.monotonic() - node_t0
             node_t0 = _time.monotonic()
-            if node_secs >= 5:
-                console.print(f"[dim]  ({node_secs:.0f}s)[/dim]")
             if CONTROL.cancelled():
                 raise RunCancelled()
             if config.MAX_RUN_TOKENS:
@@ -845,10 +907,16 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
                     budget_hit = True
                     break
             for node_name, node_state in update.items():
-                label = _NODE_LABELS.get(node_name, f"[bold]{node_name.title()}…[/bold]")
-                console.print(f"\n{label}")
                 for k, v in node_state.items():
                     agent_state[k] = v
+                CONTROL.stage_end(node_name)
+                console.print(
+                    f"[green]✓[/green] {_label(node_name)} [dim]({node_secs:.0f}s)[/dim]"
+                )
+                nxt = _next_graph_node(node_name, agent_state)
+                if nxt:
+                    CONTROL.stage_start(nxt)
+                    console.print(f"▶ {_label(nxt)}")
                 CONTROL.set_progress(
                     "iteration",
                     agent_state.get("iteration", 0),

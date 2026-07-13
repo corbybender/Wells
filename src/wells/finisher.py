@@ -30,6 +30,8 @@ def finisher(state: dict) -> dict:
     Returns a small dict with ``pr_url`` / ``git_summary`` keys for the final
     report. Failures are non-fatal — the run already succeeded.
     """
+    from wells.control import CONTROL
+    CONTROL.set_activity("finisher · memory + git")
     ctx = ToolContext.from_state(state)
     dry = ctx.plan_mode or ctx.safety == "dryrun"
 

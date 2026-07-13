@@ -62,12 +62,25 @@ Screen {
     height: 1fr;
 }
 
-#output {
+#log-col {
     width: 1fr;
     height: 100%;
+}
+
+#output {
+    width: 100%;
+    height: 1fr;
     border: none;
     padding: 0 1;
     scrollbar-gutter: stable;
+}
+
+#live {
+    display: none;
+    height: auto;
+    max-height: 8;
+    padding: 0 1;
+    color: $text-muted;
 }
 
 InfoPanel {
@@ -121,9 +134,21 @@ class StatusBar(Static):
     """Persistent status bar: workspace | model | tokens | activity | mode."""
 
     def on_mount(self) -> None:
+        self._liab_cache: tuple[float, int] = (0.0, 0)  # (checked_at, count)
+        self._last_build = 0.0
         self.set_interval(0.25, self._refresh)
 
     def _refresh(self) -> None:
+        # Busy: full 4 Hz so elapsed/activity visibly tick. Idle: 1 Hz is plenty.
+        try:
+            import wells.cli as _cli
+            busy = _cli._REPL_STATE.get("busy_since") is not None
+        except Exception:
+            busy = False
+        now = _time.monotonic()
+        if not busy and now - self._last_build < 1.0:
+            return
+        self._last_build = now
         self.update(self._build())
 
     def _build(self) -> str:
@@ -184,10 +209,15 @@ class StatusBar(Static):
             queue_s = ""
 
         # Open rule liabilities (e.g. a rented GPU still running) — always red.
+        # Cached: the check reads a file, and this bar rebuilds up to 4×/s.
         liab_s = ""
         try:
-            from wells import rules as _rules
-            n_liab = len(_rules.engine_for(config.WORKSPACE_ROOT).open_liabilities())
+            now = _time.monotonic()
+            checked_at, n_liab = self._liab_cache
+            if now - checked_at >= 5.0:
+                from wells import rules as _rules
+                n_liab = len(_rules.engine_for(config.WORKSPACE_ROOT).open_liabilities())
+                self._liab_cache = (now, n_liab)
             if n_liab:
                 liab_s = f"  [bold red blink]⚠{n_liab} LIABILITY[/bold red blink]"
         except Exception:
@@ -199,8 +229,11 @@ class StatusBar(Static):
                 elapsed = f"[yellow]{secs // 60}m {secs % 60:02d}s[/yellow]"
             else:
                 elapsed = f"[dim]{secs}s[/dim]"
-            activity = CONTROL.activity()
-            act_s = f"  [magenta]{activity}[/magenta]" if activity else ""
+            activity, act_age = CONTROL.activity_info()
+            # Ticking per-activity age = constant "still alive" signal even
+            # when the model produces no output for a while.
+            age_s = f" [dim]· {int(act_age)}s[/dim]" if act_age >= 3 else ""
+            act_s = f"  [magenta]{activity}[/magenta]{age_s}" if activity else ""
             elapsed_s = f"  {elapsed}{act_s}  [dim]esc: cancel[/dim]"
         else:
             elapsed_s = ""
@@ -224,8 +257,18 @@ class InfoPanel(Static):
     def on_mount(self) -> None:
         self._slow_cache: dict = {}   # 30s-cached expensive lookups
         self._slow_at = 0.0
+        self._rules_cache: tuple[float, list] = (0.0, [])  # 5s TTL (file read)
         self.set_interval(1.0, self._refresh)
         self._refresh()
+
+    def _open_liabilities(self) -> list:
+        now = _time.monotonic()
+        checked_at, items = self._rules_cache
+        if now - checked_at >= 5.0:
+            from wells import rules as _rules
+            items = _rules.engine_for(config.WORKSPACE_ROOT).open_liabilities()
+            self._rules_cache = (now, items)
+        return items
 
     def _refresh(self) -> None:
         try:
@@ -324,10 +367,24 @@ class InfoPanel(Static):
             secs = int(_time.monotonic() - busy_since)
             elapsed = f"{secs // 60}m {secs % 60:02d}s" if secs >= 60 else f"{secs}s"
             row("elapsed", f"[yellow]{elapsed}[/yellow]")
-            act = CONTROL.activity()
+            act, act_age = CONTROL.activity_info()
             if act:
-                L.append(f"[magenta]{act[:31]}[/magenta]")
-            L.append("[dim]esc: cancel · /btw: side chat[/dim]")
+                age_s = f" [dim]{int(act_age)}s[/dim]" if act_age >= 3 else ""
+                L.append(f"[magenta]{act[:31]}[/magenta]{age_s}")
+            L.append("[dim]esc: cancel · /steer · /btw[/dim]")
+
+        # -- orchestrate pipeline breadcrumb ---------------------------------------
+        stages = CONTROL.stages()
+        if stages:
+            L.append(rule)
+            L.append("[bold]pipeline[/bold]")
+            for name, status, secs_f in stages[-8:]:
+                if status == "run":
+                    L.append(f"[yellow]▶[/yellow] {name[:14]:<14}[yellow]{int(secs_f)}s[/yellow]")
+                elif status == "fail":
+                    L.append(f"[red]✗[/red] [dim]{name[:14]:<14}{int(secs_f)}s[/dim]")
+                else:
+                    L.append(f"[green]✓[/green] [dim]{name[:14]:<14}{int(secs_f)}s[/dim]")
 
         # -- per-stage step progress (cap 0 = No Limit) ----------------------------
         prog = CONTROL.progress()
@@ -371,8 +428,7 @@ class InfoPanel(Static):
 
         # -- liabilities -----------------------------------------------------------
         try:
-            from wells import rules as _rules
-            open_l = _rules.engine_for(config.WORKSPACE_ROOT).open_liabilities()
+            open_l = self._open_liabilities()
             if open_l:
                 L.append(rule)
                 L.append(f"[bold red]⚠ {len(open_l)} OPEN LIABILITY[/bold red]")
@@ -1120,34 +1176,6 @@ class SkillsScreen(ModalScreen[None]):
 # I/O capture helpers
 # ---------------------------------------------------------------------------
 
-class _MainThreadStdout:
-    """stdout shim for slash commands running on the event-loop thread.
-
-    Bare print() in command handlers (/info, index prints, …) would otherwise
-    go to the real stdout hidden behind the TUI.
-    """
-
-    def __init__(self, app: "WellsApp") -> None:
-        self._app = app
-        self._buf = ""
-
-    def write(self, text: str) -> int:
-        if text:
-            self._buf += text
-            while "\n" in self._buf:
-                line, self._buf = self._buf.split("\n", 1)
-                self._app.write_log(line)
-        return len(text)
-
-    def flush(self) -> None:
-        if self._buf:
-            self._app.write_log(self._buf)
-            self._buf = ""
-
-    def isatty(self) -> bool:
-        return False
-
-
 class _TUIStdout:
     """Redirect sys.stdout → RichLog (used for streaming tokens + bare print())."""
 
@@ -1262,8 +1290,12 @@ class WellsApp(App[None]):
         super().__init__()
         self._resume_context = resume_context
         self._graph_app: Any = None
+        self._graph_lock = threading.Lock()
         self._agent_state: dict = {}
         self._busy = False
+        # Live streaming region state (in-progress model output).
+        self._live_buf = ""
+        self._live_at = 0.0
         # Pending interactive command waiting for a follow-up reply.
         # Format: {"kind": "resume_select"|"sessions_clear"|"approval", ...}
         self._pending: dict | None = None
@@ -1286,12 +1318,16 @@ class WellsApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
-            yield RichLog(
-                id="output",
-                markup=True,
-                highlight=True,
-                wrap=True,
-            )
+            with Vertical(id="log-col"):
+                yield RichLog(
+                    id="output",
+                    markup=True,
+                    highlight=True,
+                    wrap=True,
+                )
+                # Live streaming region: in-progress model output lands here
+                # character-by-character, then commits to the log line-by-line.
+                yield Static(id="live")
             yield InfoPanel(id="info-panel")
         yield OptionList(id="command-list")
         with Vertical(id="bottom"):
@@ -1309,9 +1345,9 @@ class WellsApp(App[None]):
     def on_mount(self) -> None:
         from wells import safety
         from wells.cli import _REPL_STATE
-        from wells.graph import build_graph
 
         self._log: RichLog = self.query_one("#output", RichLog)
+        self._live: Static = self.query_one("#live", Static)
         self._input: PromptInput = self.query_one("#input", PromptInput)
         self._cmdlist: OptionList = self.query_one("#command-list", OptionList)
         self._panel: InfoPanel = self.query_one("#info-panel", InfoPanel)
@@ -1343,8 +1379,11 @@ class WellsApp(App[None]):
 
         self._history = self._history_load()
 
-        # Build the LangGraph (may take a moment).
-        self._graph_app = build_graph()
+        # Build the LangGraph in the background — it's only needed for
+        # orchestrate runs, and building it on the event loop delays first paint.
+        threading.Thread(
+            target=self._ensure_graph, name="wells-graph-build", daemon=True
+        ).start()
         self._agent_state = {
             "iteration": 0,
             "max_iterations": config.MAX_ITERATIONS,
@@ -1380,13 +1419,53 @@ class WellsApp(App[None]):
     def _on_ui_event(self, ev: UIEvent) -> None:
         """Render a typed executor event (called from worker threads)."""
         try:
-            self.call_from_thread(self.write_log, ev.text)
+            if ev.kind == "llm_chunk":
+                self.call_from_thread(self._llm_chunk, ev.text)
+            elif ev.kind == "llm_done":
+                self.call_from_thread(self._llm_done)
+            else:
+                self.call_from_thread(self.write_log, ev.text)
         except Exception:
             # Already on the app thread (or app shutting down).
             try:
                 self.write_log(ev.text)
             except Exception:
                 pass
+
+    # -- live streaming region (in-progress model output) --------------------
+
+    def _llm_chunk(self, text: str) -> None:
+        """Append a streamed chunk: full lines commit to the log immediately,
+        the partial tail renders in the live region below it (throttled)."""
+        from rich.text import Text
+        self._live_buf += text
+        if "\n" in self._live_buf:
+            *done, self._live_buf = self._live_buf.split("\n")
+            for line in done:
+                self.write_log(Text(line))
+        now = _time.monotonic()
+        if not self._live_buf:
+            self._live.update("")
+        elif now - self._live_at >= 0.05:
+            self._live_at = now
+            self._live.display = True
+            self._live.update(Text(self._live_buf[-600:] + "▌"))
+
+    def _llm_done(self) -> None:
+        from rich.text import Text
+        if self._live_buf:
+            self.write_log(Text(self._live_buf))
+            self._live_buf = ""
+        self._live.update("")
+        self._live.display = False
+
+    def _ensure_graph(self) -> Any:
+        """Build the LangGraph once (thread-safe); return the compiled app."""
+        with self._graph_lock:
+            if self._graph_app is None:
+                from wells.graph import build_graph
+                self._graph_app = build_graph()
+            return self._graph_app
 
     def _print_welcome(self) -> None:
         logo_shown = False
@@ -1734,23 +1813,40 @@ class WellsApp(App[None]):
             self._pending = {"kind": "sessions_clear", "all_ws": all_ws}
             return
 
-        # -- All other commands are safe to run synchronously -----------------
+        # -- All other commands run in a worker thread: some (/doctor,
+        # /index build) block for seconds and used to freeze the whole UI.
+        self._run_slash_worker(command)
+
+    @work(thread=True)
+    def _run_slash_worker(self, command: str) -> None:
         import wells.cli as cli_mod
-        orig = cli_mod.console
+
+        orig_console = cli_mod.console
         orig_stdout = sys.stdout
-        shim = _MainThreadStdout(self)
-        cli_mod.console = _TUIConsole(self, thread_safe=False)
-        sys.stdout = shim  # bare print() in handlers must reach the log too
+        # If a run is in flight, its worker already redirected console/stdout
+        # to the TUI — reuse that instead of clobbering its redirect.
+        swap = not isinstance(cli_mod.console, _TUIConsole)
+        shim = _TUIStdout(self)
+        if swap:
+            cli_mod.console = _TUIConsole(self, thread_safe=True)
+            sys.stdout = shim  # bare print() in handlers must reach the log too
         try:
             keep_running = cli_mod.handle_slash_command(command)
+        except Exception as e:
+            keep_running = True
+            self.call_from_thread(
+                self.write_log, f"[red]{command.split()[0]} failed: {e}[/red]"
+            )
         finally:
-            shim.flush()
-            if sys.stdout is shim:
-                sys.stdout = orig_stdout
-            cli_mod.console = orig
+            if swap:
+                shim.flush()
+                if sys.stdout is shim:
+                    sys.stdout = orig_stdout
+                if isinstance(cli_mod.console, _TUIConsole):
+                    cli_mod.console = orig_console
 
         if not keep_running:
-            self.exit()
+            self.call_from_thread(self.exit)
 
     @work(thread=True)
     def _run_mcp_command(self, arg: str) -> None:
@@ -1892,7 +1988,7 @@ class WellsApp(App[None]):
             )
             if self._busy:
                 self._input.placeholder = (
-                    "Working… type to queue · /btw <msg> side chat · Esc cancels"
+                    "Working… type to queue · /steer redirects · /btw side chat · Esc cancels"
                 )
             pend["event"].set()
 
@@ -1959,7 +2055,7 @@ class WellsApp(App[None]):
         # Input stays ENABLED: messages typed mid-run are queued, /btw chats
         # on the side, and the *_BUSY_SAFE_SLASH* commands run immediately.
         self._input.placeholder = (
-            "Working… type to queue · /btw <msg> side chat · Esc cancels"
+            "Working… type to queue · /steer redirects · /btw side chat · Esc cancels"
         )
         _cli._REPL_STATE["busy_since"] = _time.monotonic()
         self.write_log(f"\n[bold cyan]>[/bold cyan] {text}\n")
@@ -1989,14 +2085,34 @@ class WellsApp(App[None]):
             if force:
                 intent = force
                 _REPL_STATE["force_mode"] = None
+                via = "forced"
             else:
-                intent = chat.classify_intent(text)
+                CONTROL.set_activity("classifying request…")
+                intent = chat.classify_intent(
+                    text, use_llm_fallback=config.INTENT_LLM_FALLBACK
+                )
+                via = "classifier"
+
+            # Always say which pipeline this message got — the single most
+            # common "where am I?" question.
+            if intent in ("task", "orchestrate"):
+                route_line = (
+                    "[dim]route:[/dim] [bold magenta]orchestrate[/bold magenta] "
+                    f"[dim]({via}) — indexer → planner → architect → coder → "
+                    "tester → reviewer → finisher[/dim]"
+                )
+            else:
+                route_line = (
+                    "[dim]route:[/dim] [green]auto[/green] "
+                    "[dim]— direct executor (/orchestrate forces the full pipeline)[/dim]"
+                )
+            self.call_from_thread(self.write_log, route_line)
 
             from wells.cli import StreamingCallback, _run_auto
             callbacks = [StreamingCallback()]
 
             if intent in ("task", "orchestrate"):
-                _run_task(text, self._agent_state, self._graph_app, callbacks)
+                _run_task(text, self._agent_state, self._ensure_graph(), callbacks)
                 _REPL_STATE["memory"].set_run_summary(
                     _summarize_run(_REPL_STATE.get("last_state", {}))
                 )
@@ -2026,6 +2142,7 @@ class WellsApp(App[None]):
         import wells.cli as _cli
         _cli._REPL_STATE["busy_since"] = None
         CONTROL.set_activity("")
+        self._llm_done()  # flush a stream cancelled mid-line
         if self._exit_after_run:
             self.exit()
             return

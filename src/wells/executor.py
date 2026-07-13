@@ -1126,6 +1126,11 @@ def _stream_invoke(llm, messages) -> tuple[BaseMessage, bool]:
     the final message carries merged tool_calls/usage exactly like invoke.
     Falls back to a normal retry-invoke when the provider can't stream.
     Checks the cancel flag between chunks so Escape lands mid-answer.
+
+    Chunks go through the CONTROL event bus (``llm_chunk``/``llm_done``) when
+    a listener is registered — the TUI renders them into a live region as
+    they arrive instead of waiting for full lines. Without a listener (plain
+    CLI), they fall back to stdout as before.
     """
     import sys as _sys
 
@@ -1142,12 +1147,13 @@ def _stream_invoke(llm, messages) -> tuple[BaseMessage, bool]:
                     b.get("text", "") for b in content if isinstance(b, dict)
                 )
             if content:
-                if not emitted:
-                    _sys.stdout.write("\n")
-                _sys.stdout.write(content)
-                _sys.stdout.flush()
+                if not CONTROL.emit("llm_chunk", content):
+                    if not emitted:
+                        _sys.stdout.write("\n")
+                    _sys.stdout.write(content)
+                    _sys.stdout.flush()
                 emitted = True
-        if emitted:
+        if emitted and not CONTROL.emit("llm_done"):
             _sys.stdout.write("\n")
             _sys.stdout.flush()
         if full is None:
