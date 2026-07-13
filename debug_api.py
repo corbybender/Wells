@@ -11,6 +11,7 @@ print(f"ZAI_API_KEY: {os.getenv('ZAI_API_KEY', 'NOT SET')[:20]}...")
 print(f"ZAI_ENDPOINT: {os.getenv('ZAI_ENDPOINT', 'NOT SET')}")
 print(f"ZAI_MODEL: {os.getenv('ZAI_MODEL', 'NOT SET')}")
 print(f"UV_NATIVE_TLS: {os.getenv('UV_NATIVE_TLS', 'NOT SET')}")
+print(f"UV_SYSTEM_CERTS: {os.getenv('UV_SYSTEM_CERTS', 'NOT SET')}")
 
 print("\n=== Testing Network Connectivity ===")
 import urllib3

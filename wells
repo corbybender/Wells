@@ -9,9 +9,10 @@
 #
 # This wrapper handles the venv automatically. It deliberately AVOIDS building
 # the local package (which would need hatchling from PyPI) by running the
-# harness module directly with PYTHONPATH=src. It also forces UV_NATIVE_TLS=1
-# so uv uses the system certificate store — needed on corporate networks whose
-# proxy presents a self-signed cert that Python's bundled certifi rejects.
+# harness module directly with PYTHONPATH=src. It also tells uv to use the
+# system certificate store (UV_SYSTEM_CERTS, or UV_NATIVE_TLS on older uv) —
+# needed on corporate networks whose proxy presents a self-signed cert that
+# Python's bundled certifi rejects.
 
 set -e
 
@@ -20,7 +21,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Use the OS certificate store so corporate TLS-intercepting proxies work.
-export UV_NATIVE_TLS="${UV_NATIVE_TLS:-1}"
+# Newer uv renamed UV_NATIVE_TLS to UV_SYSTEM_CERTS (the old name still works
+# but prints a deprecation warning) — set whichever this uv understands.
+if [ -z "${UV_SYSTEM_CERTS:-}" ] && [ -z "${UV_NATIVE_TLS:-}" ]; then
+    if uv sync --help 2>/dev/null | grep -q "UV_SYSTEM_CERTS"; then
+        export UV_SYSTEM_CERTS=1
+    else
+        export UV_NATIVE_TLS=1
+    fi
+fi
 
 # Sync dependencies WITHOUT building the local package. --no-install-project
 # means uv never invokes the build backend (hatchling), so no PyPI fetch is

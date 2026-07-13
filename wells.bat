@@ -8,15 +8,22 @@ REM   wells.bat config
 REM   wells.bat info
 REM
 REM This wrapper AVOIDS building the local package (no hatchling needed from
-REM PyPI) by running the harness module directly with PYTHONPATH=src. It sets
-REM UV_NATIVE_TLS=1 so uv uses the Windows system certificate store - needed on
-REM corporate networks whose proxy presents a self-signed cert.
+REM PyPI) by running the harness module directly with PYTHONPATH=src. It tells
+REM uv to use the Windows system certificate store (UV_SYSTEM_CERTS, or
+REM UV_NATIVE_TLS on older uv) - needed on corporate networks whose proxy
+REM presents a self-signed cert.
 
 setlocal
 cd /d "%~dp0"
 
 REM Use the OS certificate store so corporate TLS-intercepting proxies work.
-if not defined UV_NATIVE_TLS set UV_NATIVE_TLS=1
+REM Newer uv renamed UV_NATIVE_TLS to UV_SYSTEM_CERTS (the old name still
+REM works but prints a deprecation warning) - set whichever this uv knows.
+if defined UV_SYSTEM_CERTS goto :tlsdone
+if defined UV_NATIVE_TLS goto :tlsdone
+uv sync --help 2>nul | findstr /C:"UV_SYSTEM_CERTS" >nul
+if %errorlevel%==0 (set UV_SYSTEM_CERTS=1) else (set UV_NATIVE_TLS=1)
+:tlsdone
 
 REM Sync dependencies WITHOUT building the local package.
 uv sync --no-install-project --quiet >nul 2>&1
