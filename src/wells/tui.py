@@ -1504,19 +1504,33 @@ class WellsApp(App[None]):
         )
 
     def _ensure_repo_index(self) -> None:
-        try:
-            from wells import config as _cfg
-            if not _cfg.INDEX_AUTO_UPDATE:
-                return
-            from wells.index_tools import ensure_index
-            max_age = float(__import__("os").environ.get("INDEX_MAX_AGE_HOURS", "24"))
-            result = ensure_index(_cfg.WORKSPACE_ROOT, max_age_hours=max_age, auto_build=True)
-            if result.startswith("index-built"):
-                self.write_log(f"[green]{result[:120]}[/green]")
-            elif result.startswith("index-failed"):
-                self.write_log(f"[yellow]Index: {result}[/yellow]")
-        except Exception:
-            pass
+        """Build/refresh the repo index in the background.
+
+        A first build on a repo with no index yet takes real time (a couple
+        of seconds per few dozen files) — doing this on the event-loop
+        thread in on_mount used to block the whole app from painting.
+        Threaded here like the graph build and MCP connect just above.
+
+        (This previously called ``ensure_index(..., max_age_hours=max_age)``
+        — a kwarg the function has never accepted — so every call raised
+        TypeError and was swallowed by the blanket except below. Auto-index
+        has effectively never run via the TUI; fixed by dropping the arg.)
+        """
+        def _build() -> None:
+            try:
+                from wells import config as _cfg
+                if not _cfg.INDEX_AUTO_UPDATE:
+                    return
+                from wells.index_tools import ensure_index
+                result = ensure_index(_cfg.WORKSPACE_ROOT, auto_build=True)
+                if result.startswith("index-built"):
+                    self.call_from_thread(self.write_log, f"[green]{result[:120]}[/green]")
+                elif result.startswith("index-failed"):
+                    self.call_from_thread(self.write_log, f"[yellow]Index: {result}[/yellow]")
+            except Exception:
+                pass
+
+        threading.Thread(target=_build, name="wells-index-build", daemon=True).start()
 
     def _connect_mcp_servers(self) -> None:
         """Connect configured MCP servers in the background (never blocks UI)."""
