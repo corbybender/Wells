@@ -11,12 +11,31 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
-try:
-    import tiktoken
+# tiktoken.get_encoding() used to run at import time. On a first run with no
+# local cache it fetches the BPE vocab over HTTPS (openaipublic.blob.core.
+# windows.net) — behind a TLS-intercepting corporate proxy that request can
+# hang for several seconds before failing, and since this module sits at the
+# top of wells.tui's import chain, that delay landed before the app painted
+# anything at all. Load it in a background thread instead: estimates use the
+# char-count fallback (the estimator self-calibrates against real API usage
+# anyway — see module docstring) until the encoder is ready, then switch over
+# transparently.
+_ENC = None
+_ENC_LOCK = threading.Lock()
 
-    _ENC = tiktoken.get_encoding("cl100k_base")
-except Exception:
-    _ENC = None
+
+def _load_encoder() -> None:
+    global _ENC
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        return
+    with _ENC_LOCK:
+        _ENC = enc
+
+
+threading.Thread(target=_load_encoder, name="wells-tiktoken-load", daemon=True).start()
 
 _CHARS_PER_TOKEN_FALLBACK = 3.5
 
@@ -25,11 +44,12 @@ _CALIBRATION = [1.0]
 
 
 def _raw_estimate(text: str) -> int:
-    """Uncalibrated token estimate (tiktoken if available, else char heuristic)."""
+    """Uncalibrated token estimate (tiktoken if ready, else char heuristic)."""
     if not text:
         return 0
-    if _ENC is not None:
-        return len(_ENC.encode(text))
+    enc = _ENC
+    if enc is not None:
+        return len(enc.encode(text))
     return max(1, int(round(len(text) / _CHARS_PER_TOKEN_FALLBACK)))
 
 

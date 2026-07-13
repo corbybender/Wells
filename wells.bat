@@ -25,22 +25,39 @@ uv sync --help 2>nul | findstr /C:"UV_SYSTEM_CERTS" >nul
 if %errorlevel%==0 (set UV_SYSTEM_CERTS=1) else (set UV_NATIVE_TLS=1)
 :tlsdone
 
-REM Sync dependencies WITHOUT building the local package.
+REM Sync dependencies WITHOUT building the local package — but only when
+REM uv.lock has actually changed since the last successful sync. A no-op
+REM `uv sync` still costs ~1s on every launch (full lockfile resolution
+REM check); skipping it when nothing changed is most of a second saved on
+REM every single "wells" invocation, not just the first.
+set "STAMP=.venv\.sync-stamp"
+set "LOCKSTAMP="
+for %%F in ("uv.lock") do set "LOCKSTAMP=%%~tF;%%~zF"
+set "CACHEDSTAMP="
+if exist "%STAMP%" set /p CACHEDSTAMP=<"%STAMP%"
+
+if "%LOCKSTAMP%"=="%CACHEDSTAMP%" if exist ".venv\Scripts\python.exe" goto :run
+
 uv sync --no-install-project --quiet >nul 2>&1
-if %errorlevel%==0 goto :run
+if %errorlevel%==0 (
+    >"%STAMP%" echo %LOCKSTAMP%
+    goto :run
+)
 
 echo [wells] installing dependencies (first run may take a minute) ...
 uv sync --no-install-project
 if errorlevel 1 goto :syncfail
+>"%STAMP%" echo %LOCKSTAMP%
 
 :run
 REM Auto-deploy the wells-index .pyd from the repo into the venv.
 REM After a git pull the repo copy is newer; this keeps the venv in sync
-REM without any manual copy step.
+REM without any manual copy step. /D = only copy if source is newer, so
+REM this is a no-op stat check (not a real copy) on most launches.
 set "PYD_SRC=%~dp0wells-index\python\wells_index\_core.cp312-win_amd64.pyd"
 set "PYD_DST=%~dp0.venv\Lib\site-packages\wells_index\_core.cp312-win_amd64.pyd"
 if exist "%PYD_SRC%" (
-    xcopy /Y /Q "%PYD_SRC%" "%PYD_DST%" >nul 2>&1
+    xcopy /Y /Q /D "%PYD_SRC%" "%PYD_DST%" >nul 2>&1
 )
 
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"

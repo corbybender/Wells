@@ -31,16 +31,30 @@ if [ -z "${UV_SYSTEM_CERTS:-}" ] && [ -z "${UV_NATIVE_TLS:-}" ]; then
     fi
 fi
 
-# Sync dependencies WITHOUT building the local package. --no-install-project
-# means uv never invokes the build backend (hatchling), so no PyPI fetch is
-# needed for the build step. Deps are pre-built wheels.
-if ! uv sync --no-install-project --quiet 2>/dev/null; then
+# Sync dependencies WITHOUT building the local package — but only when
+# uv.lock actually changed since the last successful sync. A no-op
+# `uv sync` still costs ~1s on every launch (full lockfile resolution
+# check); skipping it when nothing changed saves that on every invocation,
+# not just the first. --no-install-project means uv never invokes the build
+# backend (hatchling), so no PyPI fetch is needed for the build step.
+STAMP=".venv/.sync-stamp"
+LOCK_STAMP="$(stat -c '%Y|%s' uv.lock 2>/dev/null || stat -f '%m|%z' uv.lock 2>/dev/null || echo "")"
+CACHED_STAMP=""
+[ -f "$STAMP" ] && CACHED_STAMP="$(cat "$STAMP")"
+
+if [ -n "$LOCK_STAMP" ] && [ "$LOCK_STAMP" = "$CACHED_STAMP" ] \
+   && { [ -x ".venv/bin/python" ] || [ -x ".venv/Scripts/python.exe" ]; }; then
+    :  # uv.lock unchanged and the venv is intact — skip the sync check.
+elif ! uv sync --no-install-project --quiet 2>/dev/null; then
     echo "[wells] installing dependencies (first run may take a minute) ..."
     uv sync --no-install-project || {
         echo "[wells] dependency install failed. Check your network/TLS settings." >&2
         echo "[wells] If behind a proxy, try: set SSL_CERT_FILE= and REQUESTS_CA_BUNDLE=" >&2
         exit 1
     }
+    echo "$LOCK_STAMP" > "$STAMP"
+else
+    echo "$LOCK_STAMP" > "$STAMP"
 fi
 
 # Run the harness directly from src/ — no package build, no install step.
