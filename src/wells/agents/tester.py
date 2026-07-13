@@ -93,6 +93,8 @@ def tester(state: dict) -> dict:
     ctx = ToolContext.from_state(state)
 
     # ── Layer 1: deterministic gate ─────────────────────────────────────────
+    from wells.control import CONTROL
+    CONTROL.set_activity("tester · running test suite")
     print("[tester] running deterministic test gate ...")
     passed, gate_output = _run_deterministic_gate(ctx)
 

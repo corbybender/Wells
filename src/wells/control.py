@@ -19,6 +19,7 @@ the Textual event loop, worker threads, and library code.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -53,10 +54,13 @@ class RunControl:
         self._cancel = threading.Event()
         self._lock = threading.Lock()
         self._activity: str = ""
+        self._activity_at: float = 0.0
         self._listener: Callable[[UIEvent], None] | None = None
         self._steers: list[str] = []
         # Ordered per-stage progress: label -> (current_step, cap). cap 0 = no limit.
         self._progress: dict[str, tuple[int, int]] = {}
+        # Ordered pipeline stages: name -> {"status": run|done|fail, "t0", "secs"}.
+        self._stages: dict[str, dict] = {}
 
     # -- cancellation --------------------------------------------------------
 
@@ -67,6 +71,7 @@ class RunControl:
         with self._lock:
             self._steers.clear()
             self._progress.clear()
+            self._stages.clear()
 
     # -- per-stage progress (drives the info panel) ---------------------------
 
@@ -78,6 +83,32 @@ class RunControl:
         """Stages in start order: (label, current_step, cap). cap 0 = no limit."""
         with self._lock:
             return [(k, v[0], v[1]) for k, v in self._progress.items()]
+
+    # -- pipeline stages (orchestrate breadcrumb: indexer → planner → …) -------
+
+    def stage_start(self, name: str) -> None:
+        with self._lock:
+            # Re-entering a stage (loop back to coder) restarts its clock.
+            self._stages.pop(name, None)
+            self._stages[name] = {"status": "run", "t0": time.monotonic(), "secs": 0.0}
+
+    def stage_end(self, name: str, ok: bool = True) -> None:
+        with self._lock:
+            st = self._stages.get(name)
+            if st is None:
+                return
+            st["secs"] = time.monotonic() - st["t0"]
+            st["status"] = "done" if ok else "fail"
+
+    def stages(self) -> list[tuple[str, str, float]]:
+        """Pipeline stages in start order: (name, status, elapsed_seconds)."""
+        now = time.monotonic()
+        with self._lock:
+            return [
+                (k, v["status"],
+                 v["secs"] if v["status"] != "run" else now - v["t0"])
+                for k, v in self._stages.items()
+            ]
 
     # -- mid-run steering ------------------------------------------------------
 
@@ -111,11 +142,20 @@ class RunControl:
 
     def set_activity(self, text: str) -> None:
         with self._lock:
+            if text != self._activity:
+                self._activity_at = time.monotonic()
             self._activity = text
 
     def activity(self) -> str:
         with self._lock:
             return self._activity
+
+    def activity_info(self) -> tuple[str, float]:
+        """Current activity and seconds since it was last changed."""
+        with self._lock:
+            if not self._activity:
+                return "", 0.0
+            return self._activity, time.monotonic() - self._activity_at
 
     # -- UI events -----------------------------------------------------------
 

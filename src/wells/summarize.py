@@ -59,6 +59,8 @@ def summarizer_node(state: dict) -> dict:
     - durable context small   -> keep it verbatim (no model call, no savings).
     - durable context large   -> condense via a cheap model call.
     """
+    from wells.control import CONTROL
+    CONTROL.set_activity("summarizer · condensing context")
     if not SUMMARIZE_ON_LOOP:
         return {"task_summary": ""}
 

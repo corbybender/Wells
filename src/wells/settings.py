@@ -133,6 +133,15 @@ SETTINGS: list[Setting] = [
         "Max seconds for a single shell command.",
         "120",
     ),
+    Setting(
+        "INTENT_LLM_FALLBACK",
+        "LLM intent classifier fallback",
+        "Run",
+        "Ask the cheap model when auto/orchestrate routing is ambiguous "
+        "(adds a round-trip before every ambiguous run; off = route to auto).",
+        "0",
+        choices=("0", "1"),
+    ),
     # --- Token optimization ------------------------------------------------
     Setting(
         "TOKEN_BUDGET_MAX_INPUT",
