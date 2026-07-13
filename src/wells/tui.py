@@ -439,7 +439,7 @@ class InfoPanel(Static):
             pass
 
         L.append(rule)
-        L.append("[dim]F2: hide panel[/dim]")
+        L.append("[dim]F2: hide (full-width select/copy)[/dim]")
         return "\n".join(L)
 
 
@@ -1279,7 +1279,12 @@ class WellsApp(App[None]):
         # Scroll bindings — priority=True so they fire even when Input has focus.
         # Mouse capture is enabled (mouse=True) so the scroll wheel works in the
         # output panel. Hold Shift while selecting to use the terminal's native
-        # copy-paste instead of Textual's mouse capture.
+        # copy-paste instead of Textual's mouse capture — but terminal selection
+        # is row-based across the WHOLE terminal width, so with the info panel
+        # visible a drag inside the log also grabs whatever sits on the same
+        # rows in the panel. F2 hides the panel, letting #log-col expand to
+        # fill the full width (verified: no other widget occupies those rows
+        # once InfoPanel.display=False), so a drag-select only touches the log.
         Binding("pageup",    "scroll_up",     "Scroll up",      show=False, priority=True),
         Binding("pagedown",  "scroll_down",   "Scroll down",    show=False, priority=True),
         Binding("ctrl+home", "scroll_top",    "Scroll to top",  show=False, priority=True),
@@ -1506,7 +1511,8 @@ class WellsApp(App[None]):
             "Ask anything — questions, edits, tasks. "
             "Use [bold]/orchestrate[/bold] for complex multi-component work. "
             "Type [bold]/[/bold] for all commands. "
-            "[dim]Shift+Enter: newline · ↑/↓: history · Esc: cancel run · F2: info panel[/dim]\n"
+            "[dim]Shift+Enter: newline · ↑/↓: history · Esc: cancel run · "
+            "F2: hide panel to select/copy text[/dim]\n"
         )
 
     def _ensure_repo_index(self) -> None:
