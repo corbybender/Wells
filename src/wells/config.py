@@ -127,7 +127,15 @@ CHEAP_TASKS = {
 
 # --- Agentic execution configuration (Layer 1/2) -------------------------
 # Workspace root: tools are confined to this directory (prevents path escapes).
+# A WORKSPACE_ROOT that doesn't exist (an .env copied from another machine, a
+# deleted project dir) would make EVERY shell command fail with WinError 267 /
+# FileNotFoundError — subprocess cwd must exist. Fall back to the current
+# directory and record the bad value so the UI/doctor can surface it.
 WORKSPACE_ROOT: str = os.getenv("WORKSPACE_ROOT", os.getcwd()).strip() or os.getcwd()
+WORKSPACE_ROOT_INVALID: str = ""
+if not os.path.isdir(WORKSPACE_ROOT):
+    WORKSPACE_ROOT_INVALID = WORKSPACE_ROOT
+    WORKSPACE_ROOT = os.getcwd()
 
 # Safety policy for writes/shell. One of: auto | approve | dryrun.
 #   auto    - execute immediately, confined to WORKSPACE_ROOT

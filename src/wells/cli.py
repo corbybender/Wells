@@ -1182,6 +1182,22 @@ def _handle_doctor() -> None:
     WARN = "[yellow]⚠[/yellow]"
     FAIL = "[red]✗[/red]"
 
+    # Workspace root — every tool subprocess uses it as cwd.
+    if config.WORKSPACE_ROOT_INVALID:
+        table.add_row(
+            "workspace", FAIL,
+            f"configured WORKSPACE_ROOT does not exist: "
+            f"{config.WORKSPACE_ROOT_INVALID[:60]} — using {config.WORKSPACE_ROOT[:40]}. "
+            f"Fix with /working-dir or edit .env",
+        )
+    elif not os.path.isdir(config.WORKSPACE_ROOT):
+        table.add_row(
+            "workspace", FAIL,
+            f"workspace deleted after startup: {config.WORKSPACE_ROOT[:60]}",
+        )
+    else:
+        table.add_row("workspace", OK, config.WORKSPACE_ROOT[:70])
+
     # Provider profile + API key
     profile = config.providers.load_profile(config.ACTIVE_PROFILE)
     if profile is None:
