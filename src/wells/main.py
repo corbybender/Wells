@@ -18,7 +18,34 @@ import time as _time
 from datetime import datetime
 from pathlib import Path
 
-from wells import __version__, config, settings
+_STARTUP_T0 = _time.perf_counter()  # as close to process start as we control
+
+
+def _startup_mark(label: str) -> None:
+    """Append an elapsed-since-process-start timing line when profiling is on.
+
+    Set WELLS_STARTUP_PROFILE=1 to enable. Written to a file, not stdout —
+    the TUI takes over the terminal (alternate screen buffer) almost
+    immediately, so print()/stderr output from this phase is invisible in a
+    real launch. Near-zero cost when disabled: one os.environ.get() call.
+    """
+    if os.environ.get("WELLS_STARTUP_PROFILE") not in ("1", "true", "yes"):
+        return
+    try:
+        elapsed = (_time.perf_counter() - _STARTUP_T0) * 1000
+        log = Path.home() / ".wells" / "startup-profile.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as f:
+            f.write(f"{elapsed:8.1f}ms  {label}\n")
+    except Exception:
+        pass
+
+
+_startup_mark("main.py: module start")
+
+from wells import __version__, config, settings  # noqa: E402 — timed deliberately
+
+_startup_mark("main.py: core imports done (wells.config, settings)")
 
 
 def _print_section(title: str, body: str) -> None:
@@ -183,8 +210,18 @@ def _run_goal(goal: str, *, resume_context: str | None = None) -> None:
         print(f"[session save failed: {e}]")
 
 
-def _ensure_model_configured() -> bool:
-    """Check the active profile resolves + the provider package is installed."""
+def _ensure_model_configured_fast() -> bool:
+    """Check the active profile resolves — no client construction.
+
+    ``providers.get_chat_model()`` (below) imports the provider SDK package
+    and builds the client: for langchain_openai that's ~3s of import alone,
+    plus ~1s building SSL-verified httpx clients and ~1s of pydantic model
+    construction — around 5s, measured. This half of the check is what's
+    actually needed before the TUI can usefully show a prompt (a missing
+    MODEL_<profile> is a real "can't do anything" error); the expensive
+    client build is deferred to :func:`warm_chat_model`, run in a background
+    thread by ``run_tui`` while the app is mounting.
+    """
     from wells import providers
 
     try:
@@ -200,6 +237,38 @@ def _ensure_model_configured() -> bool:
             f"MODEL_{config.ACTIVE_PROFILE}=<model> in your environment."
         )
         return False
+    return True
+
+
+def warm_chat_model() -> None:
+    """Construct (and cache) the active chat model client.
+
+    ``providers.get_chat_model`` is ``@lru_cache``d, so this just does the
+    ~5s import+construction cost once, off the startup path — the first real
+    LLM call then hits a warm cache instead of paying it. Any failure here
+    (missing provider package, bad config) is swallowed; it surfaces
+    naturally with the same RuntimeError on the first real call, which is
+    where the fully-synchronous one-shot CLI path (_ensure_model_configured)
+    still checks it eagerly, since that path is about to make a call anyway.
+    """
+    from wells import providers
+
+    try:
+        providers.get_chat_model(config.ACTIVE_PROFILE)
+    except Exception:
+        pass
+
+
+def _ensure_model_configured() -> bool:
+    """Full check used by the one-shot CLI path: profile resolves AND the
+    client actually builds. Worth doing eagerly here — a one-shot run is
+    about to need the client immediately, so there's no "meanwhile" for a
+    background warm to hide behind (see _ensure_model_configured_fast for
+    the TUI's non-blocking equivalent)."""
+    if not _ensure_model_configured_fast():
+        return False
+    from wells import providers
+
     try:
         providers.get_chat_model(config.ACTIVE_PROFILE)
         return True

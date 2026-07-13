@@ -1345,8 +1345,11 @@ class WellsApp(App[None]):
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
+        from wells.main import _startup_mark
+        _startup_mark("on_mount: entered")
         from wells import safety
         from wells.cli import _REPL_STATE
+        _startup_mark("on_mount: safety/cli imports done")
 
         self._log: RichLog = self.query_one("#output", RichLog)
         self._live: Static = self.query_one("#live", Static)
@@ -1380,6 +1383,7 @@ class WellsApp(App[None]):
         safety.set_approver(self._tui_approver)
 
         self._history = self._history_load()
+        _startup_mark("on_mount: rules seed + history load done")
 
         # Build the LangGraph in the background — it's only needed for
         # orchestrate runs, and building it on the event loop delays first paint.
@@ -1397,6 +1401,7 @@ class WellsApp(App[None]):
         }
 
         self._print_welcome()
+        _startup_mark("on_mount: welcome printed")
         if self._resume_context:
             self.write_log(
                 "[dim]Session context loaded — next task continues from previous session.[/dim]"
@@ -1405,6 +1410,7 @@ class WellsApp(App[None]):
         self._ensure_repo_index()
         self._connect_mcp_servers()
         self._input.focus()
+        _startup_mark("on_mount: DONE (index/mcp backgrounded, input focused)")
 
     def on_unmount(self) -> None:
         CONTROL.set_listener(None)
@@ -2402,15 +2408,29 @@ class WellsApp(App[None]):
 
 def run_tui(resume_context: str | None = None) -> None:
     """Launch the Textual TUI. Called by run_repl()."""
+    from wells.main import _startup_mark
+    _startup_mark("run_tui: entered (wells.tui module import cost included)")
+
     try:
         from wells import setup
         setup.first_run_setup()
     except Exception:
         pass
+    _startup_mark("run_tui: first_run_setup done")
 
-    from wells.main import _ensure_model_configured
-    if not _ensure_model_configured():
+    from wells.main import _ensure_model_configured_fast, warm_chat_model
+    if not _ensure_model_configured_fast():
         return
+    _startup_mark("run_tui: _ensure_model_configured_fast done")
+
+    # The real client build (import langchain_openai + construct SSL-verified
+    # httpx clients + pydantic model init) measured ~5s and used to run here,
+    # synchronously, before the TUI could paint anything. Warm it in the
+    # background instead — by the time the user finishes reading the welcome
+    # banner and types something, the cache is usually already populated.
+    threading.Thread(
+        target=warm_chat_model, name="wells-model-warm", daemon=True
+    ).start()
 
     try:
         WellsApp(resume_context=resume_context).run(mouse=True)
