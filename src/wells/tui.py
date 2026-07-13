@@ -452,6 +452,16 @@ class PromptInput(TextArea):
 
     Up on the first line / Down on the last line scroll the prompt history
     (handled by the app via :class:`HistoryScroll`).
+
+    A genuine bracketed paste (terminal wraps the paste in ESC[200~...ESC[201~)
+    never reaches here at all — Textual delivers it as one ``events.Paste``
+    handled by TextArea's own ``_on_paste``, newlines included, no submit.
+    This only matters when bracketed paste ISN'T available (some terminals,
+    some paste methods like a right-click context menu) and the terminal
+    falls back to feeding the pasted text in as a raw keystroke stream —
+    then every embedded newline arrives here as an ordinary "enter" key and
+    would otherwise submit a partial line on the spot, firing off one
+    truncated message per line instead of one multi-line message.
     """
 
     class Submitted(Message):
@@ -464,14 +474,38 @@ class PromptInput(TextArea):
             self.direction = direction  # -1 older, +1 newer
             super().__init__()
 
+    # Keystrokes this close together are almost certainly a machine feeding
+    # them (paste-as-keys), not a human physically pressing keys — even fast
+    # typists don't sustain sub-20ms intervals.
+    _PASTE_BURST_GAP = 0.02
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_key_at = 0.0
+        self._burst_len = 0  # consecutive keystrokes faster than _PASTE_BURST_GAP
+
     async def _on_key(self, event) -> None:
         key = event.key
+        now = _time.monotonic()
+        gap = now - self._last_key_at
+        self._last_key_at = now
+        in_burst = self._burst_len >= 2  # a real paste-as-keys run, not one stray fast pair
 
         if key == "enter":
+            if gap < self._PASTE_BURST_GAP and in_burst:
+                # Mid-burst newline: this is a pasted line break, not the
+                # user pressing Enter to submit — treat it like Shift+Enter.
+                event.stop()
+                event.prevent_default()
+                self.insert("\n")
+                return
+            self._burst_len = 0
             event.stop()
             event.prevent_default()
             self.post_message(self.Submitted(self.text))
             return
+
+        self._burst_len = self._burst_len + 1 if gap < self._PASTE_BURST_GAP else 0
 
         if key in ("shift+enter", "ctrl+j"):
             event.stop()
