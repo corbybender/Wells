@@ -1487,6 +1487,13 @@ class WellsApp(App[None]):
             f"[dim]Workspace:[/dim] [bold]{config.WORKSPACE_ROOT}[/bold]"
             f"  [dim](safety: {config.HARNESS_SAFETY})[/dim]"
         )
+        if getattr(config, "WORKSPACE_ROOT_INVALID", ""):
+            self.write_log(
+                f"[bold red]⚠ Configured WORKSPACE_ROOT does not exist:[/bold red] "
+                f"{config.WORKSPACE_ROOT_INVALID}\n"
+                f"[yellow]Falling back to the directory above. Fix it with "
+                f"/working-dir <path> or edit WORKSPACE_ROOT in .env.[/yellow]"
+            )
         self.write_log(
             "Ask anything — questions, edits, tasks. "
             "Use [bold]/orchestrate[/bold] for complex multi-component work. "

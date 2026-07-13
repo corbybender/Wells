@@ -125,6 +125,12 @@ def _run_goal(goal: str, *, resume_context: str | None = None) -> None:
 
     print(f"Model: {config.model_name_for_task('coding')}")
     print(f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})")
+    if config.WORKSPACE_ROOT_INVALID:
+        print(
+            f"WARNING: configured WORKSPACE_ROOT does not exist: "
+            f"{config.WORKSPACE_ROOT_INVALID} — falling back to the directory "
+            f"above. Fix WORKSPACE_ROOT in .env (or pass --workspace)."
+        )
     if config.PLAN_MODE:
         print("Plan mode: ON (coder will plan edits without applying them)")
     print(f"Max coder<->reviewer iterations: {config.MAX_ITERATIONS}")

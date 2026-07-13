@@ -138,6 +138,17 @@ def _run_shell(command: str, cwd: str, timeout: float) -> subprocess.CompletedPr
 
     On Linux/macOS: use shell=True (bash/sh) as before.
     """
+    # subprocess raises an opaque WinError 267 / FileNotFoundError when cwd
+    # doesn't exist — return an actionable failure the model can relay instead.
+    if not os.path.isdir(cwd):
+        return subprocess.CompletedProcess(
+            args=command, returncode=1, stdout="",
+            stderr=(
+                f"[harness] workspace directory does not exist: {cwd!r}. "
+                "No command can run. Ask the user to fix it with "
+                "/working-dir <path> (or correct WORKSPACE_ROOT in .env)."
+            ),
+        )
     env = _subprocess_env()
     if _ON_WINDOWS and _PWSH:
         return subprocess.run(

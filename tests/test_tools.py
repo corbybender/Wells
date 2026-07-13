@@ -262,3 +262,30 @@ def test_langchain_tool_schemas_well_formed():
         assert "name" in s["function"]
         assert "parameters" in s["function"]
         assert s["function"]["parameters"]["type"] == "object"
+
+
+# ---------------------------------------------------------------------------
+# Workspace validity (a bad cwd used to raise WinError 267 on every command)
+# ---------------------------------------------------------------------------
+
+
+def test_run_shell_nonexistent_cwd_returns_actionable_error():
+    proc = tools._run_shell("echo hi", cwd="Z:/does/not/exist-anywhere", timeout=5)
+    assert proc.returncode == 1
+    assert "workspace directory does not exist" in proc.stderr
+    assert "/working-dir" in proc.stderr
+
+
+def test_config_falls_back_when_workspace_root_invalid(monkeypatch):
+    import importlib
+
+    from wells import config as config_mod
+
+    monkeypatch.setenv("WORKSPACE_ROOT", "Z:/does/not/exist-anywhere")
+    importlib.reload(config_mod)
+    try:
+        assert config_mod.WORKSPACE_ROOT_INVALID == "Z:/does/not/exist-anywhere"
+        assert config_mod.WORKSPACE_ROOT == __import__("os").getcwd()
+    finally:
+        monkeypatch.delenv("WORKSPACE_ROOT")
+        importlib.reload(config_mod)
