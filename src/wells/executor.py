@@ -1116,6 +1116,16 @@ def run_executor(
                 name=name, ok=result.ok, simulated=result.simulated,
             )
 
+            # Full, untruncated record of what the model actually saw — the
+            # TUI/CLI only ever print a one-line summary per round, so this is
+            # the only place a user can go read the real command output/error
+            # after the fact. See the /log slash command.
+            try:
+                from wells import logger as _logger
+                _logger.log_tool_result(name, args, result.ok, obs_text)
+            except Exception:
+                pass
+
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
             )
