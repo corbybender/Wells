@@ -161,6 +161,14 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "cooperative checkpoint like Escape does. Works even mid-approval-"
         "prompt. Use when Escape doesn't feel fast enough.",
     ),
+    (
+        "/log",
+        "View full tool-call output",
+        "Usage: /log [N|path|clear]. Shows the last N (default 10) tool calls "
+        "with their FULL, untruncated output/error — the on-screen activity "
+        "line only ever shows a one-line summary. /log path prints the log "
+        "file location; /log clear deletes it.",
+    ),
 ]
 
 
@@ -248,6 +256,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_rules(arg)
     elif cmd == "/skills":
         _handle_skills(arg)
+    elif cmd == "/log":
+        _handle_log(arg)
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         console.print("[dim]Type / for a list of commands.[/dim]")
@@ -1191,6 +1201,37 @@ def _pinned_context_block() -> str:
             f"consider /drop for files you no longer need.[/yellow]"
         )
     return "\n".join(parts) + "\n"
+
+
+def _handle_log(arg: str) -> None:
+    """Show recent full tool-call output — the on-screen log only ever prints
+    a one-line summary per round, so this is how to see what a failed command
+    actually printed (full stdout/stderr, not just the first line)."""
+    from wells import logger as _logger
+
+    arg = (arg or "").strip().lower()
+    if arg == "path":
+        console.print(f"[dim]{_logger.tool_log_path()}[/dim]")
+        return
+    if arg == "clear":
+        try:
+            Path(_logger.tool_log_path()).unlink(missing_ok=True)
+            console.print("[green]Tool log cleared.[/green]")
+        except Exception as e:
+            console.print(f"[red]Could not clear log: {e}[/red]")
+        return
+
+    n = int(arg) if arg.isdigit() else 10
+    entries = _logger.tail_tool_log(n)
+    if not entries:
+        console.print("[dim]No tool calls logged yet this run.[/dim]")
+        return
+
+    console.print(f"[dim]Last {len(entries)} tool call(s) — full log: "
+                  f"{_logger.tool_log_path()}[/dim]\n")
+    for e in entries:
+        console.print(e)
+        console.print()
 
 
 def _handle_doctor() -> None:
