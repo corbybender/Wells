@@ -209,6 +209,18 @@ def test_run_command_failure_shows_output_to_model(ctx: tools.ToolContext):
     assert "exit 1" in text
 
 
+def test_run_command_not_found_gets_recovery_hint(ctx: tools.ToolContext):
+    # A missing executable (pip not on PATH is the real-world case this
+    # traces back to) should come back with an actionable hint instead of
+    # leaving the model to guess why the shell rejected the command.
+    r = tools.dispatch(
+        "run_command", {"command": "definitely_not_a_real_command_xyz123"}, ctx
+    )
+    assert not r.ok
+    text = r.to_model_text()
+    assert "[HINT:" in text
+
+
 @pytest.mark.parametrize("cmd", ["rm -rf /", "rm -rf /home", "mkfs.ext4 /dev/sda"])
 def test_blocked_commands_refused(ctx: tools.ToolContext, cmd: str):
     r = tools.dispatch("run_command", {"command": cmd}, ctx)
