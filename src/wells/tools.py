@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from wells import safety
+from wells import recovery_hints, safety
 from wells.compress import compress_output
 
 
@@ -638,30 +638,16 @@ def _run_command(ctx: ToolContext, command: str) -> ToolResult:
     if proc.stderr:
         combined += ("\n" if combined else "") + f"[stderr]\n{proc.stderr}"
     combined = combined or "(no output)"
-    # Deterministic recovery hint for "executable not found" — exit 127 on
-    # POSIX shells, or the Windows cmd/PowerShell equivalent message. Small
-    # models in particular tend to abandon the shell entirely on this error
-    # instead of trying the obvious fix, so spell it out instead of leaving
-    # it to model reasoning (same pattern as the SSL/cert rule in the system
-    # prompt).
-    # "command not found" (bash/sh), "is not recognized..." covers both
-    # cmd.exe ("'x' is not recognized as an internal or external command")
-    # and PowerShell ("The term 'x' is not recognized as the name of a
-    # cmdlet, function, script file, or operable program").
-    not_found = proc.returncode == 127 or any(
-        s in (proc.stderr or "").lower()
-        for s in ("command not found", "is not recognized")
-    )
-    if not_found:
-        combined += (
-            "\n\n[HINT: the shell could not find that executable on PATH. "
-            "Common fixes: use the versioned form (pip3/python3 instead of "
-            "pip/python), invoke it as a module of an interpreter that IS on "
-            "PATH (e.g. `python3 -m pip install ...`), or run "
-            "`command -v <name>` / `which <name>` (POSIX) or `where <name>` "
-            "(Windows) to check what's actually available before assuming "
-            "it isn't installed at all.]"
-        )
+    # Deterministic recovery hints for known failure signatures — small
+    # models in particular tend to abandon a whole approach after one
+    # unfamiliar error instead of trying the obvious mechanical fix, so
+    # spell it out instead of leaving it to model reasoning (same pattern as
+    # the SSL/cert rule in the system prompt). See recovery_hints.py for the
+    # growing list — add new entries there, not inline here.
+    if proc.returncode != 0:
+        hint = recovery_hints.hint_for(combined, proc.returncode)
+        if hint:
+            combined += f"\n\n[HINT: {hint}]"
     combined = f"$ {command}\n[exit {proc.returncode}]\n{combined}"
     return ToolResult(
         proc.returncode == 0,
