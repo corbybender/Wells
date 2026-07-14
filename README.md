@@ -146,20 +146,27 @@ Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.12.
 
 ### Option A — Cloned standalone (no install needed)
 
-After `git clone`, use the launcher script at the repo root. It handles the
-venv automatically — no `cd`, no `uv run`, no install step:
+After `git clone`, run the one-time setup script for your OS. It puts the
+`wells` command on your PATH — no package build, no PyPI, works the same on
+Mac, Linux, and Windows:
 
 ```bash
 git clone https://github.com/corbybender/Wells.git
 cd Wells
 
-./wells config          # first run: set up your provider
-./wells info            # show effective configuration
-./wells                 # open the TUI
-./wells "your goal"     # run the harness single-shot on THIS repo
+./install.sh             # Mac/Linux — or install.ps1 on Windows (PowerShell)
+# open a new terminal, then:
+
+wells config              # first run: set up your provider
+wells info                 # show effective configuration
+wells                      # open the TUI
+wells "your goal"          # run the harness single-shot on THIS repo
 ```
 
-Windows: use `wells.bat` instead of `./wells`.
+`wells` itself still handles the venv/deps automatically on every run — the
+installer only wires up the command name. You can also skip the installer
+and call the launcher directly: `./wells` (Mac/Linux) or `wells.bat`
+(Windows).
 
 ### Option B — Drive a DIFFERENT project (embedding)
 
