@@ -273,7 +273,14 @@ class ToolResult:
     def to_model_text(self, *, compress: bool = True) -> str:
         """Render as compact text for the model (optionally compressed)."""
         prefix = "[DRY-RUN] " if self.simulated else ("[ERROR] " if not self.ok else "")
-        body = self.error if not self.ok and self.error else self.output
+        # Prefer output: for run_command/run_tests it's the full "$ cmd /
+        # [exit N] / stdout+stderr" transcript, and error is just a terse
+        # "exit N" label that duplicates the exit code already in output.
+        # Falling back to error (the old behavior) hid that whole transcript
+        # on any nonzero exit, leaving the model with nothing to diagnose —
+        # e.g. `pip list | grep x` returning no match (exit 1, not a real
+        # error) showed only "[ERROR] exit 1" with no command, no output.
+        body = self.output or self.error
         if compress and len(body.splitlines()) > 40:
             body = compress_output(body)
         return f"{prefix}{body}"

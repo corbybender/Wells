@@ -193,6 +193,22 @@ def test_run_command_echo(ctx: tools.ToolContext):
     assert "hello123" in r.output
 
 
+def test_run_command_failure_shows_output_to_model(ctx: tools.ToolContext):
+    # A nonzero exit must not hide the command's actual output behind a bare
+    # "[ERROR] exit N" — the model needs the transcript to diagnose why it
+    # failed (this is what silently starved the model of context and drove
+    # it into a stuck list_dir loop after `pip list | grep x` found nothing).
+    r = tools.dispatch(
+        "run_command",
+        {"command": 'python -c "print(\'diagnostic-output-123\'); exit(1)"'},
+        ctx,
+    )
+    assert not r.ok
+    text = r.to_model_text()
+    assert "diagnostic-output-123" in text
+    assert "exit 1" in text
+
+
 @pytest.mark.parametrize("cmd", ["rm -rf /", "rm -rf /home", "mkfs.ext4 /dev/sda"])
 def test_blocked_commands_refused(ctx: tools.ToolContext, cmd: str):
     r = tools.dispatch("run_command", {"command": cmd}, ctx)
