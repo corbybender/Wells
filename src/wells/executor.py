@@ -133,7 +133,7 @@ class ExecutorResult:
     tool_calls: list[dict] = field(
         default_factory=list
     )  # [{name, args, ok, output_preview}]
-    stopped_reason: str = "done"  # done | max_steps | error | cancelled | budget
+    stopped_reason: str = "done"  # done | max_steps | error | cancelled | budget | stuck_loop
     messages: list[BaseMessage] = field(default_factory=list)
     # True when the final answer was already streamed to the console live
     # (callers should not print result.summary again).
@@ -796,6 +796,8 @@ def run_executor(
     total_saved = 0
     _read_ranges: dict[str, list[tuple[int, int]]] = {}  # path → [(offset, end), ...]
     _fail_patterns: dict[str, int] = {}                  # command prefix → fail count
+    _last_call_key: str | None = None                    # name+args of the previous call
+    _last_call_repeat = 0                                 # consecutive repeats of that call
 
     def _stopped(reason: str, summary: str) -> ExecutorResult:
         return ExecutorResult(
@@ -890,7 +892,7 @@ def run_executor(
         elif calls and not llm_text:
             # No narrative text — at least show the round number so the user
             # knows progress is being made.
-            _ui("round", f"\n[dim]Round {rounds}  (step {steps + 1}/{cap})[/dim]")
+            _ui("round", f"\n[dim]Round {rounds}  (step {steps + 1}/{cap_s})[/dim]")
 
         if not calls:
             # No tool calls = final answer.
@@ -923,6 +925,18 @@ def run_executor(
                 continue
 
             _tool_meta[tcid] = (name, args)
+
+            # ── Repeat-call tracking (feeds the stuck-loop backstop below) ──
+            # Unlike _fail_patterns (which only counts *failed* shell commands),
+            # this catches a model calling the same tool with the same args
+            # over and over even when each call *succeeds* — e.g. re-listing
+            # the same directory round after round without making progress.
+            call_key = f"{name}:{json.dumps(args, sort_keys=True, default=str)}"
+            if call_key == _last_call_key:
+                _last_call_repeat += 1
+            else:
+                _last_call_key = call_key
+                _last_call_repeat = 1
 
             # ── Rules gate: deterministic enforcement before execution ─────
             rule_notes: list[str] = []
@@ -973,6 +987,24 @@ def run_executor(
             if CONTROL.cancelled():
                 return _stopped("cancelled", "(cancelled by user)")
             obs_text = result.to_model_text()
+
+            # ── Stuck-loop warning ───────────────────────────────────────────
+            # Unlike _fail_patterns below (which only fires on *failed* shell
+            # commands), this catches a tool call that keeps succeeding with
+            # identical arguments but never moves the task forward — e.g.
+            # re-listing the same directory round after round. Warn at 3
+            # repeats; the hard stop below fires at 6 if the warning is ignored.
+            if _last_call_repeat == 3:
+                obs_text = obs_text + (
+                    f"\n\n[HARNESS: You have called {name} with identical "
+                    f"arguments {_last_call_repeat} times in a row. Repeating "
+                    f"it again will not produce new information — change your "
+                    f"approach or report what is blocking you.]"
+                )
+                _ui("warn", f"  [bold yellow]⚠ {name} repeated "
+                            f"{_last_call_repeat}× with identical args — model "
+                            f"told to change approach[/bold yellow]")
+
             if rules_engine is not None and decision is not None:
                 # Liability transitions apply only after the command actually
                 # ran (a failed `vastai create` starts nothing).
@@ -1087,6 +1119,23 @@ def run_executor(
             messages.append(
                 _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
             )
+
+            # ── Stuck-loop hard stop ─────────────────────────────────────────
+            # The warning above gives the model a chance to course-correct; if
+            # it's ignored, force the run to end instead of looping forever.
+            # This is the real backstop the module docstring promises — with
+            # MAX_TOOL_STEPS and MAX_RUN_TOKENS both defaulting to 0
+            # (unlimited), nothing else stops a model that keeps calling the
+            # same read-only tool with the same args.
+            if _last_call_repeat >= 6:
+                _ui("warn", f"  [bold red]⛔ stuck loop — {name} repeated "
+                            f"{_last_call_repeat}× with identical args, "
+                            f"stopping the run[/bold red]")
+                return _stopped(
+                    "stuck_loop",
+                    f"(stopped: {name} was called with identical arguments "
+                    f"{_last_call_repeat} times in a row with no progress)",
+                )
 
         if cap and steps >= cap:
             # One final round: apply full context pipeline then ask for summary.

@@ -175,6 +175,27 @@ def test_loop_hits_step_cap(ctx: tools.ToolContext):
     assert result.steps_taken == 3
 
 
+def test_loop_detects_stuck_repeat(ctx: tools.ToolContext):
+    LEDGER.reset()
+    # Same tool, same args, every round, and every call succeeds — no step
+    # cap and no failing command, so nothing else in the harness would ever
+    # stop this. The stuck-loop backstop should kick in after 6 repeats.
+    repeat = AIMessage(
+        content='<tool_call>{"name": "list_dir", "args": {"path": "."}}</tool_call>'
+    )
+    script = [repeat] * 10
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(
+            task="loop forever", ctx=ctx, max_steps=0, step_label="t"
+        )
+    assert result.stopped_reason == "stuck_loop"
+    assert result.steps_taken == 6
+    assert all(c["name"] == "list_dir" for c in result.tool_calls)
+
+
 def test_loop_handles_invoke_error(ctx: tools.ToolContext):
     LEDGER.reset()
 
@@ -286,10 +307,16 @@ def test_cap_zero_means_no_limit(ctx: tools.ToolContext):
 
     LEDGER.reset()
     CONTROL.reset()
-    repeat = AIMessage(
-        content='<tool_call>{"name": "list_dir", "args": {}}</tool_call>'
-    )
-    script = [repeat] * 70 + [AIMessage(content="done at last")]
+    # Distinct args each round (not a plain repeat) so this exercises the step
+    # cap only, not the stuck-loop repeat backstop (see
+    # test_loop_detects_stuck_repeat) below.
+    calls = [
+        AIMessage(
+            content=f'<tool_call>{{"name": "list_dir", "args": {{"path": "d{i}"}}}}</tool_call>'
+        )
+        for i in range(70)
+    ]
+    script = calls + [AIMessage(content="done at last")]
     with (
         patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
         patch.object(executor, "_try_bind_tools", return_value=None),

@@ -549,6 +549,22 @@ def _format_stop_banner(
             "[dim]  • Or just type a new message — the partial state will be ignored.[/dim]"
         )
 
+    elif reason == "stuck_loop":
+        lines.append(
+            "[bold red]⚠ Stuck loop detected — the agent kept calling the same "
+            "tool with identical arguments and wasn't making progress, so I "
+            "stopped it.[/bold red]"
+        )
+        lines.append("[dim]What you can do:[/dim]")
+        lines.append(
+            "[dim]  • Press [bold]Enter[/bold] (or say \"continue\") to try "
+            "again — prior progress is kept in session memory;[/dim]"
+        )
+        lines.append(
+            "[dim]  • Or rephrase the goal — the repeated call is usually a "
+            "sign the model got confused about what to do next.[/dim]"
+        )
+
     elif reason == "error":
         lines.append(
             "[bold red]✗ Run stopped due to an error.[/bold red]"
@@ -731,9 +747,9 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
             budget_used=total,
             error=result.summary if result.stopped_reason == "error" else "",
         )
-        # max_steps, budget, and cancelled all leave resumable state on the
-        # table; "error" and "done" do not.
-        resumable = result.stopped_reason in ("max_steps", "budget", "cancelled")
+        # max_steps, budget, cancelled, and stuck_loop all leave resumable
+        # state on the table; "error" and "done" do not.
+        resumable = result.stopped_reason in ("max_steps", "budget", "cancelled", "stuck_loop")
         _set_suggest_continue(printed and resumable)
 
         # A run with an undischarged liability (e.g. a still-running rented
