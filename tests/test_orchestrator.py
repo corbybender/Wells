@@ -71,8 +71,76 @@ def test_route_after_review():
     )
 
 
+def test_route_after_review_finalizes_on_reviewer_error():
+    """A reviewer that couldn't run (LLM/tool error, e.g. an expired API key)
+    must not be looped against forever with max_iterations=0 (unlimited) —
+    that's an infra failure, not real INCOMPLETE feedback."""
+    state = {
+        "review_complete": False, "review_error": True,
+        "iteration": 1, "max_iterations": 0,
+    }
+    assert _route_after_review(state) == "finalize"
+
+
 def test_graph_compiles_with_conditional_edges():
     assert build_graph() is not None
+
+
+# ---------------------------------------------------------------------------
+# Reviewer: infra failure vs. genuine INCOMPLETE
+# ---------------------------------------------------------------------------
+
+
+def test_reviewer_reports_infra_error_not_fabricated_incomplete(tmp_path: Path, monkeypatch):
+    """Reproduces the live bug: the reviewer's own LLM call failed (401 from
+    an expired/misconfigured API key). The old code parsed "INCOMPLETE" out
+    of the raw exception text (which happens not to contain that word, so it
+    silently defaulted to INCOMPLETE) and the graph looped the coder against
+    feedback that was never real. The reviewer must flag this distinctly."""
+    from wells.agents import reviewer as reviewer_mod
+    from wells.executor import ExecutorResult
+
+    def fake_run_executor(**kwargs):
+        return ExecutorResult(
+            summary="[executor error: AuthenticationError: Error code: 401 - "
+                    "token expired or incorrect]",
+            steps_taken=0,
+            tool_calls=[],
+            stopped_reason="error",
+            messages=[],
+        )
+
+    monkeypatch.setattr(reviewer_mod, "run_executor", fake_run_executor)
+    result = reviewer_mod.reviewer({
+        "goal": "write tree.py", "workspace_root": str(tmp_path), "safety": "auto",
+    })
+    assert result["review_error"] is True
+    assert result["review_complete"] is False
+    assert "401" in result["review_result"]
+
+
+def test_reviewer_genuine_incomplete_not_flagged_as_error(tmp_path: Path, monkeypatch):
+    """A real review that ran successfully and judged the work incomplete
+    must NOT be flagged as review_error — only actual infra failure should
+    short-circuit the coder<->reviewer loop."""
+    from wells.agents import reviewer as reviewer_mod
+    from wells.executor import ExecutorResult
+
+    def fake_run_executor(**kwargs):
+        return ExecutorResult(
+            summary="DECISION: INCOMPLETE\n\nThe function is missing type hints.",
+            steps_taken=3,
+            tool_calls=[],
+            stopped_reason="done",
+            messages=[],
+        )
+
+    monkeypatch.setattr(reviewer_mod, "run_executor", fake_run_executor)
+    result = reviewer_mod.reviewer({
+        "goal": "write tree.py", "workspace_root": str(tmp_path), "safety": "auto",
+    })
+    assert result["review_error"] is False
+    assert result["review_complete"] is False
 
 
 # ---------------------------------------------------------------------------
