@@ -81,6 +81,15 @@ def _route_after_review(state: AgentState) -> str:
     if state.get("review_complete"):
         return "finalize"
 
+    if state.get("review_error"):
+        # The reviewer's own LLM call failed — this isn't feedback, it's an
+        # infra failure. Looping the coder against it (possibly forever,
+        # with max_iterations=0) burns cycles "fixing" a review that never
+        # happened. Stop now instead of pretending this was a real verdict.
+        print("[graph] reviewer could not run (LLM/tool error) -> "
+              "finalizing instead of looping on a broken review.")
+        return "finalize"
+
     iteration = state.get("iteration", 0)
     cap = state.get("max_iterations", MAX_ITERATIONS)
     if cap and iteration >= cap:  # cap 0 = no limit

@@ -1017,6 +1017,13 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
             task_reason = "budget"
         elif agent_state.get("review_complete"):
             task_reason = "done"
+        elif agent_state.get("review_error"):
+            # The reviewer's own LLM call failed (bad key, provider outage,
+            # ...) — this was never a real INCOMPLETE verdict. Say so plainly
+            # instead of leaving the generic INCOMPLETE summary as the only
+            # takeaway, which reads as "the reviewer disagreed" when actually
+            # no review happened at all.
+            task_reason = "error"
         elif max_iter and iterations >= max_iter:
             task_reason = "max_iterations"
         else:
@@ -1029,6 +1036,7 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
             budget_used=total,
             iterations=iterations,
             max_iter=max_iter or None,
+            error=agent_state.get("review_result", "") if task_reason == "error" else "",
         )
         # Budget and iteration caps both leave the task partially done and
         # resumable; a clean review_complete does not.

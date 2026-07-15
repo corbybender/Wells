@@ -90,6 +90,19 @@ def reviewer(state: dict) -> dict:
         profile=_config.cheap_profile_name() if _config.CHEAP_VERIFY else None,
     )
 
+    if result.stopped_reason == "error":
+        # The reviewer never actually ran a review — its own LLM call failed
+        # (bad API key, provider outage, ...). Parsing "INCOMPLETE" out of an
+        # exception message would silently fabricate feedback the model never
+        # gave, and would send the graph back to the coder to "fix" a review
+        # that never happened. Surface this as infrastructure failure instead.
+        print(f"[reviewer] ✗ could not run — {result.summary}")
+        return {
+            "review_result": result.summary,
+            "review_complete": False,
+            "review_error": True,
+        }
+
     text = result.summary
     complete = _parse_decision(text)
     print(
@@ -97,4 +110,4 @@ def reviewer(state: dict) -> dict:
         f"({result.steps_taken} verify steps)"
     )
 
-    return {"review_result": text, "review_complete": complete}
+    return {"review_result": text, "review_complete": complete, "review_error": False}

@@ -57,7 +57,12 @@ def _print_final_summary(state: dict) -> None:
     complete = state.get("review_complete", False)
     iterations = state.get("iteration", 0)
     max_iter = state.get("max_iterations", config.MAX_ITERATIONS)
-    status = "COMPLETE" if complete else f"INCOMPLETE (stopped after {iterations}/{max_iter} iterations)"
+    if state.get("review_error"):
+        # The reviewer's own LLM call failed — this was never a real verdict,
+        # so don't report it as if the reviewer judged the work and disagreed.
+        status = "ERROR (reviewer could not run — see notes below, check API key/connectivity)"
+    else:
+        status = "COMPLETE" if complete else f"INCOMPLETE (stopped after {iterations}/{max_iter} iterations)"
 
     bar = "=" * 70
     print(f"\n{bar}")
