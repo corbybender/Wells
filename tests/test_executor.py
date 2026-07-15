@@ -73,6 +73,33 @@ def test_parse_malformed_skipped():
     assert "_parse_error" in calls[0]
 
 
+def test_parse_bare_json_call_no_wrapper():
+    # This is the exact payload observed from qwen2.5-coder:7b via Ollama:
+    # the model calls the tool correctly using its own trained format, with
+    # no <tool_call> wrapper and no native tool_calls field populated.
+    text = '{"name": "write_file", "arguments": {"path": "hello.txt", "content": "hello world"}}'
+    calls = executor.parse_text_tool_calls(text)
+    assert calls == [{"name": "write_file", "args": {"path": "hello.txt", "content": "hello world"}}]
+
+
+def test_parse_bare_json_call_in_fence():
+    text = '```json\n{"name": "list_dir", "arguments": {"path": "."}}\n```'
+    calls = executor.parse_text_tool_calls(text)
+    assert calls == [{"name": "list_dir", "args": {"path": "."}}]
+
+
+def test_parse_bare_json_ignores_plain_prose():
+    calls = executor.parse_text_tool_calls("Sure, I can help with that. Let me think it over.")
+    assert calls == []
+
+
+def test_parse_bare_json_ignores_unrelated_json():
+    # A JSON-shaped answer that isn't a tool call (no "name"/"arguments" tool
+    # call shape) must not be misread as one.
+    calls = executor.parse_text_tool_calls('{"result": 42, "ok": true}')
+    assert calls == []
+
+
 # ---------------------------------------------------------------------------
 # Call extraction (native vs text)
 # ---------------------------------------------------------------------------
@@ -245,6 +272,33 @@ def test_loop_nudges_stalled_model_then_recovers(ctx: tools.ToolContext, workspa
     ):
         result = executor.run_executor(
             task="fix add()", ctx=ctx, max_steps=6, step_label="t"
+        )
+    assert result.stopped_reason == "done"
+    assert result.steps_taken == 1
+    assert result.tool_calls[0]["name"] == "read_file"
+
+
+def test_loop_handles_bare_json_call_from_qwen_style_model(
+    ctx: tools.ToolContext, workspace: Path
+):
+    """Reproduces the live failure: qwen2.5-coder:7b via Ollama answers with
+    its native bare-JSON function-call format, un-wrapped, and Ollama never
+    populates the structured tool_calls field for this template. The old
+    parser (which only recognized <tool_call> tags) saw this as zero calls
+    and gave up with nothing done; it must now execute normally."""
+    LEDGER.reset()
+    script = [
+        AIMessage(
+            content='{"name": "read_file", "arguments": {"path": "maths.py"}}'
+        ),
+        AIMessage(content="Done."),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(
+            task="read maths.py", ctx=ctx, max_steps=6, step_label="t"
         )
     assert result.stopped_reason == "done"
     assert result.steps_taken == 1
