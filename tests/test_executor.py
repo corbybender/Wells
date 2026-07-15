@@ -363,6 +363,78 @@ def test_loop_salvages_unwrapped_code_block(ctx: tools.ToolContext, workspace: P
     assert "repository map" in written.read_text()
 
 
+def test_loop_refuses_completion_after_unaddressed_failure(
+    ctx: tools.ToolContext, workspace: Path
+):
+    """Reproduces the live failure: pip install fails, and instead of fixing
+    it or reporting the blocker, the model just writes an optimistic summary
+    ("you should now have X") as if it had worked. The harness must not
+    accept that as a real completion — it should push back once, giving the
+    model a chance to actually address the failure."""
+    LEDGER.reset()
+    script = [
+        AIMessage(content=(
+            '<tool_call>{"name": "run_command", '
+            '"args": {"command": "pip install tree-sitter"}}</tool_call>'
+        )),
+        AIMessage(content=(
+            "After executing the script, you should have a repository_map.json "
+            "file in your current directory. The task is complete."
+        )),
+        AIMessage(content=(
+            "You're right, the pip install failed because of the externally-"
+            "managed-environment restriction. I was unable to install the "
+            "dependency, so I can't complete this — please install tree-sitter "
+            "into the project venv manually."
+        )),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(tools, "dispatch", return_value=tools.ToolResult(
+            ok=False, output="", error="externally-managed-environment", simulated=False
+        )),
+    ):
+        result = executor.run_executor(
+            task="write tree.py", ctx=ctx, max_steps=6, step_label="t"
+        )
+    assert result.stopped_reason == "done"
+    # The optimistic non-acknowledging summary was rejected; the run only
+    # ended once the model actually acknowledged the failure as a blocker.
+    assert "unable to install" in result.summary
+
+
+def test_loop_accepts_immediate_honest_blocker_report(ctx: tools.ToolContext):
+    """A model that reports a failure as a blocker on its first wrap-up
+    (permitted by WORKING RULES #5) must NOT be forced to retry — only
+    silent, unacknowledged failure should be refused."""
+    LEDGER.reset()
+    script = [
+        AIMessage(content=(
+            '<tool_call>{"name": "run_command", '
+            '"args": {"command": "pip install tree-sitter"}}</tool_call>'
+        )),
+        AIMessage(content=(
+            "This failed because pip refuses global installs on this system "
+            "(externally-managed-environment). I can't proceed without it — "
+            "please install tree-sitter manually."
+        )),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(tools, "dispatch", return_value=tools.ToolResult(
+            ok=False, output="", error="externally-managed-environment", simulated=False
+        )),
+    ):
+        result = executor.run_executor(
+            task="write tree.py", ctx=ctx, max_steps=6, step_label="t"
+        )
+    assert result.stopped_reason == "done"
+    assert result.steps_taken == 1
+    assert "can't proceed" in result.summary
+
+
 def test_loop_gives_up_after_exhausting_stall_nudges(ctx: tools.ToolContext):
     """If the model never calls a tool despite repeated coaching, the harness
     stops rather than nudging forever."""
