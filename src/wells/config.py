@@ -109,9 +109,19 @@ LLM_BACKOFF_BASE: float = float(os.getenv("LLM_BACKOFF_BASE", "2.0"))
 # truncation that reads as the model "losing the thread". Ollama's native API
 # accepts a per-request context-size override that reloads the model at that
 # size; the OpenAI-compatible endpoint (what profiles normally talk to) has
-# no equivalent, so Wells fires one native warm-up call per (endpoint, model)
-# before first use. 0 disables this entirely.
-OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+# no equivalent, so Wells can fire one native warm-up call per (endpoint,
+# model) before first use.
+#
+# OFF by default (0) — measured live against a real 7B model on real Apple
+# Silicon hardware, the reload this triggers took ~294s (not the sub-minute
+# assumed when this was first wired up). That's a one-time cost per process,
+# not per round, but most `wells "<task>"` invocations are a single fresh
+# process — defaulting this on would silently tax every quick task with a
+# ~5 minute wait up front, which is worse than the truncation risk it fixes.
+# Opt in (e.g. OLLAMA_NUM_CTX=16384) for long/complex runs on a local model
+# where truncation is the bigger risk, ideally warmed once before a work
+# session rather than inline on a single task's critical path.
+OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "0"))
 
 # --- Token optimization configuration -------------------------------------
 BUDGET = TokenBudget(

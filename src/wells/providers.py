@@ -281,6 +281,13 @@ def warm_ollama_context(profile: ProviderProfile, *, num_ctx: int) -> None:
         root = root[: -len("/v1")]
     try:
         import httpx
+        # A context-size reload measured ~294s live against a real 7B model
+        # on Apple Silicon — a short timeout here would silently "fail" on
+        # every single call (never actually completing the reload it exists
+        # to trigger) while still paying most of the wait. Generous margin
+        # over the measured cost; this only runs when a caller has opted in
+        # (OLLAMA_NUM_CTX > 0), so a long worst-case wait is expected, not
+        # a surprise.
         httpx.post(
             f"{root}/api/chat",
             json={
@@ -289,7 +296,7 @@ def warm_ollama_context(profile: ProviderProfile, *, num_ctx: int) -> None:
                 "stream": False,
                 "options": {"num_ctx": num_ctx},
             },
-            timeout=60.0,
+            timeout=600.0,
         )
     except Exception:
         return
