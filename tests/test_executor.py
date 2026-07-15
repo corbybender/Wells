@@ -227,6 +227,46 @@ def test_loop_records_token_usage(ctx: tools.ToolContext):
     assert totals["input"] > 0
 
 
+def test_loop_nudges_stalled_model_then_recovers(ctx: tools.ToolContext, workspace: Path):
+    """A model that answers in prose with zero tool calls before taking any
+    real action (weak/local model ignoring the protocol) gets coached back
+    onto it instead of the run silently ending with nothing done."""
+    LEDGER.reset()
+    script = [
+        AIMessage(content="### Step 1: First install the grammar, then..."),
+        AIMessage(
+            content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'
+        ),
+        AIMessage(content="Done: read the file."),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(
+            task="fix add()", ctx=ctx, max_steps=6, step_label="t"
+        )
+    assert result.stopped_reason == "done"
+    assert result.steps_taken == 1
+    assert result.tool_calls[0]["name"] == "read_file"
+
+
+def test_loop_gives_up_after_exhausting_stall_nudges(ctx: tools.ToolContext):
+    """If the model never calls a tool despite repeated coaching, the harness
+    stops rather than nudging forever."""
+    LEDGER.reset()
+    prose = AIMessage(content="Here is how you would do it: step one, step two...")
+    script = [prose] * 10
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(config, "STALL_NUDGE_MAX", 2),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=6, step_label="t")
+    assert result.stopped_reason == "done"
+    assert result.steps_taken == 0
+
+
 def test_loop_plan_mode_simulates_writes(ctx: tools.ToolContext, workspace: Path):
     LEDGER.reset()
     ctx.plan_mode = True

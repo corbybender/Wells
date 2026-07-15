@@ -146,6 +146,14 @@ HARNESS_SAFETY: str = os.getenv("HARNESS_SAFETY", "auto").strip().lower() or "au
 # Max tool-call steps in a single executor run (0 = no limit).
 MAX_TOOL_STEPS: int = int(os.getenv("MAX_TOOL_STEPS", "0"))
 
+# How many times the executor will coach a stalled model (produced text but
+# zero tool calls, before it has taken any real action this run) back onto
+# the tool-calling protocol before giving up and treating it as a genuine
+# final answer. Guards weak/local models that ignore the protocol on the
+# first try without risking an infinite loop for models that legitimately
+# have nothing to do (e.g. answering a question, not a coding task).
+STALL_NUDGE_MAX: int = int(os.getenv("STALL_NUDGE_MAX", "2"))
+
 # Per-agent step caps (0 = no limit). Applied to the agentic planner, the
 # tester/reviewer verification loops, and spawned subagents.
 PLANNER_MAX_STEPS: int = int(os.getenv("PLANNER_MAX_STEPS", "0"))

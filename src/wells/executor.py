@@ -212,10 +212,18 @@ WORKING RULES:
 4. After each edit, verify (re-read the changed section, run tests/lint) then stop.
 5. If you cannot complete the task after reasonable effort, stop and explain the blocker.
 
-TOOL CALLING:
-- If your runtime exposes native tool/function calls, use them.
-- Otherwise, emit each call on its own line as: <tool_call>{{"name": "...", "args": {{...}}}}</tool_call>
-  and nothing else on that line. The harness will execute it and reply with the result.
+TOOL CALLING — MANDATORY:
+- You act ONLY by calling tools. Plain prose describing what you would do, could do, or
+  are about to do accomplishes NOTHING — the harness cannot execute a sentence. If the
+  task requires a file to exist, a command to run, or code to change, you MUST call a
+  tool; do not describe the steps instead of taking them.
+- Regardless of whether your runtime also supports native/structured function calls,
+  ALWAYS additionally emit each call on its own line as:
+  <tool_call>{{"name": "...", "args": {{...}}}}</tool_call>
+  and nothing else on that line. The harness parses this exact tag from your text on
+  every turn, independent of native tool-call support, so it works no matter what your
+  runtime does under the hood. Example, to create a file:
+  <tool_call>{{"name": "write_file", "args": {{"path": "example.py", "content": "print(1)\\n"}}}}</tool_call>
 - Batch related shell commands: chain multiple az/git/curl calls with semicolons in ONE
   run_command call rather than calling run_command once per command. This cuts round trips
   and token cost dramatically.
@@ -802,6 +810,7 @@ def run_executor(
     history: list[dict] = []
     steps = 0
     rounds = 0
+    stall_nudges = 0
     total_saved = 0
     _read_ranges: dict[str, list[tuple[int, int]]] = {}  # path → [(offset, end), ...]
     _fail_patterns: dict[str, int] = {}                  # command prefix → fail count
@@ -904,7 +913,31 @@ def run_executor(
             _ui("round", f"\n[dim]Round {rounds}  (step {steps + 1}/{cap_s})[/dim]")
 
         if not calls:
-            # No tool calls = final answer.
+            # Zero tool calls with zero real action taken so far this run is
+            # almost never a genuine finish for a task that requires changes —
+            # it's a model (usually a small/local one) that ignored the
+            # tool-calling protocol and answered like a plain chatbot instead.
+            # Coach it back onto the protocol a bounded number of times before
+            # accepting it as a real final answer, so weak models get a real
+            # shot at the task instead of silently producing nothing.
+            if steps == 0 and llm_text and stall_nudges < config.STALL_NUDGE_MAX:
+                stall_nudges += 1
+                _ui("warn", f"  [yellow]⚠ model produced text but no tool call "
+                            f"(attempt {stall_nudges}/{config.STALL_NUDGE_MAX}) — "
+                            f"nudging back onto the tool-calling protocol[/yellow]")
+                messages.append(HumanMessage(content=(
+                    "[HARNESS: You responded with text but called no tool. Describing "
+                    "steps does not perform them — nothing was written, run, or changed. "
+                    "If the task requires an action, take it now by emitting a line of "
+                    "the exact form: "
+                    '<tool_call>{"name": "<tool>", "args": {...}}</tool_call> '
+                    "and nothing else on that line. Do not restate a plan in prose — "
+                    "call the tool.]"
+                )))
+                continue
+            # Either the model has already taken real action this run (a
+            # normal wrap-up summary), or it exhausted its coaching budget —
+            # accept this as the final answer.
             if llm_text and not streamed_this_round:
                 _ui("round", "")  # blank line before final summary
             return ExecutorResult(
