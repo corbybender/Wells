@@ -251,6 +251,9 @@ TOOL CALLING — MANDATORY:
 
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(\{.*?\})\s*```", re.DOTALL)
+_LOOKS_LIKE_TOOL_CALL_RE = re.compile(
+    r'"name"\s*:\s*"[^"]+"\s*,\s*"(?:args|arguments)"\s*:'
+)
 
 
 def _as_call(obj: dict) -> dict | None:
@@ -258,6 +261,22 @@ def _as_call(obj: dict) -> dict | None:
     if not name or ("args" not in obj and "arguments" not in obj):
         return None
     return {"name": name, "args": obj.get("args") or obj.get("arguments") or {}}
+
+
+def _looks_like_tool_call_attempt(blob: str) -> bool:
+    """True when text has the shape of an attempted JSON tool call.
+
+    Used to distinguish "this is a malformed tool call — tell the model
+    what broke" from "this is unrelated JSON in prose — ignore it". A model
+    embedding real source code as a JSON string value commonly forgets to
+    escape an inner double quote (e.g. ``"utf8"`` inside Python code), which
+    breaks strict JSON parsing; that failure must not be treated the same as
+    "no call was attempted at all" (which is what silently continuing here
+    used to do — the caller would then fall through to code-block salvage
+    and could write the broken JSON wrapper itself to disk as if it were
+    the intended file content).
+    """
+    return bool(_LOOKS_LIKE_TOOL_CALL_RE.search(blob))
 
 
 def parse_text_tool_calls(text: str) -> list[dict]:
@@ -291,14 +310,22 @@ def parse_text_tool_calls(text: str) -> list[dict]:
     if calls:
         return calls
 
-    candidates = [text.strip()]
-    candidates += [m.group(1).strip() for m in _JSON_FENCE_RE.finditer(text)]
+    # Fenced extractions are tried before the raw whole text: the whole text
+    # always fails json.loads() when the reply has fence markers or leading
+    # prose around it, so trying it first would make every well-formed
+    # ```json call look like a parse failure before the clean extraction
+    # (which would actually parse) ever gets a turn.
+    candidates = [m.group(1).strip() for m in _JSON_FENCE_RE.finditer(text)]
+    candidates.append(text.strip())
+    best_failed_attempt: str | None = None
     for blob in candidates:
         if not blob:
             continue
         try:
             obj = json.loads(blob)
         except json.JSONDecodeError:
+            if best_failed_attempt is None and _looks_like_tool_call_attempt(blob):
+                best_failed_attempt = blob
             continue
         for item in (obj if isinstance(obj, list) else [obj]):
             if isinstance(item, dict):
@@ -306,7 +333,15 @@ def parse_text_tool_calls(text: str) -> list[dict]:
                 if call:
                     calls.append(call)
         if calls:
-            break
+            return calls
+    if best_failed_attempt is not None:
+        # A real attempt that failed to parse on every candidate — most
+        # commonly an unescaped quote from embedded source code. Report it
+        # as a parse error (like a malformed <tool_call> tag) instead of
+        # silently moving on, so the caller doesn't mistake "tried and
+        # failed" for "never tried" and salvage the broken JSON itself as
+        # if it were the intended file content.
+        calls.append({"_parse_error": best_failed_attempt})
     return calls
 
 
@@ -356,19 +391,27 @@ def _infer_target_filename(task: str) -> str | None:
 def _salvage_code_block(llm_text: str, filename: str) -> str | None:
     """Pull the file content out of the model's prose reply, if unambiguous.
 
-    Returns None (no salvage) when there's no fenced code, or when there are
+    Returns None (no salvage) when there's no fenced code, when there are
     multiple blocks and none can be confidently matched to ``filename`` by
-    its fence language tag — guessing wrong would silently write garbage.
+    its fence language tag (guessing wrong would silently write garbage), or
+    when the sole candidate block is itself a failed JSON tool-call attempt
+    (e.g. broken by an unescaped quote inside embedded source) rather than
+    plain source — writing that wrapper verbatim as "the file" is worse than
+    not writing anything; parse_text_tool_calls surfaces it as a parse error
+    instead so the model can see and fix its own mistake.
     """
     blocks = _FENCE_RE.findall(llm_text)
     if not blocks:
         return None
     if len(blocks) == 1:
-        return blocks[0][1]
+        body = blocks[0][1]
+        return None if _looks_like_tool_call_attempt(body) else body
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     wanted = _LANG_EXT_ALIASES.get(ext, {ext} if ext else set())
     matches = [body for lang, body in blocks if lang.lower() in wanted]
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) != 1:
+        return None
+    return None if _looks_like_tool_call_attempt(matches[0]) else matches[0]
 
 
 def _try_salvage_write(task: str, llm_text: str) -> tuple[str, str] | None:
@@ -1171,7 +1214,24 @@ def run_executor(
             tcid = call.get("id") or f"call_{steps}"
 
             if not name:
-                obs_text = "[error: malformed tool call — missing name]"
+                parse_err = call.get("_parse_error")
+                if parse_err:
+                    # Most common real-world cause: an inner double quote from
+                    # embedded source code (e.g. "utf8") wasn't escaped as \"
+                    # inside the JSON string value. Show the model its own
+                    # malformed blob so it can see and fix the actual mistake,
+                    # instead of a content-free "missing name" message that
+                    # gives it nothing to act on.
+                    obs_text = (
+                        "[error: tool call JSON failed to parse — most likely an "
+                        "unescaped \" character inside a string value (e.g. source "
+                        "code containing \"utf8\" must be written as \\\"utf8\\\" "
+                        "inside the JSON string). Your text was:\n"
+                        f"{parse_err[:1500]}\n"
+                        "Re-emit the call with correctly escaped JSON.]"
+                    )
+                else:
+                    obs_text = "[error: malformed tool call — missing name]"
                 history.append({"name": "?", "args": args, "ok": False,
                                 "output_preview": obs_text})
                 messages.append(

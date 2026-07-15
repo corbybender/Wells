@@ -100,6 +100,33 @@ def test_parse_bare_json_ignores_unrelated_json():
     assert calls == []
 
 
+def test_parse_bare_json_broken_by_unescaped_quote_reports_parse_error():
+    """Reproduces the live bug: qwen embedded Python source containing
+    `"utf8"` as a JSON string value without escaping the inner quotes,
+    breaking the JSON. The old code silently treated this as "no call at
+    all" (continue, no error), which let the executor fall through to
+    code-block salvage and write the broken JSON wrapper itself to disk as
+    if it were the file content. It must now be reported as a parse error."""
+    text = (
+        '```json\n{ "name": "write_file", "arguments": { "path": "tree.py", '
+        '"content": "tree.parse(bytes(source_code, "utf8"))" } }\n```'
+    )
+    calls = executor.parse_text_tool_calls(text)
+    assert len(calls) == 1
+    assert "_parse_error" in calls[0]
+    assert "utf8" in calls[0]["_parse_error"]
+
+
+def test_parse_bare_json_fenced_call_not_shadowed_by_raw_text_fallback():
+    """The raw whole-text candidate (which includes the ```json fence
+    markers and therefore always fails json.loads) must not shadow a
+    well-formed fenced call — it has to be tried, and succeed, before the
+    raw-text fallback is ever considered a "failed attempt"."""
+    text = '```json\n{"name": "list_dir", "arguments": {"path": "."}}\n```'
+    calls = executor.parse_text_tool_calls(text)
+    assert calls == [{"name": "list_dir", "args": {"path": "."}}]
+
+
 # ---------------------------------------------------------------------------
 # Call extraction (native vs text)
 # ---------------------------------------------------------------------------
@@ -328,6 +355,17 @@ def test_salvage_code_block_ambiguous_multi_block_returns_none():
     assert executor._salvage_code_block(text, "tree.py") == "print(1)\n"
     # A filename whose extension matches neither present fence -> ambiguous.
     assert executor._salvage_code_block(text, "notes.md") is None
+
+
+def test_salvage_code_block_refuses_failed_json_tool_call():
+    """A fenced block that's actually a broken JSON tool-call attempt (not
+    plain source) must never be salvaged as if it were the file content —
+    that would write the JSON wrapper itself to disk instead of the code."""
+    text = (
+        '```json\n{ "name": "write_file", "arguments": { "path": "tree.py", '
+        '"content": "tree.parse(bytes(source_code, "utf8"))" } }\n```'
+    )
+    assert executor._salvage_code_block(text, "tree.py") is None
 
 
 def test_loop_salvages_unwrapped_code_block(ctx: tools.ToolContext, workspace: Path):
