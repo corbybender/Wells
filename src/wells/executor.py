@@ -923,6 +923,7 @@ def run_executor(
     steps = 0
     rounds = 0
     stall_nudges = 0
+    failure_ack_nudges = 0
     total_saved = 0
     _read_ranges: dict[str, list[tuple[int, int]]] = {}  # path → [(offset, end), ...]
     _fail_patterns: dict[str, int] = {}                  # command prefix → fail count
@@ -1110,6 +1111,39 @@ def run_executor(
                     '<tool_call>{"name": "<tool>", "args": {...}}</tool_call> '
                     "and nothing else on that line. Do not restate a plan in prose — "
                     "call the tool.]"
+                )))
+                continue
+            # Verify before accepting completion: the model reporting text
+            # feeding the previous tool's error back into its context is not
+            # the same as the model actually resolving it. If its very last
+            # real action failed and it just moved straight to a wrap-up
+            # answer without another attempt or even mentioning the failure,
+            # that answer is describing an outcome that never happened —
+            # don't let the run end there. A model that explicitly reports
+            # the failure as a blocker (permitted by WORKING RULES #5) is
+            # left alone — only silent, unacknowledged failure is refused.
+            _ack_words = ("fail", "error", "unable", "cannot", "can't", "couldn't",
+                          "block", "issue", "problem", "did not", "didn't", "won't",
+                          "not able", "no module", "not found", "denied")
+            _acked_failure = any(w in (llm_text or "").lower() for w in _ack_words)
+            if (
+                history and not history[-1]["ok"] and not _acked_failure
+                and failure_ack_nudges < config.STALL_NUDGE_MAX
+            ):
+                failure_ack_nudges += 1
+                last = history[-1]
+                _ui("warn", f"  [yellow]⚠ run ending right after a failed "
+                            f"{last['name']} with no fix attempted (attempt "
+                            f"{failure_ack_nudges}/{config.STALL_NUDGE_MAX}) — "
+                            f"refusing to accept as complete[/yellow]")
+                messages.append(HumanMessage(content=(
+                    f"[HARNESS: Your last action ({last['name']}) failed:\n"
+                    f"{last['output_preview']}\n"
+                    f"Your reply did not fix this, retry a different approach, or "
+                    f"explicitly report it as a blocker — it just moved on as if "
+                    f"the task were done. It is not done while the failure stands "
+                    f"unaddressed. Either resolve it, try something else, or state "
+                    f"clearly that this is blocking completion and why.]"
                 )))
                 continue
             # Either the model has already taken real action this run (a
