@@ -251,6 +251,64 @@ def test_loop_nudges_stalled_model_then_recovers(ctx: tools.ToolContext, workspa
     assert result.tool_calls[0]["name"] == "read_file"
 
 
+def test_infer_target_filename_from_hint_phrase():
+    task = "Write a Python script ... and call it tree.py. It should look in..."
+    assert executor._infer_target_filename(task) == "tree.py"
+
+
+def test_infer_target_filename_bare_fallback():
+    task = "Refactor utils.py to split out the helpers"
+    assert executor._infer_target_filename(task) == "utils.py"
+
+
+def test_salvage_code_block_single_block():
+    text = "Here you go:\n```python\nprint('hi')\n```\n"
+    assert executor._salvage_code_block(text, "tree.py") == "print('hi')\n"
+
+
+def test_salvage_code_block_ambiguous_multi_block_returns_none():
+    text = "```sh\npip install foo\n```\n```python\nprint(1)\n```\n"
+    # Neither fence tag is "py"/"python" AND "sh" simultaneously matching a
+    # non-.py filename with two unrelated blocks -> only the python one should
+    # match when filename is .py; sh should not.
+    assert executor._salvage_code_block(text, "tree.py") == "print(1)\n"
+    # A filename whose extension matches neither present fence -> ambiguous.
+    assert executor._salvage_code_block(text, "notes.md") is None
+
+
+def test_loop_salvages_unwrapped_code_block(ctx: tools.ToolContext, workspace: Path):
+    """The exact failure mode reported live: a small local model responds
+    with the finished script as a plain markdown code block and never emits
+    a tool call. The harness should write the file itself rather than give
+    up with zero steps taken."""
+    LEDGER.reset()
+    script = [
+        AIMessage(content=(
+            "Here is the script:\n\n"
+            "```python\n"
+            "import ast\n"
+            "print('repository map')\n"
+            "```\n"
+        )),
+        AIMessage(content="All done."),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(
+            task="Write a Python script ... call it tree.py.",
+            ctx=ctx, max_steps=6, step_label="t",
+        )
+    assert result.stopped_reason == "done"
+    assert result.steps_taken == 1
+    assert result.tool_calls[0]["name"] == "write_file"
+    assert result.tool_calls[0].get("salvaged") is True
+    written = workspace / "tree.py"
+    assert written.exists()
+    assert "repository map" in written.read_text()
+
+
 def test_loop_gives_up_after_exhausting_stall_nudges(ctx: tools.ToolContext):
     """If the model never calls a tool despite repeated coaching, the harness
     stops rather than nudging forever."""

@@ -271,6 +271,78 @@ def parse_text_tool_calls(text: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Code-block salvage — last resort for models that ignore the tool-call
+# protocol entirely and just answer with the file content as a markdown
+# code block (a common habit for small/local chat-tuned models). Rather than
+# discard real, usable output because the model didn't wrap it correctly,
+# the harness writes it itself when it can confidently infer the target path.
+# ---------------------------------------------------------------------------
+
+_FENCE_RE = re.compile(r"```([A-Za-z0-9_+-]*)\r?\n(.*?)```", re.DOTALL)
+
+_FILENAME_HINT_RE = re.compile(
+    r"(?:call(?:ed)?|name[d]?|save(?:d)?\s+(?:it\s+)?as|written?\s+to|"
+    r"output(?:s)?\s+to|creat(?:e|ing)?\s+(?:a\s+file\s+)?(?:called|named)?)"
+    r"\s*[`\"']?([\w./\\-]+\.[A-Za-z0-9]{1,6})[`\"']?",
+    re.IGNORECASE,
+)
+_BARE_FILENAME_RE = re.compile(
+    r"\b[\w-]+\.(?:py|ts|tsx|js|jsx|json|md|txt|sh|ps1|yaml|yml|toml|go|rs|"
+    r"java|c|cpp|h|hpp|rb|php|sql|css|html)\b",
+    re.IGNORECASE,
+)
+_LANG_EXT_ALIASES = {
+    "py": {"python", "py"}, "js": {"javascript", "js"}, "ts": {"typescript", "ts"},
+    "sh": {"sh", "bash", "shell"}, "ps1": {"powershell", "ps1"},
+    "yml": {"yaml", "yml"}, "yaml": {"yaml", "yml"},
+}
+
+
+def _infer_target_filename(task: str) -> str | None:
+    """Best-effort guess at the file the task asked to be written.
+
+    Looks for an explicit hint phrase first ("call it X", "save as X"), then
+    falls back to any bare token with a known code/text extension.
+    """
+    m = _FILENAME_HINT_RE.search(task)
+    if m:
+        return m.group(1)
+    m = _BARE_FILENAME_RE.search(task)
+    if m:
+        return m.group(0)
+    return None
+
+
+def _salvage_code_block(llm_text: str, filename: str) -> str | None:
+    """Pull the file content out of the model's prose reply, if unambiguous.
+
+    Returns None (no salvage) when there's no fenced code, or when there are
+    multiple blocks and none can be confidently matched to ``filename`` by
+    its fence language tag — guessing wrong would silently write garbage.
+    """
+    blocks = _FENCE_RE.findall(llm_text)
+    if not blocks:
+        return None
+    if len(blocks) == 1:
+        return blocks[0][1]
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    wanted = _LANG_EXT_ALIASES.get(ext, {ext} if ext else set())
+    matches = [body for lang, body in blocks if lang.lower() in wanted]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _try_salvage_write(task: str, llm_text: str) -> tuple[str, str] | None:
+    """Return (path, content) to auto-write, or None if salvage isn't safe."""
+    filename = _infer_target_filename(task)
+    if not filename:
+        return None
+    code = _salvage_code_block(llm_text, filename)
+    if not code or not code.strip():
+        return None
+    return filename, code
+
+
+# ---------------------------------------------------------------------------
 # Token accounting helper
 # ---------------------------------------------------------------------------
 
@@ -917,9 +989,74 @@ def run_executor(
             # almost never a genuine finish for a task that requires changes —
             # it's a model (usually a small/local one) that ignored the
             # tool-calling protocol and answered like a plain chatbot instead.
-            # Coach it back onto the protocol a bounded number of times before
-            # accepting it as a real final answer, so weak models get a real
-            # shot at the task instead of silently producing nothing.
+            #
+            # Some models won't be talked into the protocol no matter how many
+            # times they're nudged — they just answer with the file content as
+            # a markdown code block, habitually, every time. If the task names
+            # an explicit target file and the reply has exactly one unambiguous
+            # code block, the harness writes it directly rather than burning
+            # more rounds asking the model to do something it isn't going to
+            # do. This still goes through the same rules gate a real write_file
+            # call would hit, so it can't bypass confirm/block policy.
+            salvage = _try_salvage_write(task, llm_text) if steps == 0 and llm_text else None
+            if salvage:
+                path, content = salvage
+                s_args = {"path": path, "content": content}
+                s_decision = rules_engine.check("write_file", s_args) if rules_engine else None
+                if s_decision is not None and not s_decision.allow:
+                    obs = "\n".join(s_decision.notes) or "[RULES: action blocked]"
+                    _ui("warn", f"  [bold red]⛔ rule "
+                                f"{s_decision.rule.id if s_decision.rule else '?'} "
+                                f"blocked salvaged write_file[/bold red]")
+                    messages.append(HumanMessage(content=(
+                        f"[HARNESS: Detected an unwrapped code block addressed to "
+                        f"'{path}' but a workspace rule blocked writing it: {obs} "
+                        f"Call the tool yourself with a compliant alternative.]"
+                    )))
+                elif s_decision is not None and s_decision.confirm:
+                    from wells import safety as _safety
+                    ap = ctx.approver or _safety.get_approver()
+                    rid = s_decision.rule.id if s_decision.rule else "rule"
+                    approved = bool(ap(f"rule:{rid}", f"salvaged write_file: {path}")) if ap else False
+                    if not approved:
+                        messages.append(HumanMessage(content=(
+                            f"[HARNESS: Detected an unwrapped code block addressed to "
+                            f"'{path}' but writing it requires confirmation that "
+                            f"wasn't granted. Call write_file yourself if you still "
+                            f"want this written.]"
+                        )))
+                        salvage = None
+                if salvage and (s_decision is None or s_decision.allow):
+                    steps += 1
+                    _act(f"write_file (harness salvage) · step {steps}/{cap_s}")
+                    result = tools.dispatch("write_file", s_args, ctx)
+                    obs_text = result.to_model_text()
+                    if rules_engine is not None and s_decision is not None:
+                        rule_notes = rules_engine.apply_liability(
+                            s_decision, ok=result.ok, simulated=result.simulated
+                        )
+                        if rule_notes:
+                            obs_text = obs_text + "\n\n" + "\n".join(rule_notes)
+                        wm.open_liabilities = rules_engine.liability_summary()
+                    wm.update_from_tool("write_file", s_args, obs_text, result.ok)
+                    history.append({
+                        "name": "write_file", "args": {"path": path}, "ok": result.ok,
+                        "output_preview": (result.output or result.error or "")[:200],
+                        "simulated": result.simulated, "salvaged": True,
+                    })
+                    _ui("warn", f"  [yellow]⚠ model answered with a code block instead "
+                                f"of a tool call — harness salvaged it into "
+                                f"write_file({path!r})[/yellow]")
+                    messages.append(HumanMessage(content=(
+                        f"[HARNESS: You replied with a code block but no tool call. "
+                        f"The harness matched it to '{path}' (named in the task) and "
+                        f"wrote it directly:\n{obs_text}\n"
+                        f"If more work remains, continue with tool calls — you must "
+                        f"use them for anything further. If the task is complete, say "
+                        f"so with no further action.]"
+                    )))
+                CONTROL.set_progress(step_label, steps, cap)
+                continue
             if steps == 0 and llm_text and stall_nudges < config.STALL_NUDGE_MAX:
                 stall_nudges += 1
                 _ui("warn", f"  [yellow]⚠ model produced text but no tool call "
