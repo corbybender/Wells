@@ -772,6 +772,15 @@ def run_executor(
     model_label = config.providers.load_profile(profile)
     model_name = model_label.label() if model_label else profile
 
+    # Visible ground truth for "why didn't the model act on that hint?" —
+    # text-fallback models only see harness feedback if they correctly
+    # re-parse the whole growing transcript each turn; native tool-calling
+    # models get it as a structured message. Silent before this, so a
+    # bind_tools() that "succeeds" mechanically without real model support
+    # was indistinguishable from genuine native support.
+    _ui("round", f"[dim]model: {model_name} · tool-calling: "
+                 f"{'native' if native_tools else 'text-fallback'}[/dim]")
+
     wm = WorkingMemory(task=task)
     _tool_meta: dict[str, tuple[str, dict]] = {}  # tool_call_id → (name, args)
 
