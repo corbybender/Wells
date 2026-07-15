@@ -224,6 +224,9 @@ TOOL CALLING — MANDATORY:
   every turn, independent of native tool-call support, so it works no matter what your
   runtime does under the hood. Example, to create a file:
   <tool_call>{{"name": "write_file", "args": {{"path": "example.py", "content": "print(1)\\n"}}}}</tool_call>
+- If your training makes that tag awkward, a bare JSON object as your entire reply,
+  {{"name": "...", "arguments": {{...}}}}, is also recognized — but never mix that
+  with explanatory prose in the same reply, or neither will parse.
 - Batch related shell commands: chain multiple az/git/curl calls with semicolons in ONE
   run_command call rather than calling run_command once per command. This cuts round trips
   and token cost dramatically.
@@ -247,13 +250,31 @@ TOOL CALLING — MANDATORY:
 # ---------------------------------------------------------------------------
 
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(\{.*?\})\s*```", re.DOTALL)
+
+
+def _as_call(obj: dict) -> dict | None:
+    name = obj.get("name")
+    if not name or ("args" not in obj and "arguments" not in obj):
+        return None
+    return {"name": name, "args": obj.get("args") or obj.get("arguments") or {}}
 
 
 def parse_text_tool_calls(text: str) -> list[dict]:
-    """Parse ``<tool_call>{...}</tool_call>`` blocks from model text.
+    """Parse tool calls out of a model's raw text reply.
 
-    Returns a list of ``{"name": ..., "args": {...}}`` dicts. Malformed blocks
-    are skipped (the model will be told the parse error in the observation).
+    Recognizes two shapes:
+    - ``<tool_call>{...}</tool_call>`` — the format this harness asks for.
+    - A bare ``{"name": ..., "arguments": {...}}`` object, whether it's the
+      entire reply or fenced in a ```json block — the native function-call
+      format many tool-tuned open models (Qwen, Hermes, ...) actually emit.
+      Some local runtimes (e.g. Ollama, depending on model/template) put this
+      straight in the text content instead of a structured tool_calls field,
+      so without this the harness would reject a call the model got right.
+
+    Returns a list of ``{"name": ..., "args": {...}}`` dicts. Malformed
+    ``<tool_call>`` blocks are reported back as parse errors; unrecognized
+    bare JSON is silently ignored (it's probably just prose, not a call).
     """
     calls: list[dict] = []
     for m in _TOOL_CALL_RE.finditer(text):
@@ -267,6 +288,25 @@ def parse_text_tool_calls(text: str) -> list[dict]:
         args = obj.get("args") or obj.get("arguments") or {}
         if name:
             calls.append({"name": name, "args": args})
+    if calls:
+        return calls
+
+    candidates = [text.strip()]
+    candidates += [m.group(1).strip() for m in _JSON_FENCE_RE.finditer(text)]
+    for blob in candidates:
+        if not blob:
+            continue
+        try:
+            obj = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        for item in (obj if isinstance(obj, list) else [obj]):
+            if isinstance(item, dict):
+                call = _as_call(item)
+                if call:
+                    calls.append(call)
+        if calls:
+            break
     return calls
 
 
