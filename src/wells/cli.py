@@ -444,6 +444,13 @@ def reply_timestamp() -> str:
     return f"{hour}:{t.tm_min:02d}:{t.tm_sec:02d}{ampm} {t.tm_mon}-{t.tm_mday}-{t.tm_year}"
 
 
+def _fmt_elapsed(secs: float) -> str:
+    """'3m12s' / '47s' — how long a run actually took, start to finish."""
+    secs = int(secs)
+    m, s = divmod(secs, 60)
+    return f"{m}m{s:02d}s" if m else f"{s}s"
+
+
 # ---------------------------------------------------------------------------
 # Stop-reason banner — surface WHY a run stopped and WHAT the user can do
 # ---------------------------------------------------------------------------
@@ -738,10 +745,13 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
         from wells import pricing
         cost_s = pricing.fmt(pricing.run_cost())
         cost_part = f" · {cost_s}" if cost_s else ""
+        elapsed = _time.time() - t0
         console.print(
             f"[dim]{result.steps_taken} step(s) · {total:,} tokens "
-            f"({t['input']:,} in / {t['output']:,} out){cost_part}[/dim]"
+            f"({t['input']:,} in / {t['output']:,} out){cost_part} · "
+            f"{_fmt_elapsed(elapsed)}[/dim]"
         )
+        console.print(f"[dim]finished {reply_timestamp()}[/dim]")
 
         # WHY did the run stop, and WHAT can the user do about it?
         # When the executor didn't finish cleanly (max_steps, budget, error,
@@ -989,11 +999,13 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
         from wells import pricing
         cost_s = pricing.fmt(pricing.run_cost())
         cost_part = f" · {cost_s}" if cost_s else ""
+        elapsed = _time.time() - t0
         console.print(
             f"\n[dim][tokens] {total:,} total "
             f"({t['input']:,} in / {t['output']:,} out) "
-            f"across {t['calls']} calls{cost_part}[/dim]"
+            f"across {t['calls']} calls{cost_part} · {_fmt_elapsed(elapsed)}[/dim]"
         )
+        console.print(f"[dim]finished {reply_timestamp()}[/dim]")
 
         # WHY did the run stop, and WHAT can the user do about it?
         # Resolve a stop reason from the run state — _print_final_summary
