@@ -267,6 +267,17 @@ WELLS_SKILLS: bool = os.getenv("WELLS_SKILLS", "1") not in ("0", "false", "no", 
 # CodeAct: a sandboxed run_code tool for in-context computation. Default on.
 WELLS_CODEACT: bool = os.getenv("WELLS_CODEACT", "1") not in ("0", "false", "no", "")
 
+# Structured outputs: for local Ollama profiles, constrain the model's reply
+# to a tool-call JSON schema at the token-sampling level (Ollama "format" /
+# OpenAI-compat "response_format: json_schema"). The sampler literally cannot
+# emit malformed tool-call JSON — the whole class of unescaped-quote /
+# prose-mixed-with-JSON parse failures observed live with 7B models dies at
+# the source instead of being papered over after generation. The text parsers
+# remain as fallback for providers without schema support. Set 0 to disable
+# (e.g. an old Ollama server that rejects response_format; the executor also
+# auto-falls-back once per run if the server errors on it).
+STRUCTURED_OUTPUTS: bool = os.getenv("WELLS_STRUCTURED", "1") not in ("0", "false", "no", "")
+
 # Background agents: bg_start / bg_status / bg_collect for concurrent fan-out
 # (async counterpart to the blocking parallel_research). Default on.
 WELLS_BG_AGENTS: bool = os.getenv("WELLS_BG_AGENTS", "1") not in ("0", "false", "no", "")

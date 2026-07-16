@@ -194,6 +194,188 @@ def test_run_executor_auto_detects_local_ollama_and_uses_compact_prompt(
 
 
 # ---------------------------------------------------------------------------
+# Structured outputs (grammar-constrained tool calls for local Ollama)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBindableLLM:
+    """Records bind() kwargs; bound copies share the recording list."""
+
+    def __init__(self, binds=None):
+        self.binds = binds if binds is not None else []
+
+    def bind(self, **kwargs):
+        self.binds.append(kwargs)
+        return _FakeBindableLLM(self.binds)
+
+
+def _local_ollama_profile(kind="openai"):
+    from wells import providers as _providers
+    return _providers.ProviderProfile(
+        name="LocalQwen3", kind=kind, model="qwen2.5-coder:7b",
+        base_url="http://127.0.0.1:11434/v1" if kind == "openai"
+        else "http://127.0.0.1:11434",
+    )
+
+
+def test_structured_schema_lists_all_tools_plus_final_answer():
+    schema = executor._structured_output_schema(tools.ALL_TOOLS)
+    names = schema["properties"]["name"]["enum"]
+    assert "final_answer" in names
+    for t in tools.ALL_TOOLS:
+        assert t.name in names
+    assert schema["required"] == ["name", "args"]
+
+
+def test_try_bind_structured_skips_cloud_profiles():
+    from wells import providers as _providers
+    cloud = _providers.ProviderProfile(
+        name="zai", kind="openai", model="glm-5.2",
+        base_url="https://api.z.ai/api/coding/paas/v4/",
+    )
+    assert executor._try_bind_structured(_FakeBindableLLM(), cloud, tools.ALL_TOOLS) is None
+    assert executor._try_bind_structured(_FakeBindableLLM(), None, tools.ALL_TOOLS) is None
+
+
+def test_try_bind_structured_native_ollama_uses_format_field():
+    llm = _FakeBindableLLM()
+    bound = executor._try_bind_structured(llm, _local_ollama_profile("ollama"), tools.ALL_TOOLS)
+    assert bound is not None
+    assert "format" in llm.binds[0]
+    assert llm.binds[0]["format"]["type"] == "object"
+
+
+def test_try_bind_structured_openai_shim_uses_response_format():
+    llm = _FakeBindableLLM()
+    bound = executor._try_bind_structured(llm, _local_ollama_profile("openai"), tools.ALL_TOOLS)
+    assert bound is not None
+    rf = llm.binds[0]["response_format"]
+    assert rf["type"] == "json_schema"
+    assert rf["json_schema"]["schema"]["properties"]["name"]["enum"]
+
+
+def test_resolve_structured_reply_final_answer_becomes_text():
+    calls = [{"name": "final_answer", "args": {"summary": "all done, tests pass"}}]
+    real, text = executor._resolve_structured_reply(calls, '{"name": "final_answer"...}')
+    assert real == []
+    assert text == "all done, tests pass"
+
+
+def test_resolve_structured_reply_blanks_raw_json_for_real_calls():
+    raw = '{"name": "read_file", "args": {"path": "x.py"}}'
+    calls = [{"name": "read_file", "args": {"path": "x.py"}}]
+    real, text = executor._resolve_structured_reply(calls, raw)
+    assert real == calls
+    assert text == ""  # wire format is not narrative
+
+
+def test_loop_structured_mode_executes_and_finishes_on_final_answer(
+    ctx: tools.ToolContext, workspace: Path
+):
+    """End-to-end: local Ollama profile + structured binding → bare-JSON tool
+    call executes, final_answer ends the run with its summary as the text."""
+    LEDGER.reset()
+    script = [
+        AIMessage(content='{"name": "write_file", "args": {"path": "out.txt", "content": "hi"}}'),
+        AIMessage(content='{"name": "final_answer", "args": {"summary": "Wrote out.txt containing hi."}}'),
+    ]
+    llm = _FakeBindableLLM()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", True),
+        patch.object(config.providers, "load_profile", return_value=_local_ollama_profile()),
+        patch.object(config.providers, "get_chat_model", return_value=llm),
+    ):
+        result = executor.run_executor(
+            task="write hi to out.txt", ctx=ctx, max_steps=5,
+            step_label="t", profile="LocalQwen3",
+        )
+    assert (workspace / "out.txt").read_text() == "hi"
+    assert result.stopped_reason == "done"
+    assert result.summary == "Wrote out.txt containing hi."
+    assert llm.binds, "structured schema was never bound"
+    assert "STRUCTURED MODE" in result.messages[0].content
+
+
+def test_loop_structured_final_answer_with_no_action_gets_stall_nudge(
+    ctx: tools.ToolContext, workspace: Path
+):
+    """final_answer before any real action is a premature finish — the stall
+    nudge must fire (in its structured-mode wording) before accepting it."""
+    LEDGER.reset()
+    script = [
+        AIMessage(content='{"name": "final_answer", "args": {"summary": "done!"}}'),
+        AIMessage(content='{"name": "write_file", "args": {"path": "a.txt", "content": "x"}}'),
+        AIMessage(content='{"name": "final_answer", "args": {"summary": "actually done"}}'),
+    ]
+    llm = _FakeBindableLLM()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", True),
+        patch.object(config.providers, "load_profile", return_value=_local_ollama_profile()),
+        patch.object(config.providers, "get_chat_model", return_value=llm),
+    ):
+        result = executor.run_executor(
+            task="write x to a.txt", ctx=ctx, max_steps=5,
+            step_label="t", profile="LocalQwen3",
+        )
+    assert (workspace / "a.txt").exists()
+    assert result.summary == "actually done"
+    nudges = [m for m in result.messages
+              if isinstance(m, HumanMessage) and "final_answer" in (m.content or "")
+              and m.content.startswith("[HARNESS")]
+    assert nudges, "structured stall nudge never delivered"
+
+
+def test_loop_structured_mode_falls_back_when_server_rejects_format(
+    ctx: tools.ToolContext, workspace: Path
+):
+    """An older Ollama that errors on response_format must not fail the task:
+    one fallback to the plain path, then the run continues."""
+    LEDGER.reset()
+    boom = {"first": True}
+
+    def _invoke(llm, messages):
+        if boom["first"]:
+            boom["first"] = False
+            raise RuntimeError("response_format is not supported")
+        return AIMessage(content="Done, nothing needed.")
+
+    llm = _FakeBindableLLM()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_invoke),
+        patch.object(config, "STRUCTURED_OUTPUTS", True),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(config.providers, "load_profile", return_value=_local_ollama_profile()),
+        patch.object(config.providers, "get_chat_model", return_value=llm),
+    ):
+        result = executor.run_executor(
+            task="answer a question", ctx=ctx, max_steps=3,
+            step_label="t", profile="LocalQwen3",
+        )
+    assert result.stopped_reason == "done"
+    assert "Done" in result.summary
+
+
+def test_structured_outputs_disabled_by_config(ctx: tools.ToolContext):
+    """WELLS_STRUCTURED=0 must skip the binding entirely."""
+    LEDGER.reset()
+    llm = _FakeBindableLLM()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted([AIMessage(content="ok")])),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(config.providers, "load_profile", return_value=_local_ollama_profile()),
+        patch.object(config.providers, "get_chat_model", return_value=llm),
+    ):
+        result = executor.run_executor(
+            task="x", ctx=ctx, max_steps=2, step_label="t", profile="LocalQwen3",
+        )
+    assert llm.binds == []
+    assert "STRUCTURED MODE" not in result.messages[0].content
+
+
+# ---------------------------------------------------------------------------
 # Call extraction (native vs text)
 # ---------------------------------------------------------------------------
 

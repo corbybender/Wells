@@ -159,8 +159,96 @@ def _tool_catalog(toolset: list[tools.ToolDef]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Structured outputs (grammar-constrained tool calls)
+# ---------------------------------------------------------------------------
+#
+# For local Ollama profiles, the model's reply can be constrained to a
+# tool-call JSON schema at the token-sampling level: Ollama's native API via
+# the "format" field, its OpenAI-compatible shim via response_format
+# json_schema (both since Ollama 0.5). Under the grammar the sampler cannot
+# emit malformed JSON, prose mixed with a call, an unescaped inner quote, or
+# an invented tool name — every failure class the text parsers and salvage
+# paths below exist to mop up dies at the source. Those paths remain for
+# providers without schema support and as the fallback when a server rejects
+# the format.
+#
+# The schema is deliberately flat and loose ({name: enum, args: object})
+# rather than a strict per-tool anyOf: small models follow a simple grammar
+# far more reliably, arg validation already happens at dispatch, and a giant
+# union schema slows llama.cpp's grammar compilation. "final_answer" is a
+# pseudo-tool: with the grammar active the model *cannot* answer in prose, so
+# it needs an in-schema way to say "done".
+
+_FINAL_ANSWER_TOOL = "final_answer"
+
+
+def _structured_output_schema(toolset: list[tools.ToolDef]) -> dict:
+    """JSON schema constraining a reply to {"name": <known tool>, "args": {...}}."""
+    names = sorted({t.name for t in toolset} | {_FINAL_ANSWER_TOOL})
+    return {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "enum": names},
+            "args": {"type": "object"},
+        },
+        "required": ["name", "args"],
+    }
+
+
+def _try_bind_structured(llm, profile, toolset: list[tools.ToolDef]):
+    """Bind the tool-call schema as the enforced response format, or None.
+
+    Only for profiles that actually talk to a local Ollama server — cloud
+    providers get native bind_tools, which is strictly better when real.
+    """
+    if profile is None:
+        return None
+    try:
+        if not config.providers._looks_like_local_ollama(profile):
+            return None
+        if profile.kind == "ollama":
+            # langchain-ollama: `format` accepts a JSON schema dict.
+            return llm.bind(format=_structured_output_schema(toolset))
+        # OpenAI-compat shim (ChatOpenAI pointed at :11434/v1).
+        return llm.bind(
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "wells_tool_call",
+                    "schema": _structured_output_schema(toolset),
+                },
+            }
+        )
+    except Exception:
+        return None
+
+
+def _resolve_structured_reply(calls: list[dict], llm_text: str) -> tuple[list[dict], str]:
+    """Post-process calls parsed from a structured-mode reply.
+
+    - ``final_answer`` pseudo-calls become the final narrative text (the
+      grammar leaves the model no other way to finish).
+    - When the reply parsed into real calls, the raw JSON is not narrative —
+      blank it so the UI/summary paths don't show the wire format.
+    """
+    real = [c for c in calls if c.get("name") != _FINAL_ANSWER_TOOL]
+    finals = [c for c in calls if c.get("name") == _FINAL_ANSWER_TOOL]
+    if finals:
+        fa = finals[0].get("args") or {}
+        text = str(
+            fa.get("summary") or fa.get("answer") or fa.get("text") or ""
+        ).strip()
+        if text:
+            llm_text = text
+    elif real and llm_text and _looks_like_tool_call_attempt(llm_text):
+        llm_text = ""
+    return real, llm_text
+
+
 def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool,
-                   workspace: str | None = None, compact: bool = False) -> str:
+                   workspace: str | None = None, compact: bool = False,
+                   structured: bool = False) -> str:
     catalog = _tool_catalog(toolset)
     plan_note = (
         "\n\nIMPORTANT: You are in PLAN MODE. Do NOT make changes. Use read-only tools "
@@ -184,6 +272,17 @@ def _system_prompt(task: str, toolset: list[tools.ToolDef], *, plan_mode: bool,
             rules_block = _rules.engine_for(workspace).prompt_block(compact=compact)
     except Exception:
         pass
+    structured_note = (
+        "\n\nOUTPUT FORMAT — STRUCTURED MODE (enforced by the runtime):\n"
+        "Your ENTIRE reply must be exactly ONE JSON object of the form\n"
+        '{"name": "<tool>", "args": {...}}\n'
+        "— no prose, no markdown, no code fences, nothing outside the object.\n"
+        "One tool call per reply; you will see its result before your next call.\n"
+        "When (and only when) the task is genuinely complete, finish with:\n"
+        '{"name": "final_answer", "args": {"summary": "<what you did and verified>"}}\n'
+        if structured
+        else ""
+    )
     base = f"""You are an autonomous software engineering agent working inside a real code repository.
 You operate by calling tools to read files, search code, make edits, and run commands/tests,
 then observing the results, until the task is complete.
@@ -235,7 +334,7 @@ TOOL CALLING — MANDATORY:
   into every subprocess. Do NOT prepend $env:REQUESTS_CA_BUNDLE=... yourself — it's already
   set. If a command fails with an SSL/cert error, report it rather than retrying manually.
 - If the same operation has failed 3+ times with similar errors, STOP and report what is
-  blocking you rather than continuing to retry.
+  blocking you rather than continuing to retry.{structured_note}
 """
     # Principles always first (the constitution), then the skills index (so the
     # model knows which load_skill calls are available, without paying for the
@@ -1038,8 +1137,32 @@ def run_executor(
     # default, so the safety-drop pipeline actually matches what it can hold.
     ctx_drop_threshold, ctx_drop_target = _effective_ctx_budget(compact_prompt)
 
+    # Try structured outputs first (local Ollama: grammar-enforced tool-call
+    # JSON), then native tool schemas, then text fallback.
+    llm = (
+        config.get_llm_for_task("coding", temperature=temperature)
+        if profile == config.ACTIVE_PROFILE
+        else config.providers.get_chat_model(profile, temperature=temperature)
+    )
+    plain_llm = llm  # unbound original, kept for the structured-mode fallback
+    structured_llm = (
+        _try_bind_structured(llm, model_label, toolset)
+        if config.STRUCTURED_OUTPUTS
+        else None
+    )
+    structured_mode = structured_llm is not None
+    if structured_mode:
+        llm = structured_llm
+        native_tools = False
+    else:
+        bound = _try_bind_tools(llm, toolset)
+        native_tools = bound is not None
+        if native_tools:
+            llm = bound
+    _structured_fallback_used = False
+
     system = _system_prompt(task, toolset, plan_mode=ctx.plan_mode, workspace=ctx.workspace,
-                            compact=compact_prompt)
+                            compact=compact_prompt, structured=structured_mode)
     if system_prefix:
         system = f"{system_prefix}\n\n{system}"
 
@@ -1049,17 +1172,6 @@ def run_executor(
     else:
         messages.append(HumanMessage(content=f"Please complete this task:\n{task}"))
 
-    # Try to bind native tool schemas; fall back to text mode if unsupported.
-    llm = (
-        config.get_llm_for_task("coding", temperature=temperature)
-        if profile == config.ACTIVE_PROFILE
-        else config.providers.get_chat_model(profile, temperature=temperature)
-    )
-    bound = _try_bind_tools(llm, toolset)
-    native_tools = bound is not None
-    if native_tools:
-        llm = bound
-
     model_name = model_label.label() if model_label else profile
 
     # Visible ground truth for "why didn't the model act on that hint?" —
@@ -1068,8 +1180,9 @@ def run_executor(
     # models get it as a structured message. Silent before this, so a
     # bind_tools() that "succeeds" mechanically without real model support
     # was indistinguishable from genuine native support.
-    _ui("round", f"[dim]model: {model_name} · tool-calling: "
-                 f"{'native' if native_tools else 'text-fallback'}[/dim]")
+    _tc_mode = ("structured-json" if structured_mode
+                else "native" if native_tools else "text-fallback")
+    _ui("round", f"[dim]model: {model_name} · tool-calling: {_tc_mode}[/dim]")
 
     wm = WorkingMemory(task=task)
     _tool_meta: dict[str, tuple[str, dict]] = {}  # tool_call_id → (name, args)
@@ -1170,6 +1283,23 @@ def run_executor(
             else:
                 resp = _invoke_cancelable(llm, messages)
         except Exception as e:
+            if structured_mode and not _structured_fallback_used:
+                # Most likely an older Ollama server rejecting the schema'd
+                # response_format. Drop to the ordinary path (native bind or
+                # text fallback) once per run rather than failing the task
+                # over a format negotiation.
+                _structured_fallback_used = True
+                structured_mode = False
+                llm = plain_llm
+                bound = _try_bind_tools(llm, toolset)
+                native_tools = bound is not None
+                if native_tools:
+                    llm = bound
+                _ui("warn", "  [yellow]⚠ structured output rejected by the "
+                            "server — falling back to "
+                            f"{'native' if native_tools else 'text'} tool "
+                            "calling[/yellow]")
+                continue
             return ExecutorResult(
                 summary=f"[executor error: {type(e).__name__}: {e}]",
                 steps_taken=steps,
@@ -1191,6 +1321,10 @@ def run_executor(
         # Show the LLM's reasoning text (if any) before we execute the tool calls.
         # This tells the user WHY the agent is doing what it's about to do.
         llm_text = _extract_llm_text(resp)
+        if structured_mode:
+            # final_answer pseudo-calls become the final text; raw call JSON
+            # is not narrative.
+            calls, llm_text = _resolve_structured_reply(calls, llm_text)
         if llm_text and not streamed_this_round:
             # Trim to ~200 chars; collapse newlines so it reads as one line.
             preview = " ".join(llm_text.split())[:200]
@@ -1280,15 +1414,25 @@ def run_executor(
                 _ui("warn", f"  [yellow]⚠ model produced text but no tool call "
                             f"(attempt {stall_nudges}/{config.STALL_NUDGE_MAX}) — "
                             f"nudging back onto the tool-calling protocol[/yellow]")
-                messages.append(HumanMessage(content=(
-                    "[HARNESS: You responded with text but called no tool. Describing "
-                    "steps does not perform them — nothing was written, run, or changed. "
-                    "If the task requires an action, take it now by emitting a line of "
-                    "the exact form: "
-                    '<tool_call>{"name": "<tool>", "args": {...}}</tool_call> '
-                    "and nothing else on that line. Do not restate a plan in prose — "
-                    "call the tool.]"
-                )))
+                if structured_mode:
+                    nudge = (
+                        "[HARNESS: You replied with final_answer before taking any "
+                        "action. Nothing was written, run, or changed — the task "
+                        "cannot be complete. Reply with a real tool call "
+                        '({"name": "<tool>", "args": {...}}) that makes progress; '
+                        "only use final_answer once the work is actually done.]"
+                    )
+                else:
+                    nudge = (
+                        "[HARNESS: You responded with text but called no tool. Describing "
+                        "steps does not perform them — nothing was written, run, or changed. "
+                        "If the task requires an action, take it now by emitting a line of "
+                        "the exact form: "
+                        '<tool_call>{"name": "<tool>", "args": {...}}</tool_call> '
+                        "and nothing else on that line. Do not restate a plan in prose — "
+                        "call the tool.]"
+                    )
+                messages.append(HumanMessage(content=nudge))
                 continue
             # Verify before accepting completion: the model reporting text
             # feeding the previous tool's error back into its context is not
