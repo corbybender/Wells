@@ -228,6 +228,15 @@ CHEAP_VERIFY: bool = os.getenv("CHEAP_VERIFY", "1") not in ("0", "false", "no", 
 # condition after escalating stops the run for real.
 ESCALATION_PROFILE: str = os.getenv("ESCALATION_PROFILE", "").strip()
 
+# Stepwise coding: run each numbered step of the planner's plan as its own
+# short executor run with a fresh context (carrying only the goal, the list
+# of completed steps, and the current step). Context never grows past one
+# step's needs — the structural answer to small-context models drifting or
+# truncating mid-run: a model can't lose the thread across 20 rounds when no
+# run lasts 20 rounds. "auto" (default) = only when the active profile looks
+# like local Ollama; "1" = always; "0" = never.
+WELLS_STEPWISE: str = (os.getenv("WELLS_STEPWISE", "auto").strip().lower() or "auto")
+
 # Self-heal: after every write/edit, run the fastest available checker for
 # that file type (ruff/py_compile, node --check, json parse) and inject any
 # failure into the agent's next observation. Set 0 to disable.
