@@ -1246,6 +1246,11 @@ def run_executor(
     _file_write_history: dict[str, str] = {}   # path → most recent full content written
     _drift_streak = 0           # consecutive low-similarity full rewrites of one path
     _drift_path: str | None = None
+    _readonly_names = {t.name for t in toolset if not t.mutating}
+    # Read-only dedupe cache: call_key → (round, step) of the last execution.
+    # Cleared whenever a mutating call succeeds (conservative: any write may
+    # have changed what any read would return).
+    _readonly_seen: dict[str, tuple[int, int]] = {}
 
     def _stopped(reason: str, summary: str) -> ExecutorResult:
         return ExecutorResult(
@@ -1602,11 +1607,10 @@ def run_executor(
         # sequential path, which never executes it early.
         _prefetched: dict[int, tools.ToolResult] = {}
         if config.PARALLEL_READS and len(calls) > 1:
-            _ro_names = {t.name for t in toolset if not t.mutating}
             _par_idx: list[int] = []
             for _i, _c in enumerate(calls):
                 _cname = _c.get("name")
-                if not _cname or _cname not in _ro_names:
+                if not _cname or _cname not in _readonly_names:
                     break
                 if rules_engine is not None:
                     _d = rules_engine.check(_cname, _c.get("args") or {})
@@ -1720,8 +1724,37 @@ def run_executor(
             _act(f"{name} · step {steps}/{cap_s}")
             CONTROL.set_progress(step_label, steps, cap)
             result = _prefetched.pop(_call_idx, None)
+            # ── Read-only dedupe ────────────────────────────────────────────
+            # An identical read-only call whose result is still verbatim in
+            # the model's recent context (inside the masking keep-window,
+            # nothing mutated since) is answered with a pointer instead of
+            # re-dispatching — saves the tokens of a duplicate full output
+            # and makes a re-read loop visible to the model immediately.
+            _dedupe_hit = False
+            if (
+                result is None
+                and config.DEDUPE_READS
+                and name in _readonly_names
+            ):
+                _seen = _readonly_seen.get(call_key)
+                if _seen is not None and (rounds - _seen[0]) < _MASK_KEEP_ROUNDS:
+                    _dedupe_hit = True
+                    result = tools.ToolResult(
+                        True,
+                        f"[HARNESS CACHE: this exact {name} call already ran at "
+                        f"step {_seen[1]} and nothing has been written or "
+                        f"executed since — its full output is still in your "
+                        f"context above. Reuse it; do not re-request unchanged "
+                        f"data.]",
+                        "",
+                    )
             if result is None:
                 result = tools.dispatch(name, args, ctx)
+            if name in _readonly_names:
+                if not _dedupe_hit and result.ok and not result.simulated:
+                    _readonly_seen[call_key] = (rounds, steps)
+            elif result.ok and not result.simulated:
+                _readonly_seen.clear()  # a successful mutation may change any read
             # dispatch() can block for a while (a shell command, a subagent);
             # check again right after it returns instead of waiting for the
             # top of the next round — a cancel that landed mid-command should

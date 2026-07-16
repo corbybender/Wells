@@ -455,6 +455,69 @@ def test_read_after_write_in_same_batch_sees_fresh_content(
 
 
 # ---------------------------------------------------------------------------
+# Read-only dedupe cache
+# ---------------------------------------------------------------------------
+
+_READ_MATHS = AIMessage(
+    content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'
+)
+
+
+def test_identical_read_within_window_returns_cache_pointer(
+    ctx: tools.ToolContext, workspace: Path
+):
+    LEDGER.reset()
+    script = [_READ_MATHS, _READ_MATHS, AIMessage(content="done")]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=10, step_label="t")
+    tool_msgs = [m for m in result.messages if isinstance(m, ToolMessage)]
+    assert "return a - b" in tool_msgs[0].content        # first read: real content
+    assert "HARNESS CACHE" in tool_msgs[1].content       # second: pointer
+    assert "return a - b" not in tool_msgs[1].content    # not paid for twice
+
+
+def test_mutation_invalidates_read_cache(ctx: tools.ToolContext, workspace: Path):
+    """read → write same file → read again: the second read must return the
+    FRESH content, not a stale cache pointer."""
+    LEDGER.reset()
+    script = [
+        _READ_MATHS,
+        AIMessage(content='<tool_call>{"name": "write_file", "args": {"path": "maths.py", "content": "def add(a, b):\\n    return a + b\\n"}}</tool_call>'),
+        _READ_MATHS,
+        AIMessage(content="done"),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=10, step_label="t")
+    read_msgs = [m for m in result.messages
+                 if isinstance(m, ToolMessage) and m.name == "read_file"]
+    assert len(read_msgs) == 2
+    assert "HARNESS CACHE" not in read_msgs[1].content
+    assert "return a + b" in read_msgs[1].content
+
+
+def test_dedupe_disabled_by_config(ctx: tools.ToolContext, workspace: Path):
+    LEDGER.reset()
+    script = [_READ_MATHS, _READ_MATHS, AIMessage(content="done")]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "DEDUPE_READS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=10, step_label="t")
+    tool_msgs = [m for m in result.messages if isinstance(m, ToolMessage)]
+    assert all("HARNESS CACHE" not in (m.content or "") for m in tool_msgs)
+
+
+# ---------------------------------------------------------------------------
 # Model cascade / escalation on failure
 # ---------------------------------------------------------------------------
 
