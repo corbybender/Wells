@@ -692,24 +692,28 @@ class WorkingMemory:
 
 
 def _inject_wm(messages: list[BaseMessage], wm: WorkingMemory) -> list[BaseMessage]:
-    """Insert or replace the working memory HumanMessage (never pruned).
+    """Remove the previous working-memory HumanMessage and append a fresh one
+    at the END of the list (never pruned).
 
-    Position: immediately after the first HumanMessage (the task).
+    Position matters for two reasons:
+    - **KV-cache stability.** Both llama.cpp/Ollama's prompt cache and cloud
+      prompt caching reuse computation only for an unchanged prefix. The WM
+      content changes every round; when it lived near the head (right after
+      the task message, its original position), every round invalidated the
+      cache from message ~2 onward and the entire history was re-prefilled
+      on every call — seconds to minutes per round on local hardware. At the
+      end, the invalidation point is the *previous* round's WM slot, so the
+      whole earlier transcript stays cached.
+    - **Recency.** Models attend most reliably to the end of the context —
+      the goal anchor lands where a drifting model is most likely to see it.
     """
     if wm.is_empty():
         return messages
-    wm_msg = HumanMessage(content=wm.to_xml())
-    result = list(messages)
-    for i, m in enumerate(result):
-        if isinstance(m, HumanMessage) and (m.content or "").startswith(_WM_TAG):
-            result[i] = wm_msg
-            return result
-    # Not found — insert after first HumanMessage
-    for i, m in enumerate(result):
-        if isinstance(m, HumanMessage):
-            result.insert(i + 1, wm_msg)
-            return result
-    result.append(wm_msg)
+    result = [
+        m for m in messages
+        if not (isinstance(m, HumanMessage) and (m.content or "").startswith(_WM_TAG))
+    ]
+    result.append(HumanMessage(content=wm.to_xml()))
     return result
 
 
@@ -1289,11 +1293,21 @@ def run_executor(
                 _ui("warn", f"  [bold cyan]⮕ steer delivered:[/bold cyan] {s[:90]}")
 
         # ── Context management pipeline (order matters) ──────────────────────
+        # Masking/dropping rewrite old history, which invalidates the
+        # provider's prompt cache from the first changed message onward — so
+        # they run only under real context pressure (estimated tokens past
+        # the trim target). Below the target the transcript is append-only,
+        # keeping the whole prefix cached (Ollama KV cache / cloud prompt
+        # caching): the cheapest tokens are the ones never re-prefilled.
+        mask_saved = drop_saved = 0
+        if _ctx_tokens(messages) > ctx_drop_target:
+            messages, mask_saved = _apply_observation_masking(messages, _tool_meta)
+            messages, drop_saved = _safety_drop(
+                messages, threshold=ctx_drop_threshold, target=ctx_drop_target
+            )
+        # WM last: refreshed each round in the append-only tail (cache-stable)
+        # and at maximum recency, where a drifting model most reliably attends.
         messages = _inject_wm(messages, wm)
-        messages, mask_saved = _apply_observation_masking(messages, _tool_meta)
-        messages, drop_saved = _safety_drop(
-            messages, threshold=ctx_drop_threshold, target=ctx_drop_target
-        )
         saved = mask_saved + drop_saved
         if saved:
             total_saved += saved
@@ -1858,11 +1872,13 @@ def run_executor(
         if cap and steps >= cap:
             # One final round: apply full context pipeline then ask for summary.
             try:
+                ms = ds = 0
+                if _ctx_tokens(messages) > ctx_drop_target:
+                    messages, ms = _apply_observation_masking(messages, _tool_meta)
+                    messages, ds = _safety_drop(
+                        messages, threshold=ctx_drop_threshold, target=ctx_drop_target
+                    )
                 messages = _inject_wm(messages, wm)
-                messages, ms = _apply_observation_masking(messages, _tool_meta)
-                messages, ds = _safety_drop(
-                    messages, threshold=ctx_drop_threshold, target=ctx_drop_target
-                )
                 final_saved = ms + ds
                 final = config._invoke_with_retry(llm, messages)
                 _account_usage(step=step_label, model=model_name, messages=messages,
