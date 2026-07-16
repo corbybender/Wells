@@ -648,6 +648,79 @@ def test_inject_wm_fires_on_round_one_before_any_tool_call():
     )
 
 
+def test_inject_wm_appends_at_end_and_replaces_previous():
+    """KV-cache stability: the WM message must live at the END of the list
+    (append-only tail) and never duplicate — the old copy is removed, the
+    message prefix before the previous WM slot stays byte-identical."""
+    wm = executor.WorkingMemory(task="write tree.py")
+    head = [
+        SystemMessage(content="sys"),
+        HumanMessage(content="Please complete this task:\nwrite tree.py"),
+    ]
+    r1 = executor._inject_wm(list(head), wm)
+    assert (r1[-1].content or "").startswith(executor._WM_TAG)
+
+    r1.append(AIMessage(content="round 1 reasoning"))
+    wm.files_read.append("a.py")
+    r2 = executor._inject_wm(r1, wm)
+
+    wm_msgs = [m for m in r2
+               if isinstance(m, HumanMessage)
+               and (m.content or "").startswith(executor._WM_TAG)]
+    assert len(wm_msgs) == 1, "stale WM copy left behind"
+    assert r2[-1] is wm_msgs[0]
+    assert "a.py" in r2[-1].content
+    # The head (system + task) is untouched — the cacheable prefix survives.
+    assert r2[0] is head[0] and r2[1] is head[1]
+
+
+def _read_rounds_script(n):
+    return [
+        AIMessage(content='<tool_call>{"name": "read_file", "args": {"path": "big.py"}}</tool_call>')
+        for _ in range(n)
+    ] + [AIMessage(content="done reading")]
+
+
+def test_masking_skipped_below_context_pressure(
+    ctx: tools.ToolContext, workspace: Path, monkeypatch
+):
+    """History must stay append-only (verbatim tool outputs, cache-friendly)
+    until estimated context actually passes the trim target."""
+    LEDGER.reset()
+    monkeypatch.delenv("WELLS_CTX_LIMIT", raising=False)
+    monkeypatch.delenv("WELLS_CTX_TARGET", raising=False)
+    (workspace / "big.py").write_text("x = 1  # padding\n" * 60)
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(_read_rounds_script(6))),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=10, step_label="t")
+    masked = [m for m in result.messages
+              if isinstance(m, ToolMessage) and (m.content or "").startswith("[FILE_READ:")]
+    assert masked == [], "tool outputs were masked without context pressure"
+
+
+def test_masking_fires_under_context_pressure(
+    ctx: tools.ToolContext, workspace: Path, monkeypatch
+):
+    monkeypatch.setenv("WELLS_CTX_LIMIT", "600")
+    monkeypatch.setenv("WELLS_CTX_TARGET", "300")
+    LEDGER.reset()
+    (workspace / "big.py").write_text("x = 1  # padding\n" * 60)
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(_read_rounds_script(7))),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=12, step_label="t")
+    masked = [m for m in result.messages
+              if isinstance(m, ToolMessage) and (m.content or "").startswith("[FILE_READ:")]
+    dropped = [m for m in result.messages
+               if isinstance(m, HumanMessage) and "safety drop" in (m.content or "")]
+    assert masked or dropped, "context pressure produced no trimming at all"
+
+
 # ---------------------------------------------------------------------------
 # Context-trim budget (config.BUDGET/SMALL_BUDGET consolidation)
 # ---------------------------------------------------------------------------
