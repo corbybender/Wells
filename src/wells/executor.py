@@ -1256,6 +1256,79 @@ def run_executor(
             messages=messages,
         )
 
+    _escalated = False
+
+    def _try_escalate(reason: str) -> bool:
+        """Swap in ESCALATION_PROFILE instead of hard-stopping, once per run.
+
+        Every hard-stop below fires only after the model has demonstrably
+        failed (ignored two rounds of coaching about the same loop). When a
+        stronger profile is configured, that exact moment — not before — is
+        when paying for it is worth it: the cheap model did all the work it
+        could, and the alternative is throwing the whole run away. The
+        stronger model inherits the full transcript, so it starts from
+        everything already learned rather than from scratch. One escalation
+        per run: if the strong model gets stuck too, the run stops for real.
+        """
+        nonlocal llm, native_tools, structured_mode, model_name, _escalated
+        nonlocal _unknown_tool_streak, _last_call_repeat, _last_call_key
+        nonlocal _drift_streak, _drift_path, compact_prompt
+        nonlocal ctx_drop_threshold, ctx_drop_target
+        if _escalated:
+            return False
+        esc = (config.ESCALATION_PROFILE or "").strip()
+        if not esc or esc == profile:
+            return False
+        esc_profile = config.providers.load_profile(esc)
+        if esc_profile is None:
+            return False
+        try:
+            new_llm = config.providers.get_chat_model(esc, temperature=temperature)
+        except Exception:
+            return False
+        _escalated = True
+        structured = (
+            _try_bind_structured(new_llm, esc_profile, toolset)
+            if config.STRUCTURED_OUTPUTS else None
+        )
+        if structured is not None:
+            llm = structured
+            structured_mode = True
+            native_tools = False
+        else:
+            structured_mode = False
+            bound = _try_bind_tools(new_llm, toolset)
+            native_tools = bound is not None
+            llm = bound if native_tools else new_llm
+        # The new model may have a completely different context budget and
+        # calling convention — rebuild the system prompt to match (this
+        # invalidates the prompt cache once, which a model swap does anyway).
+        compact_prompt = bool(config.providers._looks_like_local_ollama(esc_profile))
+        ctx_drop_threshold, ctx_drop_target = _effective_ctx_budget(compact_prompt)
+        new_system = _system_prompt(
+            task, toolset, plan_mode=ctx.plan_mode, workspace=ctx.workspace,
+            compact=compact_prompt, structured=structured_mode,
+        )
+        if system_prefix:
+            new_system = f"{system_prefix}\n\n{new_system}"
+        messages[0] = SystemMessage(content=new_system)
+        model_name = esc_profile.label()
+        # Fresh slate for the loop detectors — they described the old model.
+        _unknown_tool_streak = 0
+        _last_call_repeat = 0
+        _last_call_key = None
+        _drift_streak = 0
+        _drift_path = None
+        messages.append(HumanMessage(content=(
+            f"[HARNESS: The previous model {reason} and has been replaced — "
+            f"you ({model_name}) are now driving this run. Review the "
+            f"transcript above, work out where it went wrong, and continue "
+            f"the ORIGINAL task from the current state of the workspace.]"
+        )))
+        _ui("warn", f"  [bold magenta]⬆ escalating to {model_name} — previous "
+                    f"model {reason}[/bold magenta]")
+        return True
+
     budget = config.MAX_RUN_TOKENS
     budget_warned = False
     cap_s = str(cap) if cap else "∞"
@@ -1643,12 +1716,17 @@ def run_executor(
                             f"'{name}' called {_unknown_tool_streak}× in a row — "
                             f"model told the real tool list[/bold yellow]")
             if _unknown_tool_streak >= 6:
-                _ui("warn", f"  [bold red]⛔ stuck loop — model kept inventing "
-                            f"nonexistent tool names ({_unknown_tool_streak}× in a "
-                            f"row), stopping the run[/bold red]")
                 messages.append(
                     _tool_message(obs_text, tool_call_id=tcid, name=name, ai_message=resp)
                 )
+                if _try_escalate(
+                    f"kept inventing nonexistent tool names "
+                    f"({_unknown_tool_streak}× in a row)"
+                ):
+                    break
+                _ui("warn", f"  [bold red]⛔ stuck loop — model kept inventing "
+                            f"nonexistent tool names ({_unknown_tool_streak}× in a "
+                            f"row), stopping the run[/bold red]")
                 return _stopped(
                     "stuck_loop",
                     f"(stopped: model called nonexistent tool names "
@@ -1843,6 +1921,11 @@ def run_executor(
             # (unlimited), nothing else stops a model that keeps calling the
             # same read-only tool with the same args.
             if _last_call_repeat >= 6:
+                if _try_escalate(
+                    f"repeated {name} with identical arguments "
+                    f"{_last_call_repeat}× with no progress"
+                ):
+                    break
                 _ui("warn", f"  [bold red]⛔ stuck loop — {name} repeated "
                             f"{_last_call_repeat}× with identical args, "
                             f"stopping the run[/bold red]")
@@ -1857,6 +1940,11 @@ def run_executor(
             # if it keeps thrashing anyway, stop rather than burn the rest of
             # the step budget on rewrites that were never converging.
             if _drift_streak >= _DRIFT_STOP_AT:
+                if _try_escalate(
+                    f"drifted off the goal ({_drift_streak} unrelated full "
+                    f"rewrites of '{_short_path(_drift_path or '')}' in a row)"
+                ):
+                    break
                 _ui("warn", f"  [bold red]⛔ task drift — {_drift_streak} "
                             f"unrelated full rewrites of "
                             f"{_short_path(_drift_path or '')} in a row with no "
