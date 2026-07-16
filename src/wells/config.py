@@ -293,6 +293,13 @@ WELLS_CODEACT: bool = os.getenv("WELLS_CODEACT", "1") not in ("0", "false", "no"
 # semantics are unchanged. Set 0 to disable.
 PARALLEL_READS: bool = os.getenv("WELLS_PARALLEL_READS", "1") not in ("0", "false", "no", "")
 
+# When the model re-issues an identical read-only call whose result is still
+# verbatim in its recent context (within the last WELLS_KEEP_ROUNDS rounds,
+# with no write/shell mutation since), skip the dispatch and return a pointer
+# to the earlier step instead of re-paying the full output in tokens. Also
+# makes re-read loops visible to the model immediately. Set 0 to disable.
+DEDUPE_READS: bool = os.getenv("WELLS_DEDUPE_READS", "1") not in ("0", "false", "no", "")
+
 # Structured outputs: for local Ollama profiles, constrain the model's reply
 # to a tool-call JSON schema at the token-sampling level (Ollama "format" /
 # OpenAI-compat "response_format: json_schema"). The sampler literally cannot
