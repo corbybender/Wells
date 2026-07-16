@@ -124,13 +124,24 @@ LLM_BACKOFF_BASE: float = float(os.getenv("LLM_BACKOFF_BASE", "2.0"))
 OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "0"))
 
 # --- Token optimization configuration -------------------------------------
+# These are the enforced context-trim ceiling for the executor's safety-drop
+# pipeline (executor._effective_ctx_budget), not just informational — a
+# request that would exceed max_input_tokens gets oldest rounds dropped
+# before it's sent. BUDGET is the default; SMALL_BUDGET is auto-selected
+# instead for a profile that looks like local Ollama.
 BUDGET = TokenBudget(
     max_input_tokens=int(os.getenv("TOKEN_BUDGET_MAX_INPUT", "24000")),
     reserved_output_tokens=int(os.getenv("TOKEN_BUDGET_RESERVED_OUTPUT", "4000")),
 )
+# Sized to fit Ollama's own native default context (4096, regardless of what
+# the model architecturally supports — see OLLAMA_NUM_CTX above) with a
+# safety margin for chat-template overhead, since most local profiles never
+# opt into raising it (that costs a multi-minute reload). When OLLAMA_NUM_CTX
+# IS set, use that instead — we've explicitly raised the real ceiling, so the
+# trim budget should track it rather than stay pinned to the crippled default.
 SMALL_BUDGET = TokenBudget(
-    max_input_tokens=int(os.getenv("TOKEN_BUDGET_SMALL_INPUT", "8000")),
-    reserved_output_tokens=int(os.getenv("TOKEN_BUDGET_RESERVED_OUTPUT", "4000")),
+    max_input_tokens=int(os.getenv("TOKEN_BUDGET_SMALL_INPUT", str(OLLAMA_NUM_CTX or 3584))),
+    reserved_output_tokens=int(os.getenv("TOKEN_BUDGET_SMALL_RESERVED_OUTPUT", "512")),
 )
 # Replace verbatim plan/architecture with a summary on loop iterations when the
 # durable context exceeds this many (estimated) tokens. Set 0 to disable.

@@ -579,9 +579,40 @@ def _inject_wm(messages: list[BaseMessage], wm: WorkingMemory) -> list[BaseMessa
 _MASK_KEEP_ROUNDS = int(__import__("os").environ.get("WELLS_KEEP_ROUNDS", "4"))
 # Only mask tool outputs larger than this many estimated tokens (small ones are cheap).
 _MASK_MIN_TOKENS = int(__import__("os").environ.get("WELLS_MASK_MIN", "120"))
-# Absolute drop threshold — safety valve, fires only when masking isn't enough.
-_DROP_THRESHOLD = int(__import__("os").environ.get("WELLS_CTX_LIMIT", "18000"))
-_DROP_TARGET = int(__import__("os").environ.get("WELLS_CTX_TARGET", "12000"))
+# Fallback drop threshold/target — used only if neither an explicit
+# WELLS_CTX_LIMIT/TARGET override nor config.BUDGET is available (should not
+# happen in practice; config always loads). See _effective_ctx_budget().
+_DROP_THRESHOLD_DEFAULT = 18000
+_DROP_TARGET_DEFAULT = 12000
+
+
+def _effective_ctx_budget(compact: bool) -> tuple[int, int]:
+    """Resolve the safety-drop (threshold, target) pair.
+
+    Historically these were hardcoded module constants driven by their own
+    undocumented env vars (WELLS_CTX_LIMIT/WELLS_CTX_TARGET), completely
+    disconnected from config.BUDGET/SMALL_BUDGET — the knobs actually shown
+    in `wells info` and documented for users. Tuning the documented knob had
+    zero effect on what was actually enforced. This makes config.BUDGET the
+    real source of truth: WELLS_CTX_LIMIT/TARGET remain available as an
+    explicit low-level override (back-compat) when BOTH are set, otherwise
+    the threshold/target are derived from config.BUDGET (or config.
+    SMALL_BUDGET for a local/small-context profile, ``compact=True`` —
+    same signal already used to shrink the system prompt) so a model with a
+    small context window gets a matching, much lower trim ceiling instead
+    of the generic 24000-token default.
+    """
+    limit_override = __import__("os").environ.get("WELLS_CTX_LIMIT")
+    target_override = __import__("os").environ.get("WELLS_CTX_TARGET")
+    if limit_override and target_override:
+        try:
+            return int(limit_override), int(target_override)
+        except ValueError:
+            pass
+    budget = config.SMALL_BUDGET if compact else config.BUDGET
+    if budget is None:
+        return _DROP_THRESHOLD_DEFAULT, _DROP_TARGET_DEFAULT
+    return budget.max_input_tokens, budget.input_allowance
 
 
 def _ctx_tokens(messages: list[BaseMessage]) -> int:
@@ -691,35 +722,52 @@ def _apply_observation_masking(
     return result, max(0, saved)
 
 
-def _safety_drop(messages: list[BaseMessage]) -> tuple[list[BaseMessage], int]:
+def _safety_drop(
+    messages: list[BaseMessage],
+    *,
+    threshold: int = _DROP_THRESHOLD_DEFAULT,
+    target: int = _DROP_TARGET_DEFAULT,
+) -> tuple[list[BaseMessage], int]:
     """Absolute last resort: drop complete oldest rounds when context still exceeds limit.
 
     Should rarely fire after observation masking. Indicates either an extremely long
     run or pathologically large tool outputs that couldn't be masked enough.
+
+    ``threshold``/``target`` come from _effective_ctx_budget() in normal use;
+    the defaults here only apply to a caller that doesn't pass them.
     """
     total = _ctx_tokens(messages)
-    if total <= _DROP_THRESHOLD or len(messages) <= 3:
+    if total <= threshold or len(messages) <= 3:
         return messages, 0
 
-    # Protect head: system message + task HumanMessage + optional WM HumanMessage
+    # Protect head: system message + task HumanMessage + optional WM HumanMessage.
+    # Must stop at the first AIMessage/ToolMessage (where real rounds begin) —
+    # scanning for a *second* plain HumanMessage instead (as this used to do)
+    # only stops there if something like a /steer message ever appears later.
+    # In the common case (no steer), that second Human never comes, so the
+    # loop silently walked the entire message list every time, leaving `tail`
+    # empty and this "last resort" safety valve a no-op in practice.
     head_count = 0
     seen_human = False
     for m in messages:
-        head_count += 1
+        if isinstance(m, SystemMessage):
+            head_count += 1
+            continue
         if isinstance(m, HumanMessage):
             if not seen_human:
                 seen_human = True  # first HumanMessage = task
-            elif (m.content or "").startswith(_WM_TAG):
-                pass  # WM message — also protect
-            else:
-                head_count -= 1  # not WM, stop protecting here
-                break
+                head_count += 1
+                continue
+            if (m.content or "").startswith(_WM_TAG):
+                head_count += 1  # WM message — also protect
+                continue
+        break  # first AIMessage/ToolMessage, or a later plain Human (e.g. /steer)
 
     head = messages[:head_count]
     tail = list(messages[head_count:])
     saved = 0
 
-    while tail and (total - saved) > _DROP_TARGET:
+    while tail and (total - saved) > target:
         rounds_left = sum(1 for m in tail if isinstance(m, AIMessage))
         if rounds_left <= 1:
             break
@@ -928,6 +976,10 @@ def run_executor(
     compact_prompt = bool(
         model_label and config.providers._looks_like_local_ollama(model_label)
     )
+    # Same signal drives the context-trim ceiling: a small-context local
+    # model gets config.SMALL_BUDGET instead of the generic 24000-token
+    # default, so the safety-drop pipeline actually matches what it can hold.
+    ctx_drop_threshold, ctx_drop_target = _effective_ctx_budget(compact_prompt)
 
     system = _system_prompt(task, toolset, plan_mode=ctx.plan_mode, workspace=ctx.workspace,
                             compact=compact_prompt)
@@ -1041,7 +1093,9 @@ def run_executor(
         # ── Context management pipeline (order matters) ──────────────────────
         messages = _inject_wm(messages, wm)
         messages, mask_saved = _apply_observation_masking(messages, _tool_meta)
-        messages, drop_saved = _safety_drop(messages)
+        messages, drop_saved = _safety_drop(
+            messages, threshold=ctx_drop_threshold, target=ctx_drop_target
+        )
         saved = mask_saved + drop_saved
         if saved:
             total_saved += saved
@@ -1522,7 +1576,9 @@ def run_executor(
             try:
                 messages = _inject_wm(messages, wm)
                 messages, ms = _apply_observation_masking(messages, _tool_meta)
-                messages, ds = _safety_drop(messages)
+                messages, ds = _safety_drop(
+                    messages, threshold=ctx_drop_threshold, target=ctx_drop_target
+                )
                 final_saved = ms + ds
                 final = config._invoke_with_retry(llm, messages)
                 _account_usage(step=step_label, model=model_name, messages=messages,

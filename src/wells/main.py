@@ -127,7 +127,15 @@ def _print_info() -> None:
     print(f"  Max tool steps     : {config.MAX_TOOL_STEPS}")
     print(
         f"  Token budget/call  : {config.BUDGET.max_input_tokens} "
-        f"(reserved out {config.BUDGET.reserved_output_tokens})"
+        f"(reserved out {config.BUDGET.reserved_output_tokens}) — "
+        f"this is the enforced context-trim ceiling for the executor's "
+        f"safety-drop pipeline, not just informational"
+    )
+    print(
+        f"  Small/local budget : {config.SMALL_BUDGET.max_input_tokens} "
+        f"(reserved out {config.SMALL_BUDGET.reserved_output_tokens}) — "
+        f"used automatically instead of the above for profiles that look "
+        f"like local Ollama"
     )
     print(
         f"  Summarize on loop  : {'on' if config.SUMMARIZE_ON_LOOP else 'off'} "

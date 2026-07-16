@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from wells import config, executor, tools
 from wells.tokens import LEDGER
@@ -396,6 +396,81 @@ def test_loop_handles_bare_json_call_from_qwen_style_model(
     assert result.stopped_reason == "done"
     assert result.steps_taken == 1
     assert result.tool_calls[0]["name"] == "read_file"
+
+
+# ---------------------------------------------------------------------------
+# Context-trim budget (config.BUDGET/SMALL_BUDGET consolidation)
+# ---------------------------------------------------------------------------
+
+
+def test_effective_ctx_budget_uses_config_budget_by_default(monkeypatch):
+    monkeypatch.delenv("WELLS_CTX_LIMIT", raising=False)
+    monkeypatch.delenv("WELLS_CTX_TARGET", raising=False)
+    threshold, target = executor._effective_ctx_budget(compact=False)
+    assert threshold == config.BUDGET.max_input_tokens
+    assert target == config.BUDGET.input_allowance
+
+
+def test_effective_ctx_budget_uses_small_budget_when_compact(monkeypatch):
+    monkeypatch.delenv("WELLS_CTX_LIMIT", raising=False)
+    monkeypatch.delenv("WELLS_CTX_TARGET", raising=False)
+    threshold, target = executor._effective_ctx_budget(compact=True)
+    assert threshold == config.SMALL_BUDGET.max_input_tokens
+    assert target == config.SMALL_BUDGET.input_allowance
+    # The whole point: a local/small-context model must get a materially
+    # lower ceiling than the generic default, not the same one.
+    assert threshold < config.BUDGET.max_input_tokens
+
+
+def test_effective_ctx_budget_explicit_env_override_wins(monkeypatch):
+    monkeypatch.setenv("WELLS_CTX_LIMIT", "5555")
+    monkeypatch.setenv("WELLS_CTX_TARGET", "3333")
+    threshold, target = executor._effective_ctx_budget(compact=False)
+    assert (threshold, target) == (5555, 3333)
+    # Override applies regardless of compact mode too.
+    threshold, target = executor._effective_ctx_budget(compact=True)
+    assert (threshold, target) == (5555, 3333)
+
+
+def test_safety_drop_head_protection_stops_at_first_ai_message():
+    """Regression for a latent bug found while testing the budget wiring:
+    the old head-protection loop only stopped scanning when it found a
+    *second* plain HumanMessage — which never happens without a /steer
+    message — so in the common case it silently walked the entire message
+    list, left `tail` empty, and this "last resort" safety valve never
+    actually dropped anything. It must stop at the first AIMessage instead,
+    protecting only [system, task, WM?] as the intended fixed-size head."""
+    messages = [SystemMessage(content="sys"), HumanMessage(content="the task")]
+    for i in range(10):
+        messages.append(AIMessage(content=f"round {i} " * 50, tool_calls=[
+            {"name": "list_dir", "args": {"path": f"d{i}"}, "id": f"c{i}"}
+        ]))
+        messages.append(ToolMessage(
+            content=f"observation {i} " * 50, tool_call_id=f"c{i}", name="list_dir"
+        ))
+    # No /steer message anywhere — the realistic common case.
+    trimmed, saved = executor._safety_drop(messages, threshold=100, target=50)
+    assert saved > 0, "safety_drop must engage when no steer message is present"
+    assert len(trimmed) < len(messages)
+    # The protected head must survive untouched.
+    assert trimmed[0] == messages[0]
+    assert trimmed[1] == messages[1]
+
+
+def test_safety_drop_respects_custom_threshold():
+    """A tiny explicit threshold must trigger dropping even for a message
+    list config.BUDGET's generic default would leave untouched."""
+    messages = [SystemMessage(content="sys"), HumanMessage(content="the task")]
+    for i in range(10):
+        messages.append(AIMessage(content=f"round {i} " * 50, tool_calls=[
+            {"name": "list_dir", "args": {"path": f"d{i}"}, "id": f"c{i}"}
+        ]))
+        messages.append(ToolMessage(
+            content=f"observation {i} " * 50, tool_call_id=f"c{i}", name="list_dir"
+        ))
+    trimmed, saved = executor._safety_drop(messages, threshold=50, target=20)
+    assert saved > 0
+    assert len(trimmed) < len(messages)
 
 
 def test_infer_target_filename_from_hint_phrase():
