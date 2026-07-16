@@ -198,8 +198,8 @@ def test_stream_invoke_aggregates_and_flags(capsys):
             yield AIMessageChunk(content="lo")
 
     CONTROL.reset()
-    resp, streamed = executor._stream_invoke(FakeLLM(), [])
-    assert streamed is True
+    resp, streamed, aborted = executor._stream_invoke(FakeLLM(), [])
+    assert streamed is True and aborted is False
     assert resp.content == "Hello"
     assert "Hello" in capsys.readouterr().out
 
@@ -215,8 +215,8 @@ def test_stream_invoke_falls_back_on_error():
 
     CONTROL.reset()
     with patch.object(config, "_invoke_with_retry", return_value=AIMessage(content="fallback")):
-        resp, streamed = executor._stream_invoke(BrokenLLM(), [])
-    assert streamed is False and resp.content == "fallback"
+        resp, streamed, aborted = executor._stream_invoke(BrokenLLM(), [])
+    assert streamed is False and aborted is False and resp.content == "fallback"
 
 
 def test_run_executor_streams_final_answer(ctx: ToolContext, capsys):
