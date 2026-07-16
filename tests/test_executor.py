@@ -403,6 +403,117 @@ def test_structured_outputs_disabled_by_config(ctx: tools.ToolContext):
 
 
 # ---------------------------------------------------------------------------
+# Model cascade / escalation on failure
+# ---------------------------------------------------------------------------
+
+
+def _two_model_setup(small_script, big_script):
+    """Patches for a run where profile 'small' escalates to profile 'big'.
+
+    Returns (patchers, sentinel_small, sentinel_big).
+    """
+    from wells import providers as _providers
+
+    small_llm, big_llm = object(), object()
+    profiles = {
+        "small": _providers.ProviderProfile(
+            name="small", kind="openai", model="qwen2.5-coder:7b",
+            base_url="https://smallhost.example/v1",
+        ),
+        "big": _providers.ProviderProfile(
+            name="big", kind="openai", model="glm-5.2",
+            base_url="https://api.z.ai/api/coding/paas/v4/",
+        ),
+    }
+    small_it, big_it = iter(small_script), iter(big_script)
+
+    def _invoke(llm, messages):
+        it = big_it if llm is big_llm else small_it
+        try:
+            return next(it)
+        except StopIteration:
+            return AIMessage(content="(done)")
+
+    patchers = (
+        patch.object(config, "_invoke_with_retry", side_effect=_invoke),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "ESCALATION_PROFILE", "big"),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(config.providers, "load_profile",
+                     side_effect=lambda n: profiles.get(n)),
+        patch.object(config.providers, "get_chat_model",
+                     side_effect=lambda n, **kw: big_llm if n == "big" else small_llm),
+    )
+    return patchers, small_llm, big_llm
+
+
+def test_escalation_rescues_a_stuck_run(ctx: tools.ToolContext, workspace: Path):
+    """Six identical calls would hard-stop the run; with ESCALATION_PROFILE
+    set, the stronger model takes over the same transcript and finishes."""
+    LEDGER.reset()
+    stuck = [
+        AIMessage(content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>')
+    ] * 6
+    rescue = [
+        AIMessage(content='<tool_call>{"name": "edit_file", "args": {"path": "maths.py", "old_string": "return a - b", "new_string": "return a + b"}}</tool_call>'),
+        AIMessage(content="Recovered: fixed the add bug and finished."),
+    ]
+    patchers, _, _ = _two_model_setup(stuck, rescue)
+    import contextlib
+    with contextlib.ExitStack() as stack:
+        for p in patchers:
+            stack.enter_context(p)
+        result = executor.run_executor(
+            task="fix maths.py", ctx=ctx, max_steps=20, step_label="t",
+            profile="small",
+        )
+    assert result.stopped_reason == "done"
+    assert "Recovered" in result.summary
+    assert "return a + b" in (workspace / "maths.py").read_text()
+    handoff = [m for m in result.messages
+               if isinstance(m, HumanMessage) and "has been replaced" in (m.content or "")]
+    assert len(handoff) == 1
+
+
+def test_escalation_fires_only_once_then_stops_for_real(
+    ctx: tools.ToolContext, workspace: Path
+):
+    LEDGER.reset()
+    stuck = [
+        AIMessage(content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>')
+    ] * 6
+    also_stuck = [
+        AIMessage(content='<tool_call>{"name": "list_dir", "args": {"path": "."}}</tool_call>')
+    ] * 7
+    patchers, _, _ = _two_model_setup(stuck, also_stuck)
+    import contextlib
+    with contextlib.ExitStack() as stack:
+        for p in patchers:
+            stack.enter_context(p)
+        result = executor.run_executor(
+            task="fix maths.py", ctx=ctx, max_steps=30, step_label="t",
+            profile="small",
+        )
+    assert result.stopped_reason == "stuck_loop"
+
+
+def test_no_escalation_when_profile_unset(ctx: tools.ToolContext):
+    """Default behavior unchanged: unset ESCALATION_PROFILE = hard stop."""
+    LEDGER.reset()
+    stuck = [
+        AIMessage(content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>')
+    ] * 7
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(stuck)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "ESCALATION_PROFILE", ""),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=20, step_label="t")
+    assert result.stopped_reason == "stuck_loop"
+
+
+# ---------------------------------------------------------------------------
 # Call extraction (native vs text)
 # ---------------------------------------------------------------------------
 

@@ -218,6 +218,16 @@ AUTO_COMMIT: bool = os.getenv("AUTO_COMMIT", "0") not in ("0", "false", "no", ""
 # when one is configured (they are judgment-light relative to the coder).
 CHEAP_VERIFY: bool = os.getenv("CHEAP_VERIFY", "1") not in ("0", "false", "no", "")
 
+# Model cascade: when the executor is about to hard-stop a run as stuck
+# (identical-call loop, invented tool names, task-drift thrashing) and this
+# names a configured profile different from the one running, it switches to
+# that profile ONCE and lets the run continue instead of stopping — a user on
+# a 7B local model with an occasional cloud profile gets local-model costs
+# with frontier-grade unsticking, paid only at the exact moment the small
+# model has demonstrably failed. Empty (default) = off; a second stuck
+# condition after escalating stops the run for real.
+ESCALATION_PROFILE: str = os.getenv("ESCALATION_PROFILE", "").strip()
+
 # Self-heal: after every write/edit, run the fastest available checker for
 # that file type (ruff/py_compile, node --check, json parse) and inject any
 # failure into the agent's next observation. Set 0 to disable.
