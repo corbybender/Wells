@@ -1104,6 +1104,34 @@ def run_executor(
     *,
     task: str,
     ctx: tools.ToolContext,
+    **kwargs,
+) -> ExecutorResult:
+    """Run the agentic loop (see :func:`_run_executor_impl`) and record a trace.
+
+    The trace (task, model replies, tool calls + results, stop reason) lands
+    under ``<workspace>/.wells/traces/`` so any run — especially a failed one
+    — can be replayed later as a harness regression test via ``wells replay``.
+    Recording is best-effort and never affects the run; ``WELLS_TRACE=0``
+    disables it.
+    """
+    result = _run_executor_impl(task=task, ctx=ctx, **kwargs)
+    try:
+        from wells import traces as _traces
+        _traces.record_run(
+            task=task,
+            workspace=getattr(ctx, "workspace", None),
+            step_label=kwargs.get("step_label", "executor"),
+            result=result,
+        )
+    except Exception:
+        pass
+    return result
+
+
+def _run_executor_impl(
+    *,
+    task: str,
+    ctx: tools.ToolContext,
     toolset: list[tools.ToolDef] | None = None,
     max_steps: int | None = None,
     profile: str | None = None,

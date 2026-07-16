@@ -490,7 +490,71 @@ def _print_usage() -> None:
         "  sessions delete SID    delete one session\n"
         "  sessions clear         delete all sessions for current workspace\n"
         "  sessions --all         operate across all workspaces\n"
+        "  traces                 list recorded run traces for this workspace\n"
+        "  replay PATH|N|latest   re-run the harness over a recorded trace and\n"
+        "                         report divergence (harness regression check)\n"
     )
+
+
+def _run_traces_cmd(args: list[str]) -> None:
+    from wells import traces
+
+    ws = config.WORKSPACE_ROOT
+    found = traces.list_traces(ws)
+    if not found:
+        print(f"No traces recorded under {ws}\\.wells\\traces "
+              f"(runs record automatically; WELLS_TRACE=0 disables).")
+        return
+    print(f"\nRecorded traces in {ws} (newest last):")
+    for i, p in enumerate(found, 1):
+        try:
+            import json as _json
+            head = _json.loads(p.read_text(encoding="utf-8"))
+            task_prev = " ".join((head.get("task") or "").split())[:60]
+            info = (f"[{head.get('stopped_reason', '?')}, "
+                    f"{head.get('steps_taken', '?')} steps] {task_prev!r}")
+        except Exception:
+            info = "(unreadable)"
+        print(f"  {i}. {p.name}  {info}")
+    print("\nReplay one with: wells replay <N|latest|path>")
+
+
+def _run_replay_cmd(args: list[str]) -> None:
+    from wells import traces
+
+    if not args:
+        print("usage: wells replay <N|latest|path-to-trace.json>")
+        sys.exit(2)
+    sel = args[0]
+    ws = config.WORKSPACE_ROOT
+    path = None
+    if sel == "latest":
+        found = traces.list_traces(ws)
+        path = found[-1] if found else None
+    elif sel.isdigit():
+        found = traces.list_traces(ws)
+        idx = int(sel) - 1
+        path = found[idx] if 0 <= idx < len(found) else None
+    else:
+        p = Path(sel)
+        path = p if p.is_file() else None
+    if path is None:
+        print(f"No trace matching {sel!r}. Run `wells traces` to list them.")
+        sys.exit(2)
+
+    print(f"Replaying {path.name} (recorded model outputs, stubbed tools) ...")
+    report = traces.replay(path)
+    print(f"\n  stop reason : recorded={report['recorded_stopped_reason']!r}  "
+          f"replayed={report['stopped_reason']!r}")
+    print(f"  steps       : recorded={report['recorded_steps']}  "
+          f"replayed={report['steps_taken']}")
+    print(f"  tool calls  : recorded={report['recorded_calls']}")
+    print(f"                replayed={report['calls']}")
+    if report["match"]:
+        print("\n  MATCH — the harness makes the same decisions it made live.")
+    else:
+        print("\n  DIVERGED — harness behavior changed for this recorded run.")
+        sys.exit(1)
 
 
 def main() -> None:
@@ -597,6 +661,12 @@ def main() -> None:
         return
     if remaining and remaining[0] == "sessions":
         _run_sessions_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "traces":
+        _run_traces_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "replay":
+        _run_replay_cmd(remaining[1:])
         return
 
     # ---- Pass 3: a goal run — separate goal args from KEY=VALUE overrides ----
