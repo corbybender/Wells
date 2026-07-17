@@ -25,9 +25,19 @@ A ``SKILL.md`` is YAML-front-matter + markdown body, e.g.::
     2. Tag index-vX.Y.Z
     3. ...
 
-Resolution: skills are discovered from the workspace ``skills/`` directory (and
-any extra paths in ``WELLS_SKILLS_PATHS``, a path-list). ``WELLS_SKILLS=0``
-disables the provider entirely.
+Resolution: skills are discovered from the workspace ``skills/`` directory,
+any extra paths in ``WELLS_SKILLS_PATHS`` (a path-list), and finally the
+built-in skills shipped with the Wells package itself (``builtin_skills/``,
+alongside this module — general, repo-agnostic know-how like "check CI
+config before guessing a test command", useful out of the box with zero
+per-repo setup). Name collisions resolve first-wins in that same order, so
+a workspace's own ``skills/verify-external-api/`` transparently shadows the
+built-in of the same name — a repo can override or disable an individual
+built-in just by defining its own skill with the same name.
+
+``WELLS_SKILLS=0`` disables the provider entirely; ``WELLS_BUILTIN_SKILLS=0``
+disables only the shipped defaults, leaving workspace/WELLS_SKILLS_PATHS
+skills unaffected.
 """
 
 from __future__ import annotations
@@ -96,11 +106,25 @@ class SkillIndex:
 # ---------------------------------------------------------------------------
 
 
+# Skills shipped with the Wells package itself — general, repo-agnostic
+# know-how (see the module docstring). Always LAST in the roots list so a
+# workspace's own skill of the same name shadows it (dedup in
+# _index_cached is first-wins by roots order).
+_BUILTIN_SKILLS_ROOT = Path(__file__).parent / "builtin_skills"
+
+
+def builtin_skills_enabled() -> bool:
+    return os.environ.get("WELLS_BUILTIN_SKILLS", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
 def _skill_paths(workspace: str | None = None) -> list[Path]:
     """Roots to search for ``skills/<name>/SKILL.md`` (or loose ``SKILL.md``).
 
       1. ``<workspace>/skills/`` (the conventional location)
       2. Any extra dir in ``WELLS_SKILLS_PATHS`` (os.pathsep-separated)
+      3. The package's built-in skills (``WELLS_BUILTIN_SKILLS=0`` to disable)
 
     Non-existent dirs are silently skipped. Duplicates removed.
     """
@@ -116,6 +140,8 @@ def _skill_paths(workspace: str | None = None) -> list[Path]:
             p = piece.strip()
             if p:
                 roots.append(Path(p))
+    if builtin_skills_enabled():
+        roots.append(_BUILTIN_SKILLS_ROOT)
     # De-dup by resolved path, drop non-existent, keep order.
     seen: set[str] = set()
     out: list[Path] = []
