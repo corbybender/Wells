@@ -1,4 +1,5 @@
-"""Tests for the web tools: web_search (SearXNG) and fetch_url."""
+"""Tests for the web tools: web_search (DuckDuckGo default / SearXNG opt-in)
+and fetch_url."""
 
 from __future__ import annotations
 
@@ -15,22 +16,96 @@ def ctx(tmp_path) -> ToolContext:
     return ToolContext(workspace=str(tmp_path), safety="auto")
 
 
-# ---------------------------------------------------------------------------
-# web_search
-# ---------------------------------------------------------------------------
-
-
-def test_web_search_reports_not_configured_without_searxng_url(ctx, monkeypatch):
+@pytest.fixture(autouse=True)
+def _no_searxng(monkeypatch):
+    """Default to the zero-config DuckDuckGo path unless a test opts into
+    SearXNG explicitly — keeps the two backends from bleeding into each other."""
     monkeypatch.delenv("WELLS_SEARXNG_URL", raising=False)
-    result = web.web_search(ctx, "how does asyncio work")
-    assert result.ok is False
-    assert "WELLS_SEARXNG_URL" in result.error
 
 
-def test_web_search_requires_a_query(ctx, monkeypatch):
-    monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080")
+def test_web_search_requires_a_query(ctx):
     result = web.web_search(ctx, "")
     assert result.ok is False
+
+
+# ---------------------------------------------------------------------------
+# web_search — DuckDuckGo (zero-config default)
+# ---------------------------------------------------------------------------
+
+_DDG_HTML_TWO_RESULTS = """
+<div class="result results_links results_links_deep web-result">
+  <h2 class="result__title">
+    <a rel="nofollow" class="result__a"
+       href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.python.org%2Fasyncio&amp;rut=abc">
+       async<b>io</b> docs</a>
+  </h2>
+  <a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">Asynchronous &amp; I/O framework.</a>
+</div>
+<div class="result results_links results_links_deep web-result">
+  <h2 class="result__title">
+    <a rel="nofollow" class="result__a"
+       href="//duckduckgo.com/l/?uddg=https%3A%2F%2Frealpython.com%2Fasyncio&amp;rut=def">
+       Real Python asyncio</a>
+  </h2>
+  <a class="result__snippet" href="//duckduckgo.com/l/?uddg=y">A guide to asyncio.</a>
+</div>
+"""
+
+
+def test_web_search_defaults_to_duckduckgo_with_no_config(ctx):
+    """The whole point: web_search must work with zero env vars set."""
+    with patch("httpx.get", return_value=_FakeHttpResp(_DDG_HTML_TWO_RESULTS)) as mock_get:
+        result = web.web_search(ctx, "asyncio")
+    assert result.ok is True
+    assert "asyncio docs" in result.output
+    assert "docs.python.org/asyncio" in result.output
+    assert mock_get.call_args.args[0] == web._DDG_ENDPOINT
+
+
+def test_web_search_duckduckgo_unwraps_redirect_url_and_strips_markup(ctx):
+    with patch("httpx.get", return_value=_FakeHttpResp(_DDG_HTML_TWO_RESULTS)):
+        result = web.web_search(ctx, "asyncio", count=2)
+    assert "https://docs.python.org/asyncio" in result.output
+    assert "https://realpython.com/asyncio" in result.output
+    assert "Asynchronous & I/O framework." in result.output  # entity unescaped
+    assert "<b>" not in result.output  # inline markup stripped
+
+
+def test_web_search_duckduckgo_no_results(ctx):
+    with patch("httpx.get", return_value=_FakeHttpResp("<html><body>nothing here</body></html>")):
+        result = web.web_search(ctx, "zzzqqqnonexistent")
+    assert result.ok is True
+    assert "No results" in result.output
+
+
+def test_web_search_duckduckgo_network_failure_reported_not_raised(ctx):
+    with patch("httpx.get", side_effect=ConnectionError("refused")):
+        result = web.web_search(ctx, "x")  # must not raise
+    assert result.ok is False
+    assert "failed" in result.error
+
+
+def test_web_search_duckduckgo_count_limits_results(ctx):
+    with patch("httpx.get", return_value=_FakeHttpResp(_DDG_HTML_TWO_RESULTS)):
+        result = web.web_search(ctx, "asyncio", count=1)
+    assert result.output.count("docs.python.org") == 1
+    assert "realpython.com" not in result.output
+
+
+def test_web_search_prefers_searxng_when_configured(ctx, monkeypatch):
+    """SearXNG is opt-in: setting WELLS_SEARXNG_URL must switch the backend
+    away from DuckDuckGo, not run both."""
+    monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080")
+    with patch.object(web, "_web_search_searxng", return_value=None) as searxng_mock, \
+         patch.object(web, "_web_search_duckduckgo") as ddg_mock:
+        web.web_search(ctx, "x")
+    searxng_mock.assert_called_once()
+    ddg_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# web_search — SearXNG (opt-in upgrade path)
+# ---------------------------------------------------------------------------
 
 
 class _FakeResp:
@@ -46,7 +121,7 @@ class _FakeResp:
         return self._payload
 
 
-def test_web_search_formats_results(ctx, monkeypatch):
+def test_web_search_searxng_formats_results(ctx, monkeypatch):
     monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080")
     payload = {
         "results": [
@@ -66,7 +141,7 @@ def test_web_search_formats_results(ctx, monkeypatch):
     assert call_kwargs["params"]["q"] == "asyncio"
 
 
-def test_web_search_strips_trailing_slash_from_base_url(ctx, monkeypatch):
+def test_web_search_searxng_strips_trailing_slash_from_base_url(ctx, monkeypatch):
     monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080/")
     with patch("httpx.get", return_value=_FakeResp({"results": []})) as mock_get:
         web.web_search(ctx, "x")
@@ -74,7 +149,7 @@ def test_web_search_strips_trailing_slash_from_base_url(ctx, monkeypatch):
     assert called_url == "http://localhost:8080/search"  # no double slash
 
 
-def test_web_search_no_results(ctx, monkeypatch):
+def test_web_search_searxng_no_results(ctx, monkeypatch):
     monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080")
     with patch("httpx.get", return_value=_FakeResp({"results": []})):
         result = web.web_search(ctx, "zzzqqqnonexistent")
@@ -82,7 +157,7 @@ def test_web_search_no_results(ctx, monkeypatch):
     assert "No results" in result.output
 
 
-def test_web_search_network_failure_reported_not_raised(ctx, monkeypatch):
+def test_web_search_searxng_network_failure_reported_not_raised(ctx, monkeypatch):
     monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080")
     with patch("httpx.get", side_effect=ConnectionError("refused")):
         result = web.web_search(ctx, "x")  # must not raise
@@ -90,7 +165,7 @@ def test_web_search_network_failure_reported_not_raised(ctx, monkeypatch):
     assert "failed" in result.error
 
 
-def test_web_search_count_clamped_to_max(ctx, monkeypatch):
+def test_web_search_searxng_count_clamped_to_max(ctx, monkeypatch):
     monkeypatch.setenv("WELLS_SEARXNG_URL", "http://localhost:8080")
     payload = {"results": [
         {"title": f"r{i}", "url": f"https://x.com/{i}", "content": "c"} for i in range(20)
