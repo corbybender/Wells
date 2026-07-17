@@ -1739,11 +1739,25 @@ class WellsApp(App[None]):
                     "stops. Type /exit again to force-quit now.[/yellow]"
                 )
                 return
-            # Every other slash command runs immediately, busy or not — only
-            # plain messages queue. (Settings/mode changes made mid-run apply
-            # from the next run; the in-flight run keeps its snapshot.)
-            self._dispatch_slash(text)
-            return
+            # A user-defined command (.wells/commands/<name>.md) expands to
+            # ordinary task text and falls through to the run/queue path
+            # below — it is NOT a slash command as far as the rest of this
+            # method is concerned. Builtins always win the name (checked
+            # inside resolve()), so this can never shadow /help, /undo, etc.
+            import wells.cli as _cli_mod
+            from wells import commands as _commands
+            expanded = _commands.resolve(
+                config.WORKSPACE_ROOT, text, builtin_names=_cli_mod.builtin_command_names()
+            )
+            if expanded is not None:
+                text = expanded
+            else:
+                # Every other slash command runs immediately, busy or not —
+                # only plain messages queue. (Settings/mode changes made
+                # mid-run apply from the next run; the in-flight run keeps
+                # its snapshot.)
+                self._dispatch_slash(text)
+                return
 
         if self._busy:
             self._queue.append(text)
