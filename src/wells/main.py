@@ -194,6 +194,15 @@ def _run_goal(
         if not json_mode:
             print(line)
 
+    from wells import hooks
+    hook_allowed, hook_reason = hooks.fire_user_prompt_submit(config.WORKSPACE_ROOT, goal)
+    if not hook_allowed:
+        if json_mode:
+            print(json.dumps({"status": "error", "error": f"blocked by hook: {hook_reason}"}))
+        else:
+            print(f"BLOCKED by UserPromptSubmit hook: {hook_reason}")
+        sys.exit(1)
+
     _say(f"Model: {config.model_name_for_task('coding')}")
     _say(f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})")
     if config.WORKSPACE_ROOT_INVALID:
@@ -234,17 +243,23 @@ def _run_goal(
         final_state = app.invoke(initial_state)
     duration = int(_time.time() - t0)
 
+    _stop_reason = (
+        "error" if final_state.get("review_error")
+        else "complete" if final_state.get("review_complete")
+        else "incomplete"
+    )
+    hooks.fire_stop(
+        config.WORKSPACE_ROOT, stopped_reason=_stop_reason,
+        summary=(final_state.get("implementation_steps") or ""),
+    )
+
     t = LEDGER.totals()
     total = t["input"] + t["output"]
 
     if json_mode:
         from wells import pricing
         payload = {
-            "status": (
-                "error" if final_state.get("review_error")
-                else "complete" if final_state.get("review_complete")
-                else "incomplete"
-            ),
+            "status": _stop_reason,
             "goal": goal,
             "session_id": session_id,
             "workspace": config.WORKSPACE_ROOT,
