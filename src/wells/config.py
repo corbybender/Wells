@@ -334,6 +334,13 @@ WELLS_WEB_TOOLS: bool = os.getenv("WELLS_WEB_TOOLS", "1") not in ("0", "false", 
 # unconfigured instead of failing opaquely.
 WELLS_SEARXNG_URL: str = os.getenv("WELLS_SEARXNG_URL", "").strip()
 
+# Hooks: user-scriptable shell commands around tool calls and task lifecycle
+# events (.wells/hooks.yaml — PreToolUse/PostToolUse/UserPromptSubmit/Stop).
+# Separate layer from RULES_ENFORCE: rules are Wells' own declarative
+# policy, hooks are arbitrary user scripts. Default on; a no-op with no
+# hooks.yaml present.
+HOOKS_ENABLE: bool = os.getenv("WELLS_HOOKS", "1") not in ("0", "false", "no", "")
+
 
 def active_profile_name() -> str:
     """Name of the currently active provider profile."""

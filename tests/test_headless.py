@@ -28,12 +28,14 @@ def _patched(final_state: dict):
         patch("wells.sessions.save_session"),
         patch("wells.sessions.session_from_final_state", return_value={}),
         patch("wells.pricing.run_cost", return_value=0.0123),
+        patch("wells.hooks.fire_user_prompt_submit", return_value=(True, "")),
+        patch("wells.hooks.fire_stop"),
     )
 
 
 def _run_json(capsys, final_state: dict, **kw) -> tuple[dict, int]:
     patchers = _patched(final_state)
-    with patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5]:
+    with patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5], patchers[6], patchers[7]:
         with pytest.raises(SystemExit) as ei:
             main._run_goal("do the thing", output_format="json", **kw)
     out = capsys.readouterr().out
@@ -85,9 +87,33 @@ def test_json_mode_suppresses_chatter_from_stdout(capsys):
     assert "Goal:" not in combined_out
 
 
+def test_user_prompt_submit_hook_blocks_json_mode(capsys):
+    with (
+        patch.object(main, "_ensure_model_configured", return_value=True),
+        patch("wells.hooks.fire_user_prompt_submit", return_value=(False, "no prod deletes")),
+    ):
+        with pytest.raises(SystemExit) as ei:
+            main._run_goal("delete prod", output_format="json")
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+    assert "no prod deletes" in payload["error"]
+    assert ei.value.code == 1
+
+
+def test_user_prompt_submit_hook_blocks_text_mode(capsys):
+    with (
+        patch.object(main, "_ensure_model_configured", return_value=True),
+        patch("wells.hooks.fire_user_prompt_submit", return_value=(False, "no prod deletes")),
+    ):
+        with pytest.raises(SystemExit):
+            main._run_goal("delete prod", output_format="text")
+    out = capsys.readouterr().out
+    assert "BLOCKED" in out and "no prod deletes" in out
+
+
 def test_text_mode_unchanged_prints_human_readable(capsys):
     patchers = _patched({"review_complete": True, "implementation_steps": "done"})
-    with patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5]:
+    with patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5], patchers[6], patchers[7]:
         main._run_goal("do the thing", output_format="text")
     out = capsys.readouterr().out
     assert "Goal: do the thing" in out

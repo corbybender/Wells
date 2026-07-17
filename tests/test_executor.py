@@ -535,6 +535,73 @@ def test_loop_guard_abort_nudges_then_recovers(ctx: tools.ToolContext, workspace
 
 
 # ---------------------------------------------------------------------------
+# Hooks integration (PreToolUse blocks, PostToolUse annotates)
+# ---------------------------------------------------------------------------
+
+
+def test_pre_tool_use_hook_blocks_a_call(ctx: tools.ToolContext, workspace: Path):
+    LEDGER.reset()
+    script = [
+        AIMessage(content='<tool_call>{"name": "write_file", "args": {"path": "x.txt", "content": "hi"}}</tool_call>'),
+        AIMessage(content="done"),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "HOOKS_ENABLE", True),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch("wells.hooks.fire_pre_tool_use", return_value=(False, "blocked by policy")),
+        patch("wells.hooks.fire_post_tool_use", return_value=[]),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=5, step_label="t")
+    assert not (workspace / "x.txt").exists()
+    tool_msgs = [m for m in result.messages if isinstance(m, ToolMessage)]
+    assert any("blocked by policy" in (m.content or "") for m in tool_msgs)
+
+
+def test_post_tool_use_hook_note_appended_to_observation(
+    ctx: tools.ToolContext, workspace: Path
+):
+    LEDGER.reset()
+    script = [
+        AIMessage(content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'),
+        AIMessage(content="done"),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "HOOKS_ENABLE", True),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch("wells.hooks.fire_pre_tool_use", return_value=(True, "")),
+        patch("wells.hooks.fire_post_tool_use", return_value=["[HOOK read_file]: nice read"]),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=5, step_label="t")
+    tool_msgs = [m for m in result.messages if isinstance(m, ToolMessage)]
+    assert any("nice read" in (m.content or "") for m in tool_msgs)
+
+
+def test_hooks_disabled_via_config_skips_both_events(
+    ctx: tools.ToolContext, workspace: Path
+):
+    LEDGER.reset()
+    script = [
+        AIMessage(content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'),
+        AIMessage(content="done"),
+    ]
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(script)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "HOOKS_ENABLE", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch("wells.hooks.fire_pre_tool_use") as pre_mock,
+        patch("wells.hooks.fire_post_tool_use") as post_mock,
+    ):
+        executor.run_executor(task="x", ctx=ctx, max_steps=5, step_label="t")
+    pre_mock.assert_not_called()
+    post_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Read-only dedupe cache
 # ---------------------------------------------------------------------------
 

@@ -1674,6 +1674,13 @@ def _run_executor_impl(
                     _d = rules_engine.check(_cname, _c.get("args") or {})
                     if not _d.allow or _d.confirm:
                         break
+                if config.HOOKS_ENABLE:
+                    from wells import hooks as _hooks_mod
+                    _h_ok, _ = _hooks_mod.fire_pre_tool_use(
+                        ctx.workspace, _cname, _c.get("args") or {}
+                    )
+                    if not _h_ok:
+                        break  # sequential path re-runs the check and blocks properly
                 _par_idx.append(_i)
             if len(_par_idx) > 1:
                 from concurrent.futures import ThreadPoolExecutor as _TPE
@@ -1779,6 +1786,25 @@ def _run_executor_impl(
                             obs_text, tool_call_id=tcid, name=name, ai_message=resp))
                         continue
 
+            # ── PreToolUse hooks: user-scriptable gate, separate from rules ──
+            # Rules (above) are Wells' own declarative policy; hooks are
+            # arbitrary user shell scripts (.wells/hooks.yaml). Checked after
+            # rules so a call rules already blocked never pays for a
+            # subprocess. A prefetched read-only result (dispatched before
+            # this call was reached) already passed this same check when it
+            # was scheduled — see the prefetch eligibility filter above.
+            if config.HOOKS_ENABLE and _call_idx not in _prefetched:
+                from wells import hooks as _hooks_mod
+                hook_allowed, hook_reason = _hooks_mod.fire_pre_tool_use(ctx.workspace, name, args)
+                if not hook_allowed:
+                    obs_text = f"[HOOK: action blocked — {hook_reason}]"
+                    _ui("warn", f"  [bold red]⛔ hook blocked {name}: {hook_reason[:100]}[/bold red]")
+                    history.append({"name": name, "args": args, "ok": False,
+                                    "output_preview": obs_text[:200]})
+                    messages.append(_tool_message(
+                        obs_text, tool_call_id=tcid, name=name, ai_message=resp))
+                    continue
+
             _act(f"{name} · step {steps}/{cap_s}")
             CONTROL.set_progress(step_label, steps, cap)
             result = _prefetched.pop(_call_idx, None)
@@ -1820,6 +1846,20 @@ def _run_executor_impl(
             if CONTROL.cancelled():
                 return _stopped("cancelled", "(cancelled by user)")
             obs_text = result.to_model_text()
+
+            # ── PostToolUse hooks ────────────────────────────────────────────
+            # Observational only — the call already ran, so a hook can't
+            # block it, only annotate the observation the model reads next
+            # (same moment-of-relevance placement rules.py uses for its own
+            # notes).
+            if config.HOOKS_ENABLE:
+                from wells import hooks as _hooks_mod
+                _hook_notes = _hooks_mod.fire_post_tool_use(
+                    ctx.workspace, name, args, ok=result.ok,
+                    output_preview=(result.output or result.error or ""),
+                )
+                if _hook_notes:
+                    obs_text = obs_text + "\n\n" + "\n".join(_hook_notes)
 
             # ── Invalid-tool-name streak ─────────────────────────────────────
             # Keyed on whether `name` is a real tool, not on exact args — a
