@@ -87,6 +87,7 @@ def planner(state: dict) -> dict:
         system_prefix=_PLANNER_PREFIX,
         max_steps=_config.PLANNER_MAX_STEPS,  # 0 = no limit
         step_label="planner",
+        images=state.get("images") or None,
     )
 
     plan = result.summary or "(planner produced no output)"

@@ -12,6 +12,9 @@ Usage:
     # Headless / scriptable (CI, wrapping Wells from other tooling):
     wells -p --output-format json "<goal>"      # one JSON object on stdout, exit 0/1
     echo "<goal>" | wells -p --output-format json  # task piped in via stdin
+
+    # Vision: attach a screenshot/diagram (the planner sees it on its first turn)
+    wells --image screenshot.png "why does this dialog look wrong?"
 """
 
 from __future__ import annotations
@@ -160,7 +163,8 @@ def _print_info() -> None:
 
 
 def _run_goal(
-    goal: str, *, resume_context: str | None = None, output_format: str = "text"
+    goal: str, *, resume_context: str | None = None, output_format: str = "text",
+    image_paths: list[str] | None = None,
 ) -> None:
     """Build and invoke the harness graph for ``goal``.
 
@@ -203,6 +207,18 @@ def _run_goal(
             print(f"BLOCKED by UserPromptSubmit hook: {hook_reason}")
         sys.exit(1)
 
+    if image_paths:
+        from wells import vision
+        try:
+            for p in image_paths:
+                vision.encode_image_file(p)  # validates existence/type/size only
+        except vision.VisionError as e:
+            if json_mode:
+                print(json.dumps({"status": "error", "error": str(e)}))
+            else:
+                print(f"ERROR: {e}")
+            sys.exit(2)
+
     _say(f"Model: {config.model_name_for_task('coding')}")
     _say(f"Workspace: {config.WORKSPACE_ROOT}  (safety: {config.HARNESS_SAFETY})")
     if config.WORKSPACE_ROOT_INVALID:
@@ -229,6 +245,7 @@ def _run_goal(
         "safety": config.HARNESS_SAFETY,
         "plan_mode": config.PLAN_MODE,
         "messages": [],
+        "images": image_paths or [],
     }
 
     # Every agent/graph node prints its own progress chatter directly to
@@ -569,6 +586,7 @@ def _print_usage() -> None:
         "      --output-format F  text (default) | json — json implies --print;\n"
         "                         exit code 0 on COMPLETE, 1 otherwise\n"
         "      --json             shorthand for --output-format json\n"
+        "      --image PATH       attach an image (repeatable); the planner sees it\n"
         "      --version          show version and exit\n"
         "  -h, --help             show this help\n"
         "\nSubcommands:\n"
@@ -669,6 +687,7 @@ def main() -> None:
     plan_flag = False
     print_flag = False   # -p/--print: headless one-shot (already the default for a goal arg)
     output_format = "text"
+    image_paths: list[str] = []
     resume_flag: str | None = None  # None = no resume; "" = interactive; "ID" = specific
     remaining: list[str] = []
     i = 0
@@ -676,6 +695,15 @@ def main() -> None:
         a = argv[i]
         if a in ("-p", "--print"):
             print_flag = True
+        elif a == "--image":
+            i += 1
+            if i < len(argv):
+                image_paths.append(argv[i])
+            else:
+                print("ERROR: --image requires a PATH argument")
+                sys.exit(2)
+        elif a.startswith("--image="):
+            image_paths.append(a.split("=", 1)[1])
         elif a == "--output-format":
             i += 1
             if i < len(argv):
@@ -794,7 +822,7 @@ def main() -> None:
         if not piped:
             print("ERROR: -p/--print with no goal argument requires a task on stdin.")
             sys.exit(2)
-        _run_goal(piped, output_format=output_format)
+        _run_goal(piped, output_format=output_format, image_paths=image_paths)
         return
 
     if not goal_args and resume_flag is None:
@@ -820,7 +848,8 @@ def main() -> None:
         goal, resume_ctx = _handle_resume_flag(resume_flag, goal_args)
         if goal:
             # User supplied a new goal on the CLI: run it once with context.
-            _run_goal(goal, resume_context=resume_ctx, output_format=output_format)
+            _run_goal(goal, resume_context=resume_ctx, output_format=output_format,
+                     image_paths=image_paths)
         else:
             # No new goal: enter the TUI with the session context preloaded.
             from wells.cli import run_repl
@@ -828,7 +857,7 @@ def main() -> None:
         return
 
     goal = " ".join(goal_args).strip()
-    _run_goal(goal, output_format=output_format)
+    _run_goal(goal, output_format=output_format, image_paths=image_paths)
 
 
 def _looks_like_override(arg: str) -> bool:
