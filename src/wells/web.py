@@ -1,19 +1,23 @@
-"""Web tools: web_search (via a self-hosted SearXNG instance) and fetch_url.
+"""Web tools: web_search and fetch_url.
 
-Design choice — SearXNG over a commercial search API: SearXNG
-(https://docs.searxng.org) is a free, self-hostable metasearch engine that
-aggregates 70+ backends and exposes a clean JSON API (``?format=json``). No
-per-query cost, no API key to provision, no vendor lock-in — a user runs
-their own instance (a single Docker container) and points Wells at it. This
-matches the harness's broader "works without a subscription" stance: a team
-that's already self-hosting Ollama for the model can self-host SearXNG for
-search with the same philosophy.
+Design choice — zero-config by default, no 3rd-party service required:
+Wells is a standalone tool, so ``web_search`` must work the moment it's
+installed, with no Docker container, no signup, and no API key. The default
+backend scrapes DuckDuckGo's plain HTML results page
+(``html.duckduckgo.com/html/``) — no official API, but no key/quota either,
+and it's the same approach several other no-config agent CLIs use for
+exactly this reason. It's inherently more fragile than a real API (DuckDuckGo
+can change its markup, or rate-limit a burst of queries), which is the
+tradeoff for "just works, nothing to set up."
+
+For anyone who already runs (or wants to run) a self-hosted SearXNG instance
+(https://docs.searxng.org — a metasearch engine aggregating 70+ backends
+behind a clean JSON API), setting ``WELLS_SEARXNG_URL`` switches to that
+instead: more reliable, no scraping fragility, and no external network call
+to DuckDuckGo at all if privacy matters. This is opt-in, never required.
 
 Both tools are read-only (no workspace mutation) and gated by
-``WELLS_WEB_TOOLS``. ``web_search`` degrades gracefully — with no
-``WELLS_SEARXNG_URL`` configured it reports exactly that instead of failing
-opaquely, the same pattern used elsewhere for optional infra (Ollama warm-up,
-structured outputs).
+``WELLS_WEB_TOOLS``.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from __future__ import annotations
 import html
 import os
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from wells.tools import ToolContext, ToolDef, ToolResult
 
@@ -29,6 +33,7 @@ _DEFAULT_TIMEOUT = 15.0
 _MAX_RESULTS = 10
 _DEFAULT_RESULTS = 5
 _MAX_FETCH_CHARS = int(os.environ.get("WELLS_FETCH_MAX_CHARS", "8000"))
+_USER_AGENT = "Mozilla/5.0 (compatible; Wells-agentic-harness/1.0)"
 
 
 def enabled() -> bool:
@@ -42,26 +47,24 @@ def _searxng_url() -> str:
 
 
 # ---------------------------------------------------------------------------
-# web_search
+# web_search — dispatches to SearXNG (opt-in) or DuckDuckGo (zero-config default)
 # ---------------------------------------------------------------------------
 
 
 def web_search(ctx: ToolContext, query: str, *, count: int = _DEFAULT_RESULTS) -> ToolResult:
-    """Query a self-hosted SearXNG instance's JSON API and return top results."""
+    """Search the web. Uses a self-hosted SearXNG instance when
+    WELLS_SEARXNG_URL is set, else DuckDuckGo's HTML results page — no
+    setup required for the default path."""
     if not query or not query.strip():
         return ToolResult(False, "", "query is required")
-    base = _searxng_url()
-    if not base:
-        return ToolResult(
-            False, "",
-            "web_search is not configured. Set WELLS_SEARXNG_URL to a running "
-            "SearXNG instance's base URL (self-hosted metasearch engine — see "
-            "https://docs.searxng.org, a single Docker container is enough). "
-            "The instance must have JSON output enabled "
-            "(search.formats includes 'json' in searxng settings.yml).",
-        )
     n = max(1, min(int(count or _DEFAULT_RESULTS), _MAX_RESULTS))
+    base = _searxng_url()
+    if base:
+        return _web_search_searxng(base, query, n)
+    return _web_search_duckduckgo(query, n)
 
+
+def _web_search_searxng(base: str, query: str, n: int) -> ToolResult:
     try:
         import httpx
         resp = httpx.get(
@@ -90,13 +93,66 @@ def web_search(ctx: ToolContext, query: str, *, count: int = _DEFAULT_RESULTS) -
     return ToolResult(True, "\n".join(lines), "")
 
 
+_DDG_ENDPOINT = "https://html.duckduckgo.com/html/"
+# Each result: a result__a title link, then (possibly with other markup
+# between) a result__snippet link. Non-greedy + DOTALL spans the gap.
+_DDG_RESULT_RE = re.compile(
+    r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
+    r'class="result__snippet"[^>]*>(.*?)</a>',
+    re.S,
+)
+
+
+def _extract_ddg_url(href: str) -> str:
+    """DuckDuckGo's HTML wraps result links in a redirect
+    (//duckduckgo.com/l/?uddg=<url-encoded-real-url>&...) — unwrap it."""
+    full = href if href.startswith("http") else f"https:{href}"
+    if "duckduckgo.com/l/" in full:
+        qs = parse_qs(urlparse(full).query)
+        real = qs.get("uddg", [""])[0]
+        if real:
+            return unquote(real)
+    return full
+
+
+def _strip_result_markup(fragment: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
+
+
+def _web_search_duckduckgo(query: str, n: int) -> ToolResult:
+    try:
+        import httpx
+        resp = httpx.get(
+            _DDG_ENDPOINT, params={"q": query},
+            headers={"User-Agent": _USER_AGENT},
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        return ToolResult(
+            False, "", f"web_search (DuckDuckGo) failed: {type(e).__name__}: {e}",
+        )
+
+    matches = _DDG_RESULT_RE.findall(resp.text)
+    if not matches:
+        return ToolResult(True, f"No results for {query!r}.", "")
+
+    lines = [f"Search results for {query!r} (via DuckDuckGo):"]
+    for i, (href, title_html, snippet_html) in enumerate(matches[:n], 1):
+        title = _strip_result_markup(title_html) or "(no title)"
+        snippet = _strip_result_markup(snippet_html)[:220]
+        url = _extract_ddg_url(href)
+        lines.append(f"{i}. {title}\n   {url}\n   {snippet}")
+    return ToolResult(True, "\n".join(lines), "")
+
+
 WEB_SEARCH_TOOL = ToolDef(
     name="web_search",
     description=(
-        "Search the web via a self-hosted SearXNG metasearch instance. Use this "
-        "to look up current library APIs, error messages, or anything not in the "
-        "codebase/training data. Requires WELLS_SEARXNG_URL to be configured — "
-        "reports clearly if it isn't rather than failing opaquely."
+        "Search the web (DuckDuckGo by default — no setup required; uses a "
+        "self-hosted SearXNG instance instead when WELLS_SEARXNG_URL is set). "
+        "Use this to look up current library APIs, error messages, or anything "
+        "not in the codebase/training data."
     ),
     input_schema={
         "type": "object",
@@ -151,7 +207,7 @@ def fetch_url(ctx: ToolContext, url: str, *, max_chars: int = 0) -> ToolResult:
         import httpx
         resp = httpx.get(
             url, timeout=_DEFAULT_TIMEOUT, follow_redirects=True,
-            headers={"User-Agent": "Wells-agentic-harness/1.0"},
+            headers={"User-Agent": _USER_AGENT},
         )
         resp.raise_for_status()
     except Exception as e:
