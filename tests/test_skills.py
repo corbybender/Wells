@@ -42,7 +42,8 @@ def _clear_cache():
 # ---------------------------------------------------------------------------
 
 
-def test_discovers_skills_in_folders(workspace: Path):
+def test_discovers_skills_in_folders(workspace: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")  # isolate from the shipped defaults
     idx = skills.skills_for(str(workspace))
     names = {s.name for s in idx.skills}
     assert names == {"release", "add-provider"}
@@ -67,7 +68,8 @@ def test_by_name_unknown_returns_none(workspace: Path):
     assert idx.by_name("nope") is None
 
 
-def test_empty_workspace_has_no_skills(tmp_path: Path):
+def test_empty_workspace_has_no_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")  # isolate from the shipped defaults
     idx = skills.skills_for(str(tmp_path))
     assert idx.is_empty()
 
@@ -108,7 +110,8 @@ def test_malformed_front_matter_still_loads(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_skill_index_block_empty_when_no_skills(tmp_path: Path):
+def test_skill_index_block_empty_when_no_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
     assert skills.skill_index_block(str(tmp_path)) == ""
 
 
@@ -126,7 +129,8 @@ def test_inject_into_prompt_appends_block(workspace: Path):
     assert "AVAILABLE SKILLS" in out
 
 
-def test_inject_into_prompt_noop_without_skills(tmp_path: Path):
+def test_inject_into_prompt_noop_without_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
     assert skills.inject_into_prompt("BASE", str(tmp_path)) == "BASE"
 
 
@@ -148,7 +152,8 @@ def test_load_skill_body_unknown_lists_available(workspace: Path):
     assert "add-provider" in body
 
 
-def test_load_skill_body_empty_workspace(tmp_path: Path):
+def test_load_skill_body_empty_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
     ok, body = skills.load_skill_body("anything", str(tmp_path))
     assert not ok
     assert "No skills" in body
@@ -162,6 +167,85 @@ def test_load_skill_body_truncates_large_body(tmp_path: Path):
     ok, body = skills.load_skill_body("big", str(tmp_path))
     assert ok
     assert "truncated" in body
+
+
+# ---------------------------------------------------------------------------
+# Built-in skills (shipped with the package)
+# ---------------------------------------------------------------------------
+
+_BUILTIN_NAMES = {
+    "project-recon", "verify-external-api", "incremental-refactor",
+    "dependency-audit", "safe-migration", "benchmark-before-claiming",
+}
+
+
+def test_builtin_skills_present_in_a_fresh_workspace(tmp_path: Path):
+    """The whole point: a brand-new workspace with no skills/ dir at all
+    still gets useful skills, no per-repo setup required."""
+    idx = skills.skills_for(str(tmp_path))
+    names = {s.name for s in idx.skills}
+    assert _BUILTIN_NAMES <= names
+
+
+def test_each_builtin_skill_parses_with_name_and_description(tmp_path: Path):
+    idx = skills.skills_for(str(tmp_path))
+    for name in _BUILTIN_NAMES:
+        s = idx.by_name(name)
+        assert s is not None, f"builtin skill {name!r} did not load"
+        assert s.description.strip(), f"builtin skill {name!r} has no description"
+        assert len(s.body.strip()) > 100, f"builtin skill {name!r} body looks too thin"
+
+
+def test_builtin_skills_root_points_at_package_directory():
+    assert skills._BUILTIN_SKILLS_ROOT.name == "builtin_skills"
+    assert skills._BUILTIN_SKILLS_ROOT.parent == Path(skills.__file__).parent
+
+
+def test_workspace_skill_shadows_builtin_of_same_name(tmp_path: Path):
+    """A repo can override a built-in outright by defining its own skill
+    with the same name — the workspace version must win, not the builtin."""
+    sk = tmp_path / "skills" / "project-recon"
+    sk.mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        "---\nname: project-recon\ndescription: CUSTOM override.\n---\n"
+        "This repo's own recon steps.\n",
+        encoding="utf-8",
+    )
+    idx = skills.skills_for(str(tmp_path))
+    s = idx.by_name("project-recon")
+    assert s is not None
+    assert s.description == "CUSTOM override."
+    assert "This repo's own recon steps." in s.body
+    # Still exactly one project-recon, not two — the builtin is shadowed,
+    # not merely appended alongside it.
+    assert sum(1 for x in idx.skills if x.name == "project-recon") == 1
+
+
+def test_builtin_skills_disabled_via_env(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+    idx = skills.skills_for(str(tmp_path))
+    assert idx.is_empty()
+
+
+def test_builtin_skills_disabled_leaves_workspace_skills_intact(workspace: Path, monkeypatch):
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+    idx = skills.skills_for(str(workspace))
+    names = {s.name for s in idx.skills}
+    assert names == {"release", "add-provider"}
+
+
+def test_wells_skills_off_also_suppresses_builtins(tmp_path: Path, monkeypatch):
+    """The broader WELLS_SKILLS=0 kill switch must still cover built-ins,
+    not just workspace/WELLS_SKILLS_PATHS skills."""
+    monkeypatch.setenv("WELLS_SKILLS", "0")
+    idx = skills.skills_for(str(tmp_path))
+    assert idx.is_empty()
+
+
+def test_builtin_skills_appear_in_prompt_injection_for_fresh_workspace(tmp_path: Path):
+    block = skills.skill_index_block(str(tmp_path))
+    assert "project-recon" in block
+    assert "verify-external-api" in block
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +483,7 @@ def test_skill_file_path_unknown_returns_none(safe_workspace: Path):
 
 def test_cli_skills_list_empty(safe_workspace: Path, monkeypatch, capsys):
     import wells.cli as cli_mod
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")  # isolate from the shipped defaults
     monkeypatch.setattr(cli_mod.config, "WORKSPACE_ROOT", str(safe_workspace))
     cli_mod._handle_skills("list")
     out = capsys.readouterr().out

@@ -31,6 +31,7 @@ packages = ["src/wells"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/wells/AGENT.md" = "wells/AGENT.md"
+"src/wells/builtin_skills" = "wells/builtin_skills"
 
 [dependency-groups]
 dev = [
