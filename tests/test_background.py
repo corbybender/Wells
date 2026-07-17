@@ -217,6 +217,77 @@ def test_fix_role_accepted(ctx: tools.ToolContext):
 
 
 # ---------------------------------------------------------------------------
+# reset() cancels still-running agents (not just clears their slots)
+# ---------------------------------------------------------------------------
+
+
+def _blocking_report(started: "threading.Event", release: "threading.Event"):
+    """A run_subagent replacement that blocks until the test releases it —
+    simulates a background agent still in flight when reset() fires."""
+    def _run(*args, **kwargs):
+        started.set()
+        release.wait(timeout=5.0)
+        return _ok_report()
+    return _run
+
+
+def test_reset_returns_count_of_abandoned_running_agents(ctx: tools.ToolContext):
+    import threading
+    started, release = threading.Event(), threading.Event()
+    try:
+        with patch("wells.background.run_subagent", side_effect=_blocking_report(started, release)):
+            tools.dispatch("bg_start", {"task": "slow"}, ctx)
+            assert started.wait(timeout=5.0), "agent never started"
+            assert background.REGISTRY.status()[0]["status"] == "running"
+            n = background.REGISTRY.reset()
+        assert n == 1
+    finally:
+        release.set()  # let the thread finish so it doesn't leak past the test
+
+
+def test_reset_clears_slots_even_when_nothing_running(ctx: tools.ToolContext):
+    with patch("wells.background.run_subagent", return_value=_ok_report()):
+        tools.dispatch("bg_start", {"task": "x"}, ctx)
+    _wait_until_done("bg-1", timeout=5.0)
+    n = background.REGISTRY.reset()
+    assert n == 0
+    assert background.REGISTRY.status() == []
+
+
+def test_reset_prevents_abandoned_agents_stale_result_from_resurfacing(ctx: tools.ToolContext):
+    """The core bug: an agent still running when reset() fires must never
+    have its result show up via bg_status/bg_collect afterward — even
+    after it actually finishes on its own thread."""
+    import threading
+    started, release = threading.Event(), threading.Event()
+    try:
+        with patch("wells.background.run_subagent", side_effect=_blocking_report(started, release)):
+            tools.dispatch("bg_start", {"task": "slow"}, ctx)
+            assert started.wait(timeout=5.0)
+            background.REGISTRY.reset()  # simulates a NEW run starting
+            release.set()  # let the abandoned thread finish naturally
+            time.sleep(0.2)  # give it a moment to try to commit its result
+        # A new run's view of the registry must be empty — no leaked slot,
+        # no way to bg_collect a result from a task that already ended.
+        assert background.REGISTRY.status() == []
+    finally:
+        release.set()
+
+
+def test_cancel_all_and_reset_share_locked_helper_no_deadlock(ctx: tools.ToolContext):
+    """Regression guard: reset() calling into cancel_all()'s logic while
+    already holding the lock must not deadlock (threading.Lock is not
+    reentrant) — this is exactly the bug a naive reset()->cancel_all() call
+    chain would introduce."""
+    with patch("wells.background.run_subagent", return_value=_ok_report()):
+        tools.dispatch("bg_start", {"task": "x"}, ctx)
+    _wait_until_done("bg-1", timeout=5.0)
+    # Must return promptly — a deadlock would hang the whole test suite.
+    n = background.REGISTRY.reset()
+    assert n == 0
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

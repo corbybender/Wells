@@ -12,7 +12,12 @@ tester->reviewer graph), not a scoped-down subagent.
 
 Manifests persist to ``~/.wells/fleet/<fleet_id>.json`` so ``fleet list``/
 ``pick``/``drop`` work as separate CLI invocations after the (typically
-slow) spawn+run completes.
+slow) spawn+run completes. Worktree checkouts themselves live under
+``~/.wells/fleet/worktrees/<fleet_id>/<i>`` — deliberately OUTSIDE the repo
+being worked on (git allows nesting a worktree inside its own repo's tree,
+but doing so pollutes `git status` in the main working tree with a large
+untracked directory for the whole fleet run, and risks a broad `git add -A`
+there staging sibling worktrees' admin files into a real commit).
 """
 
 from __future__ import annotations
@@ -27,6 +32,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 FLEET_DIR = Path.home() / ".wells" / "fleet"
+# Worktree checkouts live OUTSIDE any repo, under the user's home directory —
+# never nested inside repo_root. A worktree path inside the tracked repo
+# tree (an earlier version of this module used <repo_root>/.wells/fleet/...)
+# pollutes `git status` in the main working tree with a large untracked
+# directory for the whole time a fleet is running, and risks a broad
+# `git add -A` run in the main tree mid-fleet staging sibling worktrees'
+# admin files into a real commit. Nothing requires the checkout to live
+# inside the repo; putting it beside the manifests avoids the problem
+# entirely.
+FLEET_WORKTREES_DIR = FLEET_DIR / "worktrees"
 _MEMBER_TIMEOUT = 3600.0  # 1h wall-clock cap per member; a runaway run must not hang the fleet forever
 
 
@@ -169,7 +184,8 @@ def spawn_worktrees(
     members: list[FleetMember] = []
     for i in range(n):
         branch = f"wells-fleet/{fleet_id}/{i}-{slug}"
-        wt_path = str(Path(repo_root) / ".wells" / "fleet" / fleet_id / str(i))
+        wt_path = str(FLEET_WORKTREES_DIR / fleet_id / str(i))
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
         ok, out = _git(repo_root, "worktree", "add", "-b", branch, wt_path, base)
         if not ok:
             # Roll back whatever was already created — a half-spawned fleet
@@ -333,3 +349,7 @@ def _cleanup_worktrees(manifest: FleetManifest) -> None:
         _git(manifest.repo_root, "worktree", "remove", "--force", m.worktree_path)
         _git(manifest.repo_root, "branch", "-D", m.branch)
     _git(manifest.repo_root, "worktree", "prune")
+    try:
+        (FLEET_WORKTREES_DIR / manifest.fleet_id).rmdir()  # only succeeds if empty
+    except OSError:
+        pass  # non-empty (a remove above failed) or already gone — either way, harmless

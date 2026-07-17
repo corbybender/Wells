@@ -17,6 +17,15 @@ def _git(cwd, *args):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_fleet_dirs(tmp_path: Path, monkeypatch):
+    """Worktree checkouts and manifests both live under FLEET_DIR — keep
+    every test confined to tmp_path instead of touching the real ~/.wells/fleet."""
+    fleet_dir = tmp_path / "wells-fleet-home"
+    monkeypatch.setattr(fleet, "FLEET_DIR", fleet_dir)
+    monkeypatch.setattr(fleet, "FLEET_WORKTREES_DIR", fleet_dir / "worktrees")
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     r = tmp_path / "repo"
@@ -98,10 +107,20 @@ def test_spawn_worktrees_rolls_back_on_partial_failure(repo: Path):
             fleet.spawn_worktrees(str(repo), "fx4", "task", 3)
 
     # No leftover fleet worktree directories.
-    fleet_root = repo / ".wells" / "fleet" / "fx4"
+    fleet_root = fleet.FLEET_WORKTREES_DIR / "fx4"
     assert not fleet_root.exists() or not any(fleet_root.iterdir())
     ok, out = real_git(str(repo), "worktree", "list")
     assert "fx4" not in out
+
+
+def test_spawn_worktrees_never_nested_inside_the_repo(repo: Path):
+    """Regression guard: a worktree path inside the tracked repo tree
+    pollutes `git status` in the main worktree and risks a broad `git add`
+    there staging sibling worktrees' files into a real commit."""
+    manifest = fleet.spawn_worktrees(str(repo), "fx11", "task", 1)
+    wt_path = Path(manifest.members[0].worktree_path).resolve()
+    assert repo.resolve() not in wt_path.parents
+    fleet._cleanup_worktrees(manifest)
 
 
 # ---------------------------------------------------------------------------
