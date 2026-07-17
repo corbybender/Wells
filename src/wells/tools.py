@@ -1023,6 +1023,26 @@ def _register_optional_tools() -> None:
     except Exception:
         ok = False
 
+    # Web tools: web_search (SearXNG) / fetch_url. Read-only, so — unlike
+    # CodeAct/background above — these also join READ_TOOLS: the planner and
+    # read-only subagents (tools.registry(include_mutating=False) returns
+    # READ_TOOLS directly, not an ALL_TOOLS filter) should be able to look
+    # something up mid-investigation without needing write/exec access.
+    try:
+        from wells import web
+
+        if web.enabled():
+            existing_read = {t.name for t in READ_TOOLS}
+            for t in (web.WEB_SEARCH_TOOL, web.FETCH_URL_TOOL):
+                if t.name not in existing:
+                    ALL_TOOLS.append(t)
+                    existing.add(t.name)
+                if t.name not in existing_read:
+                    READ_TOOLS.append(t)
+                    existing_read.add(t.name)
+    except Exception:
+        ok = False
+
     if ok:
         _optional_registered = True
     _rebuild_index()

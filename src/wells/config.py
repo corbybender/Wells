@@ -323,6 +323,17 @@ STRUCTURED_OUTPUTS: bool = os.getenv("WELLS_STRUCTURED", "1") not in ("0", "fals
 # (async counterpart to the blocking parallel_research). Default on.
 WELLS_BG_AGENTS: bool = os.getenv("WELLS_BG_AGENTS", "1") not in ("0", "false", "no", "")
 
+# Web tools: web_search (via a self-hosted SearXNG instance) / fetch_url.
+# Default on; web_search itself degrades gracefully (reports "not
+# configured") when WELLS_SEARXNG_URL is unset — this flag exists to remove
+# the tools from the catalog entirely (e.g. an air-gapped environment where
+# their presence would just invite the model to try and fail).
+WELLS_WEB_TOOLS: bool = os.getenv("WELLS_WEB_TOOLS", "1") not in ("0", "false", "no", "")
+# Base URL of a self-hosted SearXNG instance (https://docs.searxng.org) with
+# JSON output enabled. Empty (default) = web_search reports itself as
+# unconfigured instead of failing opaquely.
+WELLS_SEARXNG_URL: str = os.getenv("WELLS_SEARXNG_URL", "").strip()
+
 
 def active_profile_name() -> str:
     """Name of the currently active provider profile."""
