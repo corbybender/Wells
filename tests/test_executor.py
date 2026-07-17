@@ -455,6 +455,39 @@ def test_read_after_write_in_same_batch_sees_fresh_content(
 
 
 # ---------------------------------------------------------------------------
+# Background-agent registry reset (warns on abandoned agents)
+# ---------------------------------------------------------------------------
+
+
+def test_run_executor_warns_when_abandoned_background_agent_found(
+    ctx: tools.ToolContext, workspace: Path
+):
+    LEDGER.reset()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted([AIMessage(content="ok")])),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch("wells.background.REGISTRY.reset", return_value=2),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=3, step_label="t")
+    assert result.stopped_reason == "done"  # a warning must not fail the run
+
+
+def test_run_executor_silent_when_no_abandoned_background_agents(
+    ctx: tools.ToolContext, workspace: Path
+):
+    LEDGER.reset()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted([AIMessage(content="ok")])),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch("wells.background.REGISTRY.reset", return_value=0),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=3, step_label="t")
+    assert result.stopped_reason == "done"
+
+
+# ---------------------------------------------------------------------------
 # Streaming repetition kill-switch
 # ---------------------------------------------------------------------------
 

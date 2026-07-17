@@ -73,11 +73,37 @@ class BackgroundRegistry:
         self._counter = 0
         self._on_finish: Callable[[str], None] | None = None
 
-    def reset(self) -> None:
-        """Clear all slots (call at the start of a new run)."""
+    def reset(self) -> int:
+        """Cancel any still-running background agents, then clear all slots.
+
+        Called at the start of every run_executor() call. Before this
+        cancelled running slots at all — clearing the dict alone left their
+        daemon threads running unsupervised: still calling tools (including
+        writes, for a role="fix" agent) against the SAME workspace a brand
+        new task had just started editing, with no way for the new run's
+        bg_status/bg_collect to see or know about them, since their slots
+        were gone.
+
+        Marking a slot cancelled does not force-kill its thread — Python
+        can't do that, and the same limitation already applies to LLM-call
+        cancellation elsewhere in this module (see executor._invoke_cancelable).
+        What it DOES guarantee: the thread's own _run() checks
+        ``slot.status == "cancelled"`` before ever committing a report, so
+        a stale result can never resurface via bg_status/bg_collect after
+        this call returns. The thread still runs to its own next
+        CONTROL.cancelled() checkpoint or natural completion — see
+        run_executor's cooperative-cancellation checks — this closes the
+        "invisible, unrecoverable" half of the problem, not the "still
+        physically running" half, which cooperative threading cannot close.
+
+        Returns how many were cancelled, so the caller can warn when a
+        background agent was actually abandoned mid-flight.
+        """
         with self._lock:
+            n = self._cancel_all_locked()
             self._slots.clear()
             self._counter = 0
+            return n
 
     def start(
         self,
@@ -164,15 +190,19 @@ class BackgroundRegistry:
             slot.collected = True
             return slot.report
 
+    def _cancel_all_locked(self) -> int:
+        """Mark all running slots cancelled. Caller must already hold self._lock."""
+        n = 0
+        for s in self._slots.values():
+            if s.status == "running":
+                s.status = "cancelled"
+                n += 1
+        return n
+
     def cancel_all(self) -> int:
         """Mark all running slots cancelled. Returns how many were running."""
         with self._lock:
-            n = 0
-            for s in self._slots.values():
-                if s.status == "running":
-                    s.status = "cancelled"
-                    n += 1
-            return n
+            return self._cancel_all_locked()
 
     def pending(self) -> int:
         with self._lock:

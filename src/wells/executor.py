@@ -1287,9 +1287,18 @@ def _run_executor_impl(
     _tool_meta: dict[str, tuple[str, dict]] = {}  # tool_call_id → (name, args)
 
     # Reset the background-agent registry so slots don't leak across runs.
+    # A nonzero count means a previous task's bg_start agent was still
+    # running when this new run began — its thread keeps going (Python
+    # can't force-kill it) but its slot is gone, so warn rather than let
+    # it silently keep editing the workspace with no visibility.
     try:
         from wells import background as _bg
-        _bg.REGISTRY.reset()
+        _n_abandoned_bg = _bg.REGISTRY.reset()
+        if _n_abandoned_bg:
+            _ui("warn", f"  [yellow]⚠ {_n_abandoned_bg} background agent(s) from "
+                        f"a previous task were still running and have been "
+                        f"abandoned — they may still be mid-edit in this "
+                        f"workspace.[/yellow]")
     except Exception:
         pass
 
