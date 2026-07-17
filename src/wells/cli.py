@@ -172,6 +172,12 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
 ]
 
 
+def builtin_command_names() -> set[str]:
+    """Lowercase builtin slash-command names (no leading '/') — a custom
+    command under .wells/commands/ can never shadow one of these."""
+    return {c[0][1:].lower() for c in SLASH_COMMANDS}
+
+
 class StreamingCallback(BaseCallbackHandler):
     """Streams LLM tokens to the console (via the UI event bus when the TUI
     is listening, stdout otherwise)."""
@@ -265,10 +271,17 @@ def handle_slash_command(command: str) -> bool:
 
 
 def _print_help() -> None:
-    """Print the full slash-command catalog."""
+    """Print the full slash-command catalog, plus any custom commands
+    discovered under .wells/commands/ (see wells.commands)."""
     console.print("\n[bold]Available Commands:[/bold]")
     for cmd, short, long in SLASH_COMMANDS:
         console.print(f"  [cyan]{cmd:<15}[/cyan] [dim]-[/dim] {short}")
+    from wells import commands as _commands
+    custom = _commands.list_commands(config.WORKSPACE_ROOT)
+    if custom:
+        console.print("\n[bold]Custom Commands[/bold] [dim](.wells/commands/*.md)[/dim]:")
+        for cmd, short in custom:
+            console.print(f"  [magenta]{cmd:<15}[/magenta] [dim]-[/dim] {short}")
     console.print()
 
 
