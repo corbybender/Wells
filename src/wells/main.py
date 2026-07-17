@@ -15,6 +15,10 @@ Usage:
 
     # Vision: attach a screenshot/diagram (the planner sees it on its first turn)
     wells --image screenshot.png "why does this dialog look wrong?"
+
+    # Parallel worktree fleet: N independent attempts at the same task
+    wells fleet run 3 "refactor the auth module"
+    wells fleet pick <fleet_id> <winning_index>   # merges winner, cleans up the rest
 """
 
 from __future__ import annotations
@@ -597,6 +601,11 @@ def _print_usage() -> None:
         "  traces                 list recorded run traces for this workspace\n"
         "  replay PATH|N|latest   re-run the harness over a recorded trace and\n"
         "                         report divergence (harness regression check)\n"
+        "  fleet run N \"<task>\"   spawn N parallel worktree attempts at the task\n"
+        "  fleet list             list fleets (open + resolved)\n"
+        "  fleet show ID          show one fleet's member results\n"
+        "  fleet pick ID I        merge member I's branch, clean up the rest\n"
+        "  fleet drop ID          abandon a fleet, clean up all worktrees\n"
     )
 
 
@@ -621,6 +630,109 @@ def _run_traces_cmd(args: list[str]) -> None:
             info = "(unreadable)"
         print(f"  {i}. {p.name}  {info}")
     print("\nReplay one with: wells replay <N|latest|path>")
+
+
+def _run_fleet_cmd(args: list[str]) -> None:
+    from wells import fleet
+
+    if not args:
+        print(
+            "usage: wells fleet run <N> [--profiles p1,p2,...] \"<task>\"\n"
+            "       wells fleet list\n"
+            "       wells fleet show <fleet_id>\n"
+            "       wells fleet pick <fleet_id> <member_index>\n"
+            "       wells fleet drop <fleet_id>"
+        )
+        sys.exit(2)
+    sub = args[0]
+
+    if sub == "run":
+        rest = args[1:]
+        if not rest or not rest[0].isdigit():
+            print("ERROR: wells fleet run <N> [--profiles p1,p2,...] \"<task>\"")
+            sys.exit(2)
+        n = int(rest[0])
+        rest = rest[1:]
+        profiles: list[str] | None = None
+        if rest and rest[0] == "--profiles":
+            profiles = rest[1].split(",")
+            rest = rest[2:]
+        task = " ".join(rest).strip()
+        if not task:
+            print("ERROR: no task given.")
+            sys.exit(2)
+        if n < 2:
+            print("ERROR: N must be >= 2 (a fleet of 1 is just `wells \"<task>\"`).")
+            sys.exit(2)
+        print(f"Spawning {n} worktrees for: {task}")
+        try:
+            manifest = fleet.run_fleet(config.WORKSPACE_ROOT, task, n, profiles=profiles)
+        except RuntimeError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        _print_fleet_manifest(manifest)
+        print(f"\n[fleet: {manifest.fleet_id}] — review, then "
+              f"`wells fleet pick {manifest.fleet_id} <index>` or "
+              f"`wells fleet drop {manifest.fleet_id}`")
+        return
+
+    if sub == "list":
+        manifests = fleet.list_manifests()
+        if not manifests:
+            print("No fleets recorded.")
+            return
+        for m in manifests:
+            status = f"winner=#{m.winner}" if m.resolved else f"{len(m.members)} member(s), open"
+            print(f"  {m.fleet_id}  [{status}]  {m.task[:60]!r}")
+        return
+
+    if sub == "show":
+        if len(args) < 2:
+            print("usage: wells fleet show <fleet_id>")
+            sys.exit(2)
+        manifest = fleet.load_manifest(args[1])
+        if manifest is None:
+            print(f"No such fleet: {args[1]}")
+            sys.exit(2)
+        _print_fleet_manifest(manifest)
+        return
+
+    if sub == "pick":
+        if len(args) < 3 or not args[2].isdigit():
+            print("usage: wells fleet pick <fleet_id> <member_index>")
+            sys.exit(2)
+        ok, msg = fleet.pick_winner(args[1], int(args[2]))
+        print(msg)
+        sys.exit(0 if ok else 1)
+
+    if sub == "drop":
+        if len(args) < 2:
+            print("usage: wells fleet drop <fleet_id>")
+            sys.exit(2)
+        ok, msg = fleet.drop_fleet(args[1])
+        print(msg)
+        sys.exit(0 if ok else 1)
+
+    print(f"Unknown fleet subcommand: {sub!r}")
+    sys.exit(2)
+
+
+def _print_fleet_manifest(manifest) -> None:
+    bar = "=" * 78
+    print(f"\n{bar}\n fleet {manifest.fleet_id} — {manifest.task[:70]!r}\n"
+          f" base branch: {manifest.base_branch}\n{bar}")
+    for m in manifest.members:
+        cost = f"${m.cost_usd:.3f}" if m.cost_usd is not None else "?"
+        print(
+            f"  #{m.index}  [{m.status:<10}]  profile={m.profile or '(active)':<12} "
+            f"files={m.files_changed:<3} tokens={m.tokens_total:<8,} cost={cost:<8} "
+            f"{m.duration_seconds}s  {m.worktree_path}"
+        )
+        if m.summary:
+            print(f"        {m.summary[:150]}")
+        if m.error:
+            print(f"        [error] {m.error[:150]}")
+    print(bar)
 
 
 def _run_replay_cmd(args: list[str]) -> None:
@@ -802,6 +914,9 @@ def main() -> None:
         return
     if remaining and remaining[0] == "replay":
         _run_replay_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "fleet":
+        _run_fleet_cmd(remaining[1:])
         return
 
     # ---- Pass 3: a goal run — separate goal args from KEY=VALUE overrides ----
