@@ -169,6 +169,19 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "line only ever shows a one-line summary. /log path prints the log "
         "file location; /log clear deletes it.",
     ),
+    (
+        "/image",
+        "Attach an image to the next task",
+        "Usage: /image <path> | clear. Staged images are sent to the planner "
+        "on the next run (screenshot of a bug, a design mock, a diagram) — "
+        "cleared automatically once used.",
+    ),
+    (
+        "/paste-image",
+        "Attach the clipboard image to the next task",
+        "Grabs an image from the system clipboard (if any) and stages it "
+        "like /image — take a screenshot, then run this.",
+    ),
 ]
 
 
@@ -264,6 +277,10 @@ def handle_slash_command(command: str) -> bool:
         _handle_skills(arg)
     elif cmd == "/log":
         _handle_log(arg)
+    elif cmd == "/image":
+        _handle_image(arg)
+    elif cmd == "/paste-image":
+        _handle_paste_image()
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         console.print("[dim]Type / for a list of commands.[/dim]")
@@ -912,6 +929,13 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
         effective_goal = f"{pin_block}\n{effective_goal}"
     agent_state["goal"] = effective_goal
     agent_state["iteration"] = 0
+    # Images staged via /image or /paste-image: one-shot, cleared after use —
+    # they belong to THIS task, not every task for the rest of the session.
+    staged_images: list[str] = _REPL_STATE.get("pending_images") or []
+    agent_state["images"] = list(staged_images)
+    if staged_images:
+        console.print(f"[dim]📎 {len(staged_images)} image(s) attached to this task.[/dim]")
+    staged_images.clear()
     LEDGER.reset()
     session_id = new_session_id()
     t0 = _time.time()
@@ -1175,6 +1199,52 @@ def _handle_drop(arg: str) -> None:
         console.print(f"[green]Dropped {rel}[/green]")
     else:
         console.print(f"[yellow]Not pinned: {rel}[/yellow] [dim](see /context)[/dim]")
+
+
+def _handle_image(arg: str) -> None:
+    """/image <path> — stage an image attachment; /image clear — drop staged ones."""
+    from wells import vision
+
+    rel = arg.strip().strip('"')
+    pending: list[str] = _REPL_STATE["pending_images"]
+    if not rel:
+        console.print("[red]Usage: /image <path> | clear[/red]")
+        return
+    if rel.lower() == "clear":
+        n = len(pending)
+        pending.clear()
+        console.print(f"[green]Cleared {n} staged image(s).[/green]")
+        return
+    path = rel if Path(rel).is_absolute() else str(Path(config.WORKSPACE_ROOT) / rel)
+    try:
+        vision.encode_image_file(path)  # validate now, not mid-run
+    except vision.VisionError as e:
+        console.print(f"[red]{e}[/red]")
+        return
+    pending.append(path)
+    console.print(
+        f"[green]📎 Staged image[/green] {rel} [dim]"
+        f"({len(pending)} attached — sent on your next task, then cleared)[/dim]"
+    )
+
+
+def _handle_paste_image() -> None:
+    """/paste-image — grab the system clipboard's image and stage it."""
+    from wells import vision
+
+    path = vision.paste_clipboard_image()
+    if path is None:
+        console.print(
+            "[yellow]No image found on the clipboard (or the platform "
+            "clipboard tool isn't available).[/yellow]"
+        )
+        return
+    _REPL_STATE["pending_images"].append(str(path))
+    console.print(
+        f"[green]📎 Staged clipboard image[/green] [dim]"
+        f"({len(_REPL_STATE['pending_images'])} attached — sent on your "
+        f"next task, then cleared)[/dim]"
+    )
 
 
 def _handle_context() -> None:
@@ -1999,6 +2069,7 @@ _REPL_STATE: dict = {
     "resume_session_id": None,
     "busy_since": None,   # monotonic timestamp set while a run is in progress
     "suggest_continue": False,  # TUI pre-fills "continue" after a resumable stop
+    "pending_images": [],  # staged via /image or /paste-image; consumed by the next run
 }
 
 

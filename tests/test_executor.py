@@ -535,6 +535,82 @@ def test_loop_guard_abort_nudges_then_recovers(ctx: tools.ToolContext, workspace
 
 
 # ---------------------------------------------------------------------------
+# Vision: images attached to the seed message
+# ---------------------------------------------------------------------------
+
+
+def test_run_executor_attaches_images_to_seed_message(ctx: tools.ToolContext, workspace: Path):
+    import base64
+    png = workspace / "shot.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ))
+    LEDGER.reset()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted([AIMessage(content="I see it.")])),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(
+            task="what's wrong with this screenshot?", ctx=ctx, max_steps=3,
+            step_label="t", images=[str(png)],
+        )
+    seed = result.messages[1]  # [0]=system, [1]=seed human
+    assert isinstance(seed.content, list)
+    assert seed.content[0]["type"] == "text"
+    assert seed.content[1]["type"] == "image_url"
+    assert result.stopped_reason == "done"
+
+
+def test_run_executor_no_images_seed_message_is_plain_string(
+    ctx: tools.ToolContext, workspace: Path
+):
+    """Regression guard: NOT passing images must keep the exact prior
+    behavior (plain string content), not a one-item multimodal list."""
+    LEDGER.reset()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted([AIMessage(content="ok")])),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=3, step_label="t")
+    assert isinstance(result.messages[1].content, str)
+
+
+def test_run_executor_bad_image_path_errors_cleanly(ctx: tools.ToolContext):
+    LEDGER.reset()
+    result = executor.run_executor(
+        task="x", ctx=ctx, max_steps=3, step_label="t",
+        images=["/nowhere/nope.png"],
+    )
+    assert result.stopped_reason == "error"
+    assert "not found" in result.summary
+
+
+def test_run_executor_warns_when_model_not_vision_capable(
+    ctx: tools.ToolContext, workspace: Path
+):
+    import base64
+    png = workspace / "shot.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    ))
+    LEDGER.reset()
+    from wells import providers as _providers
+    non_vision = _providers.ProviderProfile(name="zai", kind="openai", model="glm-5.2")
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted([AIMessage(content="ok")])),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+        patch.object(config.providers, "load_profile", return_value=non_vision),
+    ):
+        result = executor.run_executor(
+            task="x", ctx=ctx, max_steps=3, step_label="t", images=[str(png)],
+        )
+    assert result.stopped_reason == "done"  # warning, not a hard failure
+
+
+# ---------------------------------------------------------------------------
 # Hooks integration (PreToolUse blocks, PostToolUse annotates)
 # ---------------------------------------------------------------------------
 

@@ -22,6 +22,10 @@ class AgentState(TypedDict, total=False):
     plan_mode: bool
     index_ready: bool  # True when repo index is built/up-to-date
 
+    # Vision: image file paths attached to the goal (CLI --image, TUI
+    # /image or /paste-image). Seen by the planner's first LLM turn.
+    images: list[str]
+
     development_plan: str
     plan_complexity: str  # "simple" (skip architect) | "complex"
     architecture: str

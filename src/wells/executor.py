@@ -559,13 +559,26 @@ def _try_salvage_write(task: str, llm_text: str) -> tuple[str, str] | None:
 # ---------------------------------------------------------------------------
 
 
+def _message_text(m: BaseMessage) -> str:
+    """Plain text out of a message's content, whether it's a string or a
+    multimodal content-block list (image attachments) — image blocks
+    contribute no text (their token cost isn't estimable this way; usage_
+    metadata from the provider is preferred whenever available)."""
+    content = getattr(m, "content", "") or ""
+    if isinstance(content, list):
+        return " ".join(
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+        )
+    return content
+
+
 def _account_usage(
     *, step: str, model: str, messages: list[BaseMessage], resp: BaseMessage,
     saved_by_trim: int = 0,
 ) -> None:
     """Record token usage for one executor round into the global ledger."""
     um = getattr(resp, "usage_metadata", None) or {}
-    full = "\n".join(getattr(m, "content", "") or "" for m in messages)
+    full = "\n".join(_message_text(m) for m in messages)
     input_tokens = um.get("input_tokens") or estimate_tokens(full)
     output_tokens = um.get("output_tokens") or estimate_tokens(
         getattr(resp, "content", "") or ""
@@ -691,6 +704,16 @@ class WorkingMemory:
         return "\n".join(parts)
 
 
+def _is_wm_message(m: BaseMessage) -> bool:
+    """True for the working-memory HumanMessage — never a multimodal one
+    (WM content is always a plain string), so list content (an image-
+    attached seed message) safely short-circuits to False here."""
+    if not isinstance(m, HumanMessage):
+        return False
+    content = m.content
+    return isinstance(content, str) and content.startswith(_WM_TAG)
+
+
 def _inject_wm(messages: list[BaseMessage], wm: WorkingMemory) -> list[BaseMessage]:
     """Remove the previous working-memory HumanMessage and append a fresh one
     at the END of the list (never pruned).
@@ -709,10 +732,7 @@ def _inject_wm(messages: list[BaseMessage], wm: WorkingMemory) -> list[BaseMessa
     """
     if wm.is_empty():
         return messages
-    result = [
-        m for m in messages
-        if not (isinstance(m, HumanMessage) and (m.content or "").startswith(_WM_TAG))
-    ]
+    result = [m for m in messages if not _is_wm_message(m)]
     result.append(HumanMessage(content=wm.to_xml()))
     return result
 
@@ -804,10 +824,7 @@ def _ctx_tokens(messages: list[BaseMessage]) -> int:
     """Rough token estimate for the full message list."""
     total = 0
     for m in messages:
-        content = getattr(m, "content", "") or ""
-        if isinstance(content, list):
-            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-        total += estimate_tokens(content)
+        total += estimate_tokens(_message_text(m))
         for tc in getattr(m, "tool_calls", None) or []:
             total += estimate_tokens(str(tc.get("args", {})))
     return total
@@ -943,7 +960,7 @@ def _safety_drop(
                 seen_human = True  # first HumanMessage = task
                 head_count += 1
                 continue
-            if (m.content or "").startswith(_WM_TAG):
+            if _is_wm_message(m):
                 head_count += 1  # WM message — also protect
                 continue
         break  # first AIMessage/ToolMessage, or a later plain Human (e.g. /steer)
@@ -1141,11 +1158,18 @@ def _run_executor_impl(
     step_label: str = "executor",
     quiet: bool = False,
     stream: bool = False,
+    images: list[str] | None = None,
 ) -> ExecutorResult:
     """Run the agentic tool-calling loop until completion or the step cap.
 
     Parameters
     ----------
+    images : list[str], optional
+        Image file paths attached to the initial task message (multimodal
+        content blocks — see :mod:`wells.vision`). Ignored when
+        ``seed_messages`` is given (a resumed run already has its own
+        history; attaching new images there would need to land on a
+        specific message, not the run's start).
     task : str
         Natural-language task for the executor (the "what to do").
     ctx : ToolContext
@@ -1226,6 +1250,24 @@ def _run_executor_impl(
     messages: list[BaseMessage] = [SystemMessage(content=system)]
     if seed_messages:
         messages.extend(seed_messages)
+    elif images:
+        from wells import vision as _vision
+        try:
+            content = _vision.build_multimodal_content(
+                f"Please complete this task:\n{task}", images
+            )
+        except _vision.VisionError as e:
+            return ExecutorResult(
+                summary=f"[executor error: {e}]", stopped_reason="error",
+                messages=[SystemMessage(content=system)],
+            )
+        _vision_model_name = model_label.label() if model_label else profile
+        if not _vision.provider_supports_vision(_vision_model_name):
+            _ui("warn", f"  [yellow]⚠ {len(images)} image(s) attached, but "
+                        f"'{_vision_model_name}' doesn't look vision-capable — "
+                        f"sending anyway; the provider may ignore or reject "
+                        f"it.[/yellow]")
+        messages.append(HumanMessage(content=content))
     else:
         messages.append(HumanMessage(content=f"Please complete this task:\n{task}"))
 
