@@ -17,6 +17,18 @@ The fan-out becomes the *agent's* decision: it starts N tasks, keeps working
 the natural generalization of the roadmap item "async task tracking for MCP
 ``run_agent_task``".
 
+Three roles:
+
+  * ``research`` — read-only investigator. Cannot mutate the workspace.
+  * ``fix`` — scoped editor. Writes the parent workspace directly; suitable
+    when only one fix is in flight or edits target disjoint files.
+  * ``worktree`` — scoped editor with **isolation**: the sub-agent runs in its
+    own :mod:`wells.worktree` git worktree, and on ``bg_collect`` its commit
+    is cherry-picked into the parent. On conflict the cherry-pick is aborted
+    and the diff is returned to the parent agent (no surprise merges). Use
+    this when multiple write-fan-outs target overlapping areas, or whenever
+    isolation is cheaper than reasoning about interleaving. Requires git.
+
 Design:
   * Each background agent is a :class:`run_subagent` call running on a daemon
     thread in a process-wide :class:`BackgroundRegistry`. Threads are right
@@ -28,6 +40,9 @@ Design:
     (``ctx.subagent`` is set by :func:`run_subagent`).
   * Cooperative cancellation: the registry honors :data:`control.CONTROL.cancel`
     so Escape stops pending background work too.
+  * For ``role="worktree"``: the worktree handle is registered on the slot
+    *before* the sub-agent thread starts, so ``reset`` can always reap a
+    half-spawned or cancelled worktree even if the parent agent never collects.
 """
 
 from __future__ import annotations
@@ -40,6 +55,7 @@ from typing import Callable
 from wells.subagents import SubagentReport, SubagentSpec, run_subagent
 from wells.tools import ToolContext, ToolDef, ToolResult
 
+from wells.worktree import WorktreeHandle
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -58,6 +74,12 @@ class _Slot:
     status: str = "running"
     report: SubagentReport | None = None
     collected: bool = False
+    # role="worktree" only: the live worktree + parent workspace to merge into.
+    # Both are None for research/fix roles. Registered here BEFORE the sub-agent
+    # thread starts so reset() can always reap a half-spawned or cancelled
+    # worktree — even if the parent agent never collects.
+    worktree: WorktreeHandle | None = None
+    parent_workspace: str = ""
 
 
 class BackgroundRegistry:
@@ -96,11 +118,16 @@ class BackgroundRegistry:
         "invisible, unrecoverable" half of the problem, not the "still
         physically running" half, which cooperative threading cannot close.
 
+        For role="worktree" slots, also reaps the worktree + branch so a
+        cancelled run doesn't leak disk. Best-effort: a worktree whose
+        parent_workspace is gone (e.g. tmp_path) is silently skipped.
+
         Returns how many were cancelled, so the caller can warn when a
         background agent was actually abandoned mid-flight.
         """
         with self._lock:
             n = self._cancel_all_locked()
+            self._reap_worktrees_locked()
             self._slots.clear()
             self._counter = 0
             return n
@@ -111,13 +138,28 @@ class BackgroundRegistry:
         ctx: ToolContext,
         *,
         profile: str | None = None,
+        worktree: WorktreeHandle | None = None,
+        parent_workspace: str = "",
     ) -> str:
-        """Launch ``spec`` on a daemon thread; return its id."""
+        """Launch ``spec`` on a daemon thread; return its id.
+
+        If ``worktree`` is given, it is registered on the slot *before* the
+        thread starts so :meth:`reset` can always reap it. ``ctx.workspace``
+        must already point at the worktree path in that case (the caller
+        arranges that — typically via ``replace(ctx, workspace=handle.worktree_path)``).
+        ``parent_workspace`` is recorded separately so collect() knows where
+        to cherry-pick back into.
+        """
         with self._lock:
             self._counter += 1
             bgid = f"bg-{self._counter}"
             slot = _Slot(
-                id=bgid, name=spec.name, task=spec.task, started_at=time.time()
+                id=bgid,
+                name=spec.name,
+                task=spec.task,
+                started_at=time.time(),
+                worktree=worktree,
+                parent_workspace=parent_workspace,
             )
             self._slots[bgid] = slot
 
@@ -154,9 +196,7 @@ class BackgroundRegistry:
                     except Exception:
                         pass
 
-        t = threading.Thread(
-            target=_run, name=f"wells-bg-{bgid}", daemon=True
-        )
+        t = threading.Thread(target=_run, name=f"wells-bg-{bgid}", daemon=True)
         t.start()
         return bgid
 
@@ -178,7 +218,14 @@ class BackgroundRegistry:
             return out
 
     def collect(self, bgid: str) -> SubagentReport | None:
-        """Return a finished agent's report (once). None if not done / unknown."""
+        """Return a finished agent's report (once). None if not done / unknown.
+
+        For role="worktree" slots, also: commit any pending worktree edits,
+        cherry-pick the resulting commit into ``parent_workspace``, then reap
+        the worktree + branch. On cherry-pick conflict, aborts, attaches the
+        diff to the report's summary, and reaps anyway — the parent agent
+        re-applies by hand.
+        """
         with self._lock:
             slot = self._slots.get(bgid)
             if slot is None:
@@ -188,7 +235,15 @@ class BackgroundRegistry:
             if slot.collected:
                 return None
             slot.collected = True
-            return slot.report
+            report = slot.report
+            worktree = slot.worktree
+            parent = slot.parent_workspace
+
+        # Cherry-pick + reap happens outside the lock (subprocess I/O).
+        if worktree is not None and parent:
+            report = _finalize_worktree_slot(parent, worktree, report)
+
+        return report
 
     def _cancel_all_locked(self) -> int:
         """Mark all running slots cancelled. Caller must already hold self._lock."""
@@ -198,6 +253,33 @@ class BackgroundRegistry:
                 s.status = "cancelled"
                 n += 1
         return n
+
+    def _reap_worktrees_locked(self) -> None:
+        """Best-effort reap of every slot's worktree. Caller holds self._lock.
+
+        Used by :meth:`reset` so a cancelled run doesn't leak worktrees on
+        disk. We snapshot what to reap under the lock, then release it before
+        doing subprocess I/O (git won't deadlock, but holding a lock across
+        blocking I/O is still bad form).
+        """
+        to_reap: list[tuple[str, WorktreeHandle]] = [
+            (s.parent_workspace, s.worktree)
+            for s in self._slots.values()
+            if s.worktree is not None and s.parent_workspace
+        ]
+        if not to_reap:
+            return
+        # Release the lock around the git calls by deferring them. We're
+        # already inside reset()'s `with self._lock`, so we can't release
+        # here; instead we keep the calls short (each is one git subprocess)
+        # and accept the brief hold. git operations are bounded by timeout.
+        from wells.worktree import remove_worktree
+
+        for parent, handle in to_reap:
+            try:
+                remove_worktree(parent, handle)
+            except Exception:
+                pass
 
     def cancel_all(self) -> int:
         """Mark all running slots cancelled. Returns how many were running."""
@@ -218,6 +300,92 @@ REGISTRY = BackgroundRegistry()
 
 
 # ---------------------------------------------------------------------------
+# Worktree slot finalization (cherry-pick + reap)
+# ---------------------------------------------------------------------------
+
+
+def _finalize_worktree_slot(
+    parent_workspace: str,
+    handle: WorktreeHandle,
+    report: SubagentReport | None,
+) -> SubagentReport:
+    """Commit the worktree's pending edits, cherry-pick into the parent, reap.
+
+    On conflict: aborts the cherry-pick and attaches the diff to the report's
+    summary so the parent agent can re-apply manually. The worktree is reaped
+    either way (the diff is in the parent's context now). Never raises —
+    git errors land in the report's summary.
+    """
+    from wells.worktree import (
+        cherry_pick_into_parent,
+        commit_pending,
+        remove_worktree,
+    )
+
+    footer: list[str] = []
+    tip = ""
+    try:
+        c = commit_pending(handle, message=f"wells bg worktree: {handle.slot_id}")
+        if not c.ok:
+            footer.append(f"[worktree commit failed: {c.message}]")
+        else:
+            tip = c.tip_sha
+            if not tip:
+                footer.append("[worktree: no edits to merge]")
+    except Exception as e:
+        footer.append(f"[worktree commit error: {type(e).__name__}: {e}]")
+
+    merged = False
+    conflict_diff = ""
+    if tip:
+        try:
+            m = cherry_pick_into_parent(parent_workspace, handle, tip_sha=tip)
+            if m.ok and not m.skipped:
+                merged = True
+                footer.append(f"[merged worktree branch {handle.branch} into parent]")
+            elif m.skipped:
+                pass  # already noted "no edits" above
+            elif m.conflict:
+                conflict_diff = m.diff
+                footer.append(
+                    f"[CONFLICT: cherry-pick of {handle.branch} aborted; "
+                    f"parent diverged. Re-apply the change manually. "
+                    f"Diff against parent HEAD:]"
+                )
+            else:
+                footer.append(f"[worktree merge failed: {m.message}]")
+        except Exception as e:
+            footer.append(f"[worktree merge error: {type(e).__name__}: {e}]")
+
+    # Always reap the worktree — the commits (if any) are either merged or
+    # captured in the diff text. Leaving it would leak disk.
+    try:
+        remove_worktree(parent_workspace, handle)
+    except Exception as e:
+        footer.append(f"[worktree cleanup error: {type(e).__name__}: {e}]")
+
+    # Augment the report with the merge outcome. If the subagent itself
+    # errored (report is None), synthesize one so the parent still sees the
+    # worktree outcome.
+    if report is None:
+        report = SubagentReport(
+            name=handle.slot_id,
+            ok=False,
+            summary="",
+            steps_taken=0,
+            error="subagent did not produce a report",
+        )
+    parts = [report.summary.rstrip(), *footer]
+    if conflict_diff:
+        parts.append("```diff\n" + conflict_diff.rstrip() + "\n```")
+    report.summary = "\n".join(p for p in parts if p)
+    if not merged and conflict_diff:
+        # Make sure the parent notices the merge didn't land.
+        report.ok = False
+    return report
+
+
+# ---------------------------------------------------------------------------
 # Tool handlers
 # ---------------------------------------------------------------------------
 
@@ -234,14 +402,76 @@ def _bg_start(
     if not task or not task.strip():
         return ToolResult(False, "", "task is required")
     role = (role or "research").strip().lower()
-    if role not in ("research", "fix"):
+    if role not in ("research", "fix", "worktree"):
         return ToolResult(
-            False, "", f"role must be 'research' or 'fix' (got {role!r})"
+            False,
+            "",
+            f"role must be 'research', 'fix', or 'worktree' (got {role!r})",
         )
 
+    from dataclasses import replace as _replace
+
     from wells import subagents
+    from wells import worktree as _wt
 
     name = f"{role}-{int(time.time() * 1000) % 100000}"
+
+    # role="worktree": spawn the subagent in its own git worktree, isolated
+    # from the parent workspace. On bg_collect the worktree's commit is
+    # cherry-picked back into the parent (or, on conflict, the diff is
+    # returned for manual re-apply). Requires git; degrades gracefully.
+    worktree_handle: _wt.WorktreeHandle | None = None
+    parent_workspace = ""
+    run_ctx = ctx
+    if role == "worktree":
+        if not worktrees_enabled():
+            return ToolResult(
+                False,
+                "",
+                "worktree branch agents are disabled (WELLS_BG_WORKTREES=0)",
+            )
+        # Reserve a worktree-local id (decoupled from the registry's bg-N id;
+        # the registry id is what the model references; the worktree id only
+        # shows up in the on-disk path and branch name).
+        slot_id = f"wt-{int(time.time() * 1_000_000) % 1_000_000}"
+        try:
+            worktree_handle = _wt.create_worktree(
+                ctx.workspace,
+                slot_id=slot_id,
+                task=task,
+            )
+        except RuntimeError as e:
+            return ToolResult(
+                False,
+                "",
+                f"could not create worktree for role=worktree: {e}. "
+                f"Use role=fix for an inline edit instead.",
+            )
+        parent_workspace = ctx.workspace
+        run_ctx = _replace(ctx, workspace=worktree_handle.worktree_path)
+        spec = subagents.fix_subagent(name, task, max_steps=max_steps)
+        try:
+            bgid = REGISTRY.start(
+                spec,
+                run_ctx,
+                worktree=worktree_handle,
+                parent_workspace=parent_workspace,
+            )
+        except Exception:
+            # Roll back the worktree we just created so we don't leak.
+            try:
+                _wt.remove_worktree(parent_workspace, worktree_handle)
+            except Exception:
+                pass
+            raise
+        return ToolResult(
+            True,
+            f"Started background worktree-isolated agent {bgid} ({name}) in "
+            f"branch {worktree_handle.branch}. It runs concurrently and writes "
+            f"to its own checkout — keep working, then bg_collect to merge "
+            f"(or receive the diff on conflict).",
+        )
+
     if role == "fix":
         spec = subagents.fix_subagent(name, task, max_steps=max_steps)
     else:
@@ -277,7 +507,11 @@ def _bg_collect(ctx: ToolContext, id: str = "") -> ToolResult:
         return ToolResult(False, "", "subagents cannot collect background agents")
     bgid = (id or "").strip()
     if not bgid:
-        pending = [r for r in REGISTRY.status() if r["status"] != "running" and not r["collected"]]
+        pending = [
+            r
+            for r in REGISTRY.status()
+            if r["status"] != "running" and not r["collected"]
+        ]
         if not pending:
             return ToolResult(
                 True,
@@ -299,10 +533,15 @@ def _bg_collect(ctx: ToolContext, id: str = "") -> ToolResult:
         slot = next((r for r in REGISTRY.status() if r["id"] == bgid), None)
         if slot and slot["status"] == "running":
             return ToolResult(
-                True, f"{bgid} is still running ({slot['elapsed_s']}s). Try again later."
+                True,
+                f"{bgid} is still running ({slot['elapsed_s']}s). Try again later.",
             )
-        return ToolResult(True, f"{bgid} has already been collected (or was cancelled).")
-    return ToolResult(report.ok, report.as_context_block(), "" if report.ok else report.error)
+        return ToolResult(
+            True, f"{bgid} has already been collected (or was cancelled)."
+        )
+    return ToolResult(
+        report.ok, report.as_context_block(), "" if report.ok else report.error
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +556,11 @@ BG_START_TOOL = ToolDef(
         "id immediately (does not block). Use for fan-out: start N agents (e.g. "
         "research 3 tickers, or investigate 3 modules), keep working, then "
         "bg_status/bg_collect when convenient. role=research is read-only; "
-        "role=fix may edit. You can have several running at once."
+        "role=fix may edit the parent workspace directly (use when edits target "
+        "disjoint files or only one agent writes at a time); role=worktree runs "
+        "the agent in its own isolated git worktree and merges its commit back "
+        "into the parent on collect (use when multiple write-fan-outs target "
+        "overlapping areas — requires git). You can have several running at once."
     ),
     input_schema={
         "type": "object",
@@ -325,7 +568,7 @@ BG_START_TOOL = ToolDef(
             "task": {"type": "string", "description": "Focused task for the sub-agent"},
             "role": {
                 "type": "string",
-                "enum": ["research", "fix"],
+                "enum": ["research", "fix", "worktree"],
                 "default": "research",
             },
             "max_steps": {"type": "integer", "default": 0},
@@ -357,7 +600,9 @@ BG_COLLECT_TOOL = ToolDef(
     ),
     input_schema={
         "type": "object",
-        "properties": {"id": {"type": "string", "description": "Agent id from bg_start"}},
+        "properties": {
+            "id": {"type": "string", "description": "Agent id from bg_start"}
+        },
     },
     handler=_bg_collect,
     mutating=False,
@@ -369,5 +614,24 @@ def enabled() -> bool:
     import os
 
     return os.environ.get("WELLS_BG_AGENTS", "1").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def worktrees_enabled() -> bool:
+    """Whether ``bg_start role=worktree`` may spawn isolated worktrees.
+
+    Default on (mirrors :func:`enabled`). Set ``WELLS_BG_WORKTREES=0`` to
+    refuse the role without disabling the rest of the background-agent tools.
+    """
+    import os
+
+    return os.environ.get("WELLS_BG_WORKTREES", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
     )

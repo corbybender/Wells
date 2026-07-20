@@ -226,6 +226,14 @@ SETTINGS: list[Setting] = [
         "1",
         choices=("0", "1"),
     ),
+    Setting(
+        "WELLS_BG_WORKTREES",
+        "Background agent worktrees",
+        "Capabilities",
+        "Allow bg_start role=worktree (isolated git worktree per sub-agent).",
+        "1",
+        choices=("0", "1"),
+    ),
 ]
 
 SETTINGS_BY_KEY: dict[str, Setting] = {s.key: s for s in SETTINGS}

@@ -566,6 +566,36 @@ bg_collect(id="bg-2")                                                → report 
   # bg-3 still running — collect later or move on
 ```
 
+#### Roles — research, fix, worktree
+
+| Role | Edits? | Where | Use when |
+|---|---|---|---|
+| `research` (default) | No | — | Read-only investigation; safe to fan out widely |
+| `fix` | Yes | Parent workspace directly | One editor in flight, or edits target disjoint files |
+| `worktree` | Yes | Its own isolated `git worktree`, cherry-picked into the parent on `bg_collect` | Multiple write-fan-outs target overlapping areas, or whenever isolation is cheaper than reasoning about interleaving |
+
+The `worktree` role is what unblocks **parallel write steps**: two
+`bg_start role=worktree` agents run genuinely concurrently against their own
+checkouts (shared object store — fast, disk-cheap), and `bg_collect` merges
+each one's commit back into the parent. On conflict the cherry-pick is
+aborted and the diff is returned to the parent agent for manual re-apply — no
+surprise merges, no semantic guesses. Requires git; non-git workspaces get an
+error pointing at `role=fix`.
+
+```
+bg_start(task="refactor the auth middleware", role="worktree")        → bg-1
+bg_start(task="refactor the session middleware", role="worktree")     → bg-2
+bg_start(task="refactor the rate-limiter",   role="worktree")         → bg-3
+
+  # All three edit concurrently in their own worktrees; the parent's
+  # working tree is untouched until each is collected.
+
+bg_status                                                            → all three: done
+bg_collect(id="bg-1")                                                → merged into parent
+bg_collect(id="bg-2")                                                → CONFLICT, diff returned
+bg_collect(id="bg-3")                                                → merged into parent
+```
+
 #### Lifecycle + safety
 
 | Property | Behaviour |
@@ -575,7 +605,8 @@ bg_collect(id="bg-2")                                                → report 
 | **Collect once** | A result is collected at most once, then cleared — keeps memory bounded across a long run |
 | **Recursion blocked** | A sub-agent cannot start its own background agents (`ctx.subagent` is checked at dispatch) |
 | **Cooperative cancellation** | Escape / `CONTROL.cancel()` marks running slots as cancelled; pending threads check at step boundaries |
-| **Roles** | `role=research` (read-only, default) or `role=fix` (scoped edit capability) |
+| **Worktree reaping** | For `role="worktree"`, the worktree + branch are reaped on collect and on `reset()` — a cancelled run never leaks disk |
+| **Roles** | `role=research` (read-only, default), `role=fix` (parent workspace), or `role=worktree` (isolated checkout, merged on collect) |
 | **Safety gate** | Each sub-agent's tool calls pass through the same safety gate as the parent |
 
 **Contrast with `parallel_research`:**
@@ -585,7 +616,8 @@ bg_collect(id="bg-2")                                                → report 
 | **Blocking** | Yes — parent waits for all to finish | No — returns immediately, collect later |
 | **Fan-out timing** | Tool's decision (2–4 fixed) | Agent's decision (any number) |
 | **Parent works during?** | No | Yes |
-| **Read-only?** | Yes | `research` = yes; `fix` = can edit |
+| **Read-only?** | Yes | `research` = yes; `fix` / `worktree` = can edit |
+| **Isolation** | N/A (read-only) | `fix` = parent workspace; `worktree` = own checkout |
 | **Use case** | Quick parallel exploration | Long-running fan-out the parent checks back on |
 
 **Configuration:**
@@ -593,6 +625,7 @@ bg_collect(id="bg-2")                                                → report 
 | Variable | Default | Description |
 |---|---|---|
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start`/`bg_status`/`bg_collect` (set `0` to disable) |
+| `WELLS_BG_WORKTREES` | `1` | Allow `bg_start role=worktree` (isolated git worktree per sub-agent; set `0` to refuse the role without disabling the bg tools) |
 
 
 ## MCP — server *and* client
@@ -669,7 +702,8 @@ src/wells/
 ├── principles.py      # AGENT.md injection
 ├── skills.py          # Agent skills: discoverable SKILL.md, load-on-demand
 ├── codeact.py         # CodeAct: sandboxed run_code tool
-├── background.py      # Background agents: bg_start/bg_status/bg_collect
+├── background.py      # Background agents: bg_start/bg_status/bg_collect (research/fix/worktree)
+├── worktree.py        # Per-subagent git worktrees (role=worktree isolation + cherry-pick)
 └── agents/            # planner / architect / coder / tester / reviewer
 wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 .github/workflows/     # ci.yml (pytest) + release-index.yml (PyPI wheels)
@@ -709,6 +743,7 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `WELLS_CODEACT` | `1` | Expose the sandboxed `run_code` tool for in-context computation |
 | `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start` / `bg_status` / `bg_collect` for concurrent fan-out |
+| `WELLS_BG_WORKTREES` | `1` | Allow `bg_start role=worktree` (isolated git worktree per sub-agent) |
 
 Legacy `ZAI_*` variables keep working unchanged — they seed the built-in `zai`
 profile.
@@ -729,20 +764,20 @@ profile.
 ## Tests & CI
 
 ```bash
-uv run pytest -q          # 360 tests
+uv run pytest -q          # 650 tests
 ```
 
 The suite covers provider resolution, tool confinement + every safety mode,
 the executor loop (mocked model — no API credits needed), cancellation and
 budget stops, graph routing (complexity skip, test-gate fail-fast), fuzzy
 edits, self-heal checkers, repo-map ranking, git snapshot/undo, pricing, MCP
-client CRUD, and the settings persistence. GitHub Actions runs it on every
+client CRUD, background-agent worktree lifecycle (create/merge/conflict/reap),
+and the settings persistence. GitHub Actions runs it on every
 push/PR (`ci.yml`); `release-index.yml` builds and publishes `wells-index`
 wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
 
 ## Roadmap
 
-- Parallel *write* steps via worktree-per-subagent isolation (reads already fan out; background agents now fan out concurrently).
 - SSE/HTTP MCP client transport (stdio today).
 - Prompt-cache-friendly masking batches (measure `cache_read` deltas first).
 - Embedding-based retrieval for very large repos.
