@@ -26,6 +26,7 @@ def _configure_ca_bundle() -> None:
     # Try truststore first: patches ssl.SSLContext to use OS native cert store.
     try:
         import truststore
+
         truststore.inject_into_ssl()
         return
     except Exception:
@@ -51,6 +52,7 @@ def _configure_ca_bundle() -> None:
     # Last resort: certifi's bundled CA certs.
     try:
         import certifi
+
         bundle = certifi.where()
         os.environ["SSL_CERT_FILE"] = bundle
         os.environ["REQUESTS_CA_BUNDLE"] = bundle
@@ -149,7 +151,9 @@ BUDGET = TokenBudget(
 # IS set, use that instead — we've explicitly raised the real ceiling, so the
 # trim budget should track it rather than stay pinned to the crippled default.
 SMALL_BUDGET = TokenBudget(
-    max_input_tokens=int(os.getenv("TOKEN_BUDGET_SMALL_INPUT", str(OLLAMA_NUM_CTX or 3584))),
+    max_input_tokens=int(
+        os.getenv("TOKEN_BUDGET_SMALL_INPUT", str(OLLAMA_NUM_CTX or 3584))
+    ),
     reserved_output_tokens=int(os.getenv("TOKEN_BUDGET_SMALL_RESERVED_OUTPUT", "512")),
 )
 # Replace verbatim plan/architecture with a summary on loop iterations when the
@@ -207,7 +211,12 @@ SUBAGENT_MAX_STEPS: int = int(os.getenv("SUBAGENT_MAX_STEPS", "0"))
 # follow-up agent pass to close open liabilities (e.g. terminate a rented GPU)
 # when a run tries to finish with one open.
 RULES_ENFORCE: bool = os.getenv("RULES_ENFORCE", "1") not in ("0", "false", "no", "")
-RULES_AUTODISCHARGE: bool = os.getenv("RULES_AUTODISCHARGE", "1") not in ("0", "false", "no", "")
+RULES_AUTODISCHARGE: bool = os.getenv("RULES_AUTODISCHARGE", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Auto-commit (opt-in): after each successful auto-mode run that changed the
 # working tree, create a git commit with an LLM-generated Conventional Commits
@@ -235,7 +244,7 @@ ESCALATION_PROFILE: str = os.getenv("ESCALATION_PROFILE", "").strip()
 # truncating mid-run: a model can't lose the thread across 20 rounds when no
 # run lasts 20 rounds. "auto" (default) = only when the active profile looks
 # like local Ollama; "1" = always; "0" = never.
-WELLS_STEPWISE: str = (os.getenv("WELLS_STEPWISE", "auto").strip().lower() or "auto")
+WELLS_STEPWISE: str = os.getenv("WELLS_STEPWISE", "auto").strip().lower() or "auto"
 
 # Self-heal: after every write/edit, run the fastest available checker for
 # that file type (ruff/py_compile, node --check, json parse) and inject any
@@ -263,17 +272,32 @@ STREAM_OUTPUT: bool = os.getenv("STREAM_OUTPUT", "1") not in ("0", "false", "no"
 # a classic small-model failure). Closing the stream makes Ollama stop
 # generating, so a doomed reply costs seconds instead of running to the
 # token limit or the request timeout. Set 0 to disable.
-STREAM_GUARD: bool = os.getenv("WELLS_STREAM_GUARD", "1") not in ("0", "false", "no", "")
+STREAM_GUARD: bool = os.getenv("WELLS_STREAM_GUARD", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Intent routing: when the heuristic can't decide auto vs orchestrate, ask the
 # cheap model (adds a full round-trip before ANY work starts). Default off —
 # ambiguous requests route to auto, which handles everything; /orchestrate
 # forces the full pipeline explicitly.
-INTENT_LLM_FALLBACK: bool = os.getenv("INTENT_LLM_FALLBACK", "0") not in ("0", "false", "no", "")
+INTENT_LLM_FALLBACK: bool = os.getenv("INTENT_LLM_FALLBACK", "0") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Auto-build/update the structural repo index before each harness run (if available).
 # Set to 0 to disable automatic indexing.
-INDEX_AUTO_UPDATE: bool = os.getenv("INDEX_AUTO_UPDATE", "1") not in ("0", "false", "no", "")
+INDEX_AUTO_UPDATE: bool = os.getenv("INDEX_AUTO_UPDATE", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Commands blocked from run_command regardless of safety policy (regex patterns,
 # ``|``-separated — each piece is compiled independently).
@@ -299,14 +323,24 @@ WELLS_CODEACT: bool = os.getenv("WELLS_CODEACT", "1") not in ("0", "false", "no"
 # one. Results land in the transcript in call order; mutating calls and
 # everything after the first one stay strictly sequential, so ordering
 # semantics are unchanged. Set 0 to disable.
-PARALLEL_READS: bool = os.getenv("WELLS_PARALLEL_READS", "1") not in ("0", "false", "no", "")
+PARALLEL_READS: bool = os.getenv("WELLS_PARALLEL_READS", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # When the model re-issues an identical read-only call whose result is still
 # verbatim in its recent context (within the last WELLS_KEEP_ROUNDS rounds,
 # with no write/shell mutation since), skip the dispatch and return a pointer
 # to the earlier step instead of re-paying the full output in tokens. Also
 # makes re-read loops visible to the model immediately. Set 0 to disable.
-DEDUPE_READS: bool = os.getenv("WELLS_DEDUPE_READS", "1") not in ("0", "false", "no", "")
+DEDUPE_READS: bool = os.getenv("WELLS_DEDUPE_READS", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Structured outputs: for local Ollama profiles, constrain the model's reply
 # to a tool-call JSON schema at the token-sampling level (Ollama "format" /
@@ -317,18 +351,45 @@ DEDUPE_READS: bool = os.getenv("WELLS_DEDUPE_READS", "1") not in ("0", "false", 
 # remain as fallback for providers without schema support. Set 0 to disable
 # (e.g. an old Ollama server that rejects response_format; the executor also
 # auto-falls-back once per run if the server errors on it).
-STRUCTURED_OUTPUTS: bool = os.getenv("WELLS_STRUCTURED", "1") not in ("0", "false", "no", "")
+STRUCTURED_OUTPUTS: bool = os.getenv("WELLS_STRUCTURED", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Background agents: bg_start / bg_status / bg_collect for concurrent fan-out
 # (async counterpart to the blocking parallel_research). Default on.
-WELLS_BG_AGENTS: bool = os.getenv("WELLS_BG_AGENTS", "1") not in ("0", "false", "no", "")
+WELLS_BG_AGENTS: bool = os.getenv("WELLS_BG_AGENTS", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
+
+# Worktree-isolated branch of background agents: bg_start role="worktree"
+# spawns each sub-agent in its own git worktree and cherry-picks its commit
+# back into the parent on collect (aborts + returns the diff on conflict).
+# Disable to refuse the worktree role without turning off the bg tools.
+# Default on; requires git at run time (non-git degrades to an error).
+WELLS_BG_WORKTREES: bool = os.getenv("WELLS_BG_WORKTREES", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 
 # Web tools: web_search / fetch_url. Default on; web_search works out of the
 # box with zero setup (scrapes DuckDuckGo's HTML results page — no API key,
 # no Docker, no signup, matching Wells' stand-alone-tool stance). This flag
 # exists to remove the tools from the catalog entirely (e.g. an air-gapped
 # environment where their presence would just invite the model to try and fail).
-WELLS_WEB_TOOLS: bool = os.getenv("WELLS_WEB_TOOLS", "1") not in ("0", "false", "no", "")
+WELLS_WEB_TOOLS: bool = os.getenv("WELLS_WEB_TOOLS", "1") not in (
+    "0",
+    "false",
+    "no",
+    "",
+)
 # Optional upgrade: base URL of a self-hosted SearXNG instance
 # (https://docs.searxng.org) with JSON output enabled. Empty (default) =
 # web_search uses the zero-config DuckDuckGo scrape instead. Only worth
@@ -414,13 +475,17 @@ def _invoke_with_retry(llm, messages):
     """
     from wells.control import CONTROL
     from wells.logger import log_error, log_path
+
     last_err: Exception | None = None
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         try:
             return llm.invoke(messages)
         except Exception as err:
             last_err = err
-            log_error(f"LLM invoke attempt {attempt}/{LLM_MAX_RETRIES}: {type(err).__name__}: {err}", err)
+            log_error(
+                f"LLM invoke attempt {attempt}/{LLM_MAX_RETRIES}: {type(err).__name__}: {err}",
+                err,
+            )
             if not _is_transient(err) or attempt == LLM_MAX_RETRIES:
                 break
             backoff = min(LLM_BACKOFF_BASE**attempt, 30.0)
