@@ -105,5 +105,5 @@ fi
 
 # Run the harness directly from src/ — no package build, no install step.
 export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-export WORKSPACE_ROOT="${WORKSPACE_ROOT:-$USER_CWD}"
+export WORKSPACE_ROOT="$USER_CWD"
 exec uv run python -m wells.main "$@"

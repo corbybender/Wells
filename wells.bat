@@ -104,7 +104,7 @@ echo.
 
 :embeddone
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
-if not defined WORKSPACE_ROOT set "WORKSPACE_ROOT=%USER_CWD%"
+set "WORKSPACE_ROOT=%USER_CWD%"
 uv run --no-sync python -m wells.main %*
 goto :eof
 
