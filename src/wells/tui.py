@@ -37,7 +37,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList, RichLog, Static, TextArea
+from textual.widgets import Button, Input, OptionList, RichLog, Static, TextArea
 from textual.widgets._option_list import Option
 
 from wells import chat, config
@@ -541,6 +541,107 @@ class PromptInput(TextArea):
 # the event loop (Textual owns stdin, so input() never returns).
 # ---------------------------------------------------------------------------
 
+class ProfileSwitchScreen(ModalScreen["str | None"]):
+    """Pick a profile to switch to."""
+
+    CSS = """
+    ProfileSwitchScreen { align: center middle; }
+    #switch-panel {
+        width: 50; height: auto;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="switch-panel"):
+            yield Static("[bold]Switch active profile[/bold]  [dim]· pick one[/dim]",
+                         markup=True)
+            yield OptionList(id="switch-list")
+
+    def on_mount(self) -> None:
+        from wells import providers as providers_mod
+        lst = self.query_one("#switch-list", OptionList)
+        active = providers_mod.env("MODEL_PROFILE", default="zai")
+        for name in providers_mod.available_profiles():
+            suffix = "  ← active" if name == active else ""
+            lst.add_option(Option(f"{name}{suffix}", id=name))
+        lst.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option_id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ProfileAddScreen(ModalScreen["dict | None"]):
+    """Form to add a new provider profile."""
+
+    CSS = """
+    ProfileAddScreen { align: center middle; }
+    #add-panel {
+        width: 60; height: auto;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #add-panel Static { height: auto; }
+    #add-panel Input { margin-bottom: 1; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="add-panel"):
+            yield Static("[bold]Add new provider profile[/bold]", markup=True)
+            yield Static("Profile name  [dim](e.g. openai, anthropic)[/dim]", markup=True)
+            yield Input(id="add-name", placeholder="profile name")
+            yield Static("Model id", markup=True)
+            yield Input(id="add-model", placeholder="e.g. gpt-4o")
+            yield Static("API key  [dim](blank if none/local)[/dim]", markup=True)
+            yield Input(id="add-key", placeholder="(optional)")
+            yield Static("Base URL  [dim](blank for provider default)[/dim]", markup=True)
+            yield Input(id="add-url", placeholder="(optional)")
+            yield Static("Activate this profile now?  [dim](y/N)[/dim]", markup=True)
+            yield Input(id="add-activate", placeholder="y or n (default: n)")
+            yield Static("", id="add-error", markup=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#add-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        order = ["add-name", "add-model", "add-key", "add-url", "add-activate"]
+        cur = event.input.id or ""
+        if cur in order[:-1]:
+            self.query_one(f"#{order[order.index(cur) + 1]}", Input).focus()
+            return
+        name = self.query_one("#add-name", Input).value.strip()
+        model = self.query_one("#add-model", Input).value.strip()
+        if not name or not model:
+            self.query_one("#add-error", Static).update("[red]Name and model are required.[/red]")
+            return
+        key = self.query_one("#add-key", Input).value.strip()
+        url = self.query_one("#add-url", Input).value.strip()
+        activate = self.query_one("#add-activate", Input).value.strip().lower()
+        changes: dict[str, str] = {f"MODEL_{name}": model}
+        if key:
+            changes[f"API_KEY_{name}"] = key
+        if url:
+            changes[f"BASE_URL_{name}"] = url
+        from wells import config as config_mod
+        names = [n for n in config_mod.MODEL_PROFILES.split(",") if n.strip()]
+        if name not in names:
+            names.append(name)
+            changes["MODEL_PROFILES"] = ",".join(names)
+        if activate in ("y", "yes"):
+            changes["MODEL_PROFILE"] = name
+        self.dismiss(changes)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SettingsScreen(ModalScreen["dict | None"]):
     """Modal settings editor over the ``settings.SETTINGS`` schema.
 
@@ -562,8 +663,16 @@ class SettingsScreen(ModalScreen["dict | None"]):
         padding: 1 2;
     }
     #settings-title {
-        height: 1;
+        height: 2;
         text-style: bold;
+    }
+    #profile-actions {
+        height: 3;
+        align: center middle;
+        margin-bottom: 1;
+    }
+    #profile-actions Button {
+        margin: 0 1;
     }
     #settings-list {
         height: 1fr;
@@ -588,13 +697,16 @@ class SettingsScreen(ModalScreen["dict | None"]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-panel"):
-            yield Static("Wells Settings  [dim](Enter: edit · Esc: close & save)[/dim]",
-                         id="settings-title", markup=True)
+            yield Static(id="settings-title", markup=True)
+            with Horizontal(id="profile-actions"):
+                yield Button("Switch profile", id="btn-switch-profile", variant="primary")
+                yield Button("Add profile", id="btn-add-profile")
             yield OptionList(id="settings-list")
             yield Static("", id="settings-help", markup=True)
             yield Input(id="settings-input")
 
     def on_mount(self) -> None:
+        self._refresh_title()
         self._populate()
         self.query_one("#settings-list", OptionList).focus()
 
@@ -679,6 +791,33 @@ class SettingsScreen(ModalScreen["dict | None"]):
             self._close_editor()
         else:
             self.dismiss(self._staged or None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        from wells import providers as providers_mod
+        event.stop()
+        if event.button.id == "btn-switch-profile":
+            def _on_profile_picked(chosen: str | None) -> None:
+                if chosen:
+                    self._staged["MODEL_PROFILE"] = chosen
+                    self._populate()
+                    self._refresh_title()
+            self.push_screen(ProfileSwitchScreen(), _on_profile_picked)
+        elif event.button.id == "btn-add-profile":
+            def _on_profile_added(changes: dict | None) -> None:
+                if changes:
+                    self._staged.update(changes)
+                    self._populate()
+                    self._refresh_title()
+            self.push_screen(ProfileAddScreen(), _on_profile_added)
+
+    def _refresh_title(self) -> None:
+        from wells import providers as providers_mod
+        from wells import config as config_mod
+        active = self._staged.get("MODEL_PROFILE", config_mod.ACTIVE_PROFILE)
+        avails = providers_mod.available_profiles()
+        profile_str = f"[yellow]{active}[/yellow]  ·  available: [green]{', '.join(avails)}[/green]"
+        title = f"Wells Settings  [dim](Enter: edit · Esc: close & save)[/dim]\n[bold]Profile:[/bold] {profile_str}"
+        self.query_one("#settings-title", Static).update(title)
 
 
 # ---------------------------------------------------------------------------

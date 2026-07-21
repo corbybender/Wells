@@ -22,6 +22,14 @@ dependencies = [
 wells = "wells.main:main"
 wells-mcp = "wells.mcp_server:main"
 
+[project.optional-dependencies]
+# Semantic code retrieval (cosine-similarity search over local BGE embeddings).
+# Install with:  pip install 'wells[embeddings]'
+embeddings = [
+    "fastembed>=0.3.0",
+    "sqlite-vec>=0.1.6",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -69,6 +69,7 @@ _NAME_DEFAULTS: dict[str, dict[str, str]] = {
     "ollama": {"kind": "ollama", "base_url": "http://localhost:11434"},
     "local": {"kind": "openai", "base_url": "http://localhost:8000/v1"},
     "google": {"kind": "google"},
+    "gemini": {"kind": "google"},
     "bedrock": {"kind": "bedrock"},
     "azure": {"kind": "azure_openai"},
 }
@@ -186,12 +187,20 @@ def load_profile(name: str) -> ProviderProfile | None:
 
 
 def available_profiles() -> list[str]:
-    """Names of profiles declared via ``MODEL_PROFILES`` (plus legacy ``zai``)."""
+    """Names of profiles declared via ``MODEL_PROFILES`` (plus auto-detected)."""
     declared = _env("MODEL_PROFILES", default="zai")
     names = [n.strip() for n in declared.split(",") if n.strip()]
     # Always include the legacy zai profile if old vars are present and not listed.
     if "zai" not in names and (_env("ZAI_API_KEY") or _env("ZAI_MODEL")):
         names.append("zai")
+    # Auto-detect gemini/google profiles if an API key or model is configured.
+    auto_kinds = {
+        "gemini": ("API_KEY_gemini", "MODEL_gemini"),
+        "google": ("API_KEY_google", "MODEL_google"),
+    }
+    for pname, (keyvar, modelvar) in auto_kinds.items():
+        if pname not in names and (_env(keyvar) or _env(modelvar)):
+            names.append(pname)
     return names
 
 
@@ -343,7 +352,7 @@ def _build_chat_model(profile: ProviderProfile, *, temperature: float, timeout: 
         kwargs["timeout"] = int(timeout)
     elif kind == "google":
         if profile.api_key:
-            kwargs["api_key"] = profile.api_key
+            kwargs["google_api_key"] = profile.api_key
         kwargs["timeout"] = timeout
     elif kind == "bedrock":
         kwargs["model_id"] = profile.model

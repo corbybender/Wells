@@ -325,6 +325,28 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["query"],
             },
         ),
+        types.Tool(
+            name="semantic_search",
+            description=(
+                "Find symbols by MEANING (cosine similarity over local "
+                "bge-small-en-v1.5 embeddings). Use this when the user describes "
+                "what they want instead of naming it. First call embeds the whole "
+                "repo (a few seconds); subsequent calls are fast. "
+                "Requires the optional 'embeddings' extra: pip install 'wells[embeddings]'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language description.",
+                    },
+                    "limit": {"type": "integer", "default": 10},
+                    "workspace": {"type": "string", "default": WORKSPACE_ROOT},
+                },
+                "required": ["query"],
+            },
+        ),
     ]
     return core
 
@@ -390,6 +412,8 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             return _find_callers(arguments)
         if name == "search_symbols":
             return _search_symbols(arguments)
+        if name == "semantic_search":
+            return _semantic_search(arguments)
         return _text_content(_format_output(error=f"Unknown tool: {name}"))
     except Exception as exc:
         return _text_content(_format_output(error=f"{type(exc).__name__}: {exc}"))
@@ -741,6 +765,33 @@ def _search_symbols(args: dict) -> list[types.TextContent]:
     ctx = _ctx(args)
     limit = args.get("limit", 20)
     result = index_tools.search_symbols(ctx, args["query"], limit)
+    return _text_content(_format_output(
+        ok=result.ok,
+        output=result.output,
+        error=result.error,
+    ))
+
+
+def _semantic_search(args: dict) -> list[types.TextContent]:
+    """Semantic (cosine-similarity) symbol search over local embeddings."""
+    from wells import embeddings
+
+    if not embeddings.EMBED_AVAILABLE:
+        import os
+        if os.environ.get("WELLS_NO_EMBEDDINGS") == "1":
+            msg = "Semantic search is disabled (WELLS_NO_EMBEDDINGS=1)."
+        else:
+            msg = (
+                "Semantic search libraries not installed. Re-run the `wells` "
+                "launcher to auto-install (one-time, ~60s), or run: "
+                "uv pip install fastembed sqlite-vec"
+            )
+        return _text_content(_format_output(error=msg))
+
+    from wells import index_tools
+    ctx = _ctx(args)
+    limit = args.get("limit", 10)
+    result = index_tools.semantic_search(ctx, args["query"], limit)
     return _text_content(_format_output(
         ok=result.ok,
         output=result.output,

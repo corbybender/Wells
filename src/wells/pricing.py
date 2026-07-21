@@ -36,6 +36,12 @@ _RATE_TABLE: dict[str, tuple[float, float]] = {
     # DeepSeek
     "deepseek-reasoner": (0.55, 2.19),
     "deepseek": (0.27, 1.10),
+    # Google Gemini
+    "gemini-2.5-pro": (1.25, 5.00),
+    "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-1.5-pro": (1.25, 5.00),
+    "gemini-1.5-flash": (0.075, 0.30),
     # Mistral / Meta via routers (rough)
     "mistral-large": (2.00, 6.00),
     "llama": (0.50, 1.00),

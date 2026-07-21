@@ -1386,6 +1386,19 @@ def _handle_doctor() -> None:
             table.add_row("model reachable", OK if ok_ping else WARN, f"{ms} ms round-trip")
         except Exception as e:
             table.add_row("model reachable", FAIL, f"{type(e).__name__}: {str(e)[:80]}")
+            # Suggest alternative profiles when the active one fails.
+            try:
+                alt_hints = []
+                for pname in providers.available_profiles():
+                    if pname == config.ACTIVE_PROFILE:
+                        continue
+                    p = providers.load_profile(pname)
+                    if p and p.api_key:
+                        alt_hints.append(f"  try: MODEL_PROFILE={p.name}  ({p.label()})")
+                if alt_hints:
+                    table.add_row("alternatives", WARN, "\n".join(alt_hints))
+            except Exception:
+                pass
 
     # TLS trust
     try:

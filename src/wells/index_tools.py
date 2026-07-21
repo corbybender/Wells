@@ -348,6 +348,59 @@ def search_symbols(ctx: ToolContext, query: str, limit: int = 20) -> ToolResult:
         return ToolResult(ok=False, output=f"Search failed: {e}")
 
 
+def semantic_search(ctx: ToolContext, query: str, limit: int = 10) -> ToolResult:
+    """Find symbols by meaning, not by name.
+
+    Embeds the query with a local model (BAAI/bge-small-en-v1.5) and returns
+    the top-``limit`` symbols whose stored vectors are most cosine-similar.
+    On first call this also embeds every indexed symbol (one-time cost of a
+    few seconds for a typical repo) and caches the result in the structural
+    index database.
+
+    Falls back gracefully: returns an error message when the optional
+    ``fastembed`` / ``sqlite-vec`` libraries are not installed.
+    """
+    try:
+        from wells import embeddings
+        if not embeddings.EMBED_AVAILABLE:
+            import os
+            if os.environ.get("WELLS_NO_EMBEDDINGS") == "1":
+                return ToolResult(
+                    ok=False,
+                    output=(
+                        "Semantic search is disabled in this environment "
+                        "(WELLS_NO_EMBEDDINGS=1)."
+                    ),
+                )
+            return ToolResult(
+                ok=False,
+                output=(
+                    "Semantic search libraries are not installed. Re-run `wells` "
+                    "from the launcher to auto-install them (one-time, ~60s), or "
+                    "install manually with:  uv pip install fastembed sqlite-vec"
+                ),
+            )
+        if not (query or "").strip():
+            return ToolResult(ok=False, output="Query is empty")
+
+        results = embeddings.semantic_search(ctx.workspace, query, limit=limit)
+        if not results:
+            return ToolResult(
+                ok=True,
+                output=f"No semantically similar symbols found for '{query}'",
+            )
+
+        lines = [f"Semantic matches for '{query}' (top {len(results)}):"]
+        for r in results:
+            lines.append(
+                f"  {r['score']:.3f}  {r['name']} ({r['kind']}) "
+                f"at {r['file_path']}:{r['start_line']}"
+            )
+        return ToolResult(ok=True, output="\n".join(lines))
+    except Exception as e:
+        return ToolResult(ok=False, output=f"Semantic search failed: {e}")
+
+
 def list_symbols(ctx: ToolContext, path: str = "") -> ToolResult:
     """List all symbols defined in a file, or show summary statistics.
 
@@ -474,6 +527,34 @@ if INDEXER_AVAILABLE:
                 },
             },
             handler=lambda ctx, path="": list_symbols(ctx, path),
+            mutating=False,
+        ),
+        ToolDef(
+            name="semantic_search",
+            description=(
+                "Find functions/classes/concepts by MEANING rather than exact name "
+                "(cosine similarity over local bge-small-en-v1.5 embeddings). Use this "
+                "when search_symbols returns nothing useful or the user describes what "
+                "something does instead of naming it. First call embeds the whole repo "
+                "(a few seconds); subsequent calls are fast. Requires the optional "
+                "'embeddings' extra: pip install 'wells[embeddings]'."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language description of what you're looking for.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results (default 10)",
+                        "default": 10,
+                    },
+                },
+                "required": ["query"],
+            },
+            handler=lambda ctx, query, limit=10: semantic_search(ctx, query, limit),
             mutating=False,
         ),
     ]

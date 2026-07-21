@@ -97,6 +97,13 @@ class _Handler(FileSystemEventHandler):
             total_sym = stats.get("total_symbols", "?")
             if changed and changed != "?" and int(str(changed)) > 0:
                 print(f"[dim][index] {changed} file(s) re-indexed · {total_sym:,} symbols total[/dim]")
+                # Drop cached per-file aggregate embeddings so the repomap
+                # re-rank picks up the new symbol vectors on its next build.
+                try:
+                    from wells import embeddings
+                    embeddings.invalidate_file_cache(self._workspace)
+                except Exception:
+                    pass
         except Exception as exc:
             _log.debug("index_watcher reindex error: %s", exc)
 
