@@ -88,6 +88,29 @@ SETTINGS: list[Setting] = [
         "OpenAI-compatible base URL for the 'zai' profile.",
         "https://api.z.ai/api/paas/v4/",
     ),
+    # --- Gemini profile quick-edit shortcuts --------------------------------
+    Setting(
+        "MODEL_gemini",
+        "Model (gemini)",
+        "Profile: gemini",
+        "Model id for the 'gemini' profile.",
+        "gemini-2.0-flash",
+    ),
+    Setting(
+        "API_KEY_gemini",
+        "API key (gemini)",
+        "Profile: gemini",
+        "Google Gemini API key.",
+        "",
+        secret=True,
+    ),
+    Setting(
+        "BASE_URL_gemini",
+        "Base URL (gemini)",
+        "Profile: gemini",
+        "Custom Google AI endpoint (blank = default).",
+        "",
+    ),
     # --- Loop / run behaviour ---------------------------------------------
     Setting(
         "MAX_ITERATIONS",

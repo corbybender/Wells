@@ -21,3 +21,6 @@ wells-index/target/
 
 # Windows reserved-name artifact
 nul
+
+# Runtime traces
+.wells/

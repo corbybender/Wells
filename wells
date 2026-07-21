@@ -57,6 +57,49 @@ else
     echo "$LOCK_STAMP" > "$STAMP"
 fi
 
+# Install optional semantic-search libraries (fastembed + sqlite-vec) on
+# first launch. Best-effort: stamp-file cached so it only runs once per
+# pyproject.toml change, skips if the libs already import, and never blocks
+# the launch on failure. Set WELLS_NO_EMBEDDINGS=1 to opt out.
+if [ "${WELLS_NO_EMBEDDINGS:-}" != "1" ]; then
+    EMBED_STAMP=".venv/.embed-stamp"
+    EMBED_SPEC="$(stat -c '%Y|%s' pyproject.toml 2>/dev/null || stat -f '%m|%z' pyproject.toml 2>/dev/null || echo "")"
+    EMBED_CACHED=""
+    [ -f "$EMBED_STAMP" ] && EMBED_CACHED="$(cat "$EMBED_STAMP")"
+
+    if [ -n "$EMBED_SPEC" ] && [ "$EMBED_SPEC" != "$EMBED_CACHED" ]; then
+        PYBIN=""
+        if [ -x ".venv/bin/python" ]; then PYBIN=".venv/bin/python"
+        elif [ -x ".venv/Scripts/python.exe" ]; then PYBIN=".venv/Scripts/python.exe"
+        fi
+
+        ALREADY="0"
+        if [ -n "$PYBIN" ] && "$PYBIN" -c "import fastembed, sqlite_vec" 2>/dev/null; then
+            ALREADY="1"
+        fi
+
+        if [ "$ALREADY" != "1" ]; then
+            echo ""
+            echo "[wells] Installing semantic-search libraries (one-time, ~60s)..."
+            echo "[wells]   - fastembed  (local ONNX embeddings, ~150 MB)"
+            echo "[wells]   - sqlite-vec (vector storage extension)"
+            echo ""
+            if uv pip install fastembed sqlite-vec; then
+                echo ""
+                echo "[wells] Semantic search ready."
+                echo ""
+            else
+                echo "" >&2
+                echo "[wells] Semantic-search libraries could not be installed (network/TLS error?)." >&2
+                echo "[wells] Wells will start normally; semantic_search will return a hint" >&2
+                echo "[wells] to install manually. Other tools are unaffected." >&2
+                echo "" >&2
+            fi
+        fi
+        echo "$EMBED_SPEC" > "$EMBED_STAMP"
+    fi
+fi
+
 # Run the harness directly from src/ — no package build, no install step.
 export PYTHONPATH="$SCRIPT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 exec uv run python -m wells.main "$@"

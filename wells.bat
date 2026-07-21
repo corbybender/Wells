@@ -60,6 +60,47 @@ if exist "%PYD_SRC%" (
     xcopy /Y /Q /D "%PYD_SRC%" "%PYD_DST%" >nul 2>&1
 )
 
+REM Install optional semantic-search libraries (fastembed + sqlite-vec) on
+REM first launch. Best-effort: stamp-file cached so it only runs once per
+REM pyproject.toml change, skips if the libs already import, and never
+REM blocks the launch on failure. Set WELLS_NO_EMBEDDINGS=1 to opt out.
+if /i "%WELLS_NO_EMBEDDINGS%"=="1" goto :embeddone
+
+set "EMBED_STAMP=.venv\.embed-stamp"
+set "EMBED_SPEC="
+for %%F in ("pyproject.toml") do set "EMBED_SPEC=%%~tF;%%~zF"
+set "EMBED_CACHED="
+if exist "%EMBED_STAMP%" set /p EMBED_CACHED=<"%EMBED_STAMP%"
+
+if "%EMBED_SPEC%"=="%EMBED_CACHED%" goto :embeddone
+
+REM Verify libs actually importable (handles manual installs / partial state).
+"%~dp0.venv\Scripts\python.exe" -c "import fastembed, sqlite_vec" >nul 2>&1
+if %errorlevel%==0 (
+    >"%EMBED_STAMP%" echo %EMBED_SPEC%
+    goto :embeddone
+)
+
+echo.
+echo [wells] Installing semantic-search libraries (one-time, ~60s)...
+echo [wells]   - fastembed  ^(local ONNX embeddings, ~150 MB^)
+echo [wells]   - sqlite-vec ^(vector storage extension^)
+echo.
+uv pip install fastembed sqlite-vec
+if errorlevel 1 (
+    echo.
+    echo [wells] Semantic-search libraries could not be installed ^(network/TLS error?^).
+    echo [wells] Wells will start normally; semantic_search will return a hint
+    echo [wells] to install manually. Other tools are unaffected.
+    echo.
+    goto :embeddone
+)
+>"%EMBED_STAMP%" echo %EMBED_SPEC%
+echo.
+echo [wells] Semantic search ready.
+echo.
+
+:embeddone
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 uv run --no-sync python -m wells.main %*
 goto :eof

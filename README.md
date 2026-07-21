@@ -790,4 +790,40 @@ wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
 
 ## Roadmap
 
-- Embedding-based retrieval for very large repos.
+- ~~Embedding-based retrieval for very large repos.~~ ✅ Shipped — see
+  "Semantic code retrieval" below.
+
+
+## Semantic code retrieval
+
+Wells ships optional **embedding-based** symbol search alongside the
+structural indexer. The `semantic_search` tool finds functions/classes by
+*meaning* rather than exact name — useful when the user (or the planner)
+describes what something does without naming it.
+
+- **Model**: `BAAI/bge-small-en-v1.5` (384-dim, runs locally via ONNX).
+- **Storage**: `sqlite-vec` virtual table inside the existing
+  `.wells_index/index.db` — no separate vector database.
+- **Repomap re-rank**: when embeddings are available, `build_repo_map`
+  blends cosine similarity with the keyword heuristic, so files are ranked
+  by semantic relevance to the goal (capped at +8.0 boost so keyword hits
+  still dominate).
+
+### Install behaviour
+
+The launcher (`wells.bat` / `wells`) auto-installs `fastembed` and
+`sqlite-vec` on first run, after the main `uv sync`. The install is:
+
+- **Cached**: a stamp file (`.venv/.embed-stamp`) keyed on `pyproject.toml`
+  means it only runs once per spec change.
+- **Best-effort**: if the install fails (e.g. corporate proxy blocks PyPI),
+  Wells still starts; `semantic_search` returns an informative message and
+  the other tools are unaffected.
+- **Opt-out**: set `WELLS_NO_EMBEDDINGS=1` to skip the install entirely
+  (e.g. for CI or minimal-footprint installs).
+
+Manual install also works: `uv pip install fastembed sqlite-vec`.
+
+On first `semantic_search` call, the corpus is embedded once (a few seconds
+for a typical repo); subsequent calls hit the cached table.
+

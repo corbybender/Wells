@@ -114,6 +114,67 @@ def _score(rel: str, syms: list[str], keywords: set[str]) -> float:
     return score
 
 
+# --------------------------------------------------------------------------- #
+# Semantic re-rank (only active when the embedding extras are installed)
+# --------------------------------------------------------------------------- #
+
+
+def _embed_fingerprint() -> str:
+    """Short cache-busting token reflecting embedding availability/version."""
+    try:
+        from wells import embeddings
+        return "1" if embeddings.EMBED_AVAILABLE else "0"
+    except Exception:
+        return "0"
+
+
+def _semantic_rerank(
+    entries: list[tuple[float, str, str]],
+    workspace: str,
+    goal: str,
+) -> None:
+    """Blend each file's heuristic score with cosine similarity to ``goal``.
+
+    Mutates ``entries`` in place. No-op when embeddings are unavailable or the
+    goal is empty/whitespace.
+
+    Weighting: the cosine component is scaled so that a perfect match (~1.0)
+    adds about the same boost as a strong keyword hit (~6.0 heuristic points).
+    """
+    if not goal or not goal.strip():
+        return
+    try:
+        from wells import embeddings
+    except Exception:
+        return
+    if not embeddings.EMBED_AVAILABLE:
+        return
+
+    # Trigger embedding of the corpus if needed (first-run cost). Errors here
+    # are non-fatal — we just skip the re-rank and fall back to heuristic only.
+    try:
+        stats = embeddings.ensure_embedded(workspace)
+        if stats.get("error") and stats.get("total", 0) > 0:
+            # A real failure mid-embedding; bail on re-rank.
+            return
+    except Exception:
+        return
+
+    try:
+        qvec = embeddings.embed_query(goal)
+    except Exception:
+        return
+    if qvec is None:
+        return
+
+    # Blend in cosine. Cap the boost at +8.0 so an irrelevant-but-similar
+    # file can't outrank a strong keyword match.
+    for i, (heuristic, rel, entry) in enumerate(entries):
+        sim = embeddings.file_cosine(workspace, rel, qvec)
+        boost = min(8.0, sim * 8.0)
+        entries[i] = (heuristic + boost, rel, entry)
+
+
 def build_repo_map(workspace: str, *, goal: str = "", max_chars: int = 6000) -> str:
     """Return the compressed repo map, most-relevant files first.
 
@@ -121,9 +182,15 @@ def build_repo_map(workspace: str, *, goal: str = "", max_chars: int = 6000) -> 
     names) so the truncation cuts the *least* relevant files — on big repos the
     map stays useful instead of alphabetical-prefix trivia. Cached per
     (workspace, goal keywords) with a short TTL.
+
+    When the optional embedding libraries are installed, files are also
+    re-ranked by cosine similarity between the goal and the file's aggregate
+    symbol embedding — this catches the common case where the goal describes
+    *what* something does without naming it (e.g. "the function that turns a
+    slug into a URL" → ``slugify``).
     """
     keywords = _goal_keywords(goal)
-    cache_key = f"{workspace}|{'.'.join(sorted(keywords))}"
+    cache_key = f"{workspace}|{'.'.join(sorted(keywords))}|emb={_embed_fingerprint()}"
     cached = _CACHE.get(cache_key)
     if cached and time.time() - cached[0] < _TTL_SECONDS:
         return cached[1]
@@ -143,6 +210,11 @@ def build_repo_map(workspace: str, *, goal: str = "", max_chars: int = 6000) -> 
         syms = _symbols_for(workspace, rel) if i < _MAX_SYMBOL_FILES else []
         entry = f"{rel}: {', '.join(syms)}" if syms else rel
         entries.append((_score(rel, syms, keywords), rel, entry))
+
+    # Semantic re-rank: blend heuristic score with cosine similarity of the
+    # goal embedding vs each file's aggregate symbol vector. No-op when the
+    # embedding libraries are unavailable or the goal is empty.
+    _semantic_rerank(entries, workspace, goal)
 
     # Most relevant first; ties resolve alphabetically for stable output.
     entries.sort(key=lambda t: (-t[0], t[1]))

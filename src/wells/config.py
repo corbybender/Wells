@@ -70,6 +70,12 @@ _wells_root = Path(__file__).parent.parent.parent
 _env_path = _wells_root / ".env"
 load_dotenv(_env_path)
 
+# Also load .env from the current working directory, so a project workspace
+# .env file (e.g. with an API_KEY_gemini or a different MODEL_PROFILE) is
+# picked up without modifying Wells' own .env. CWD values take precedence
+# because this call runs last.
+load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
+
 from wells import providers  # noqa: E402 (must run after load_dotenv)
 from wells.tokens import TokenBudget  # noqa: E402
 
