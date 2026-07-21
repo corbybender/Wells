@@ -561,9 +561,10 @@ class ProfileSwitchScreen(ModalScreen["str | None"]):
             yield OptionList(id="switch-list")
 
     def on_mount(self) -> None:
+        import os
         from wells import providers as providers_mod
         lst = self.query_one("#switch-list", OptionList)
-        active = providers_mod.env("MODEL_PROFILE", default="zai")
+        active = os.environ.get("MODEL_PROFILE", "zai")
         for name in providers_mod.available_profiles():
             suffix = "  ← active" if name == active else ""
             lst.add_option(Option(f"{name}{suffix}", id=name))
