@@ -9,18 +9,23 @@
   <a href="https://pypi.org/project/wells-index/"><img src="https://img.shields.io/pypi/v/wells-index?label=wells-index" alt="wells-index on PyPI"></a>
 </p>
 
-A local, **model-agnostic agentic coding platform**: a full-screen terminal TUI
-plus an orchestration engine of autonomous tool-using agents
-(`planner → architect → coder → tester → reviewer → finisher`) that actually
-read files, make edits, run tests, and verify their own work — Claude-Code /
-OpenCode style. **Provider-agnostic**: drive it with Z.ai GLM, OpenAI,
-Anthropic, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Ships with a
-Rust structural repo index (`wells-index`), an MCP server *and* MCP client,
-git-checkpointed undo, a deterministic verification layer, **agent skills**
-(load-on-domain know-how), **CodeAct** (sandboxed code execution),
-**background agents** (concurrent fan-out), and an opt-in **browser tool**
-(Playwright — navigate, click, type, read, screenshot a real JS-rendered
-session).
+**Bring your own API key — Anthropic (Claude), OpenAI, Google (Gemini),
+Z.ai (GLM), OpenRouter, any OpenAI-compatible endpoint, or run entirely
+local (Ollama, vLLM). Your choice, switchable per task.**
+
+Wells is a **model-agnostic agentic coding platform** you run yourself: a
+full-screen terminal TUI plus an orchestration engine of autonomous
+tool-using agents (`planner → architect → coder → tester → reviewer →
+finisher`) that actually read files, make edits, run tests, and verify their
+own work — Claude Code / Codex CLI / OpenCode style, pointed at whichever
+provider you already have an API key for. Local models are a first-class
+option, not the point — they're just another provider profile, and nothing
+in Wells requires them. Ships with a Rust structural repo index
+(`wells-index`), an MCP server *and* MCP client, git-checkpointed undo, a
+deterministic verification layer, **agent skills** (load-on-domain
+know-how), **CodeAct** (sandboxed code execution), **background agents**
+(concurrent fan-out), and an opt-in **browser tool** (Playwright —
+navigate, click, type, read, screenshot a real JS-rendered session).
 
 ## How Wells compares
 
@@ -169,7 +174,8 @@ with `CHEAP_VERIFY`, the tester/reviewer).
 | `ollama` | `ollama` | Local models; requires `pip install langchain-ollama` |
 | `local` | `openai` | Any local vLLM / Ollama OpenAI shim |
 | `together` / `groq` / `fireworks` / `deepseek` / `mistral` | `openai` | One-line setup |
-| `google` / `bedrock` / `azure` | provider-specific | Optional provider packages |
+| `google` / `gemini` | `google` | Google Gemini. Requires `pip install langchain-google-genai` |
+| `bedrock` / `azure` | provider-specific | Optional provider packages |
 
 A profile is configured with three env vars:
 
