@@ -624,10 +624,14 @@ flow, or filling out a multi-step form needs a real browser, not a text fetch.
 
 #### The solution: `browser_navigate` / `browser_click` / `browser_type` / `browser_read` / `browser_screenshot`
 
-A genuine headless Chromium session (Playwright), lazily launched on first
+A genuine headless browser session (Playwright), lazily launched on first
 use and kept alive for the rest of the process — cookies and login state
 persist across calls within a session, the same way a human keeps one tab
-open.
+open. Playwright drives whichever Chromium-based browser is already
+installed (Chrome, Edge, Brave) rather than downloading its own copy,
+falling back to Playwright's bundled Chromium only if none is found —
+`WELLS_BROWSER_EXECUTABLE` pins an exact path if auto-detection picks the
+wrong one.
 
 | Tool | What it does |
 |---|---|
@@ -649,27 +653,31 @@ have real side effects (submit a form, click "delete") and go through the
 same plan/approve/dryrun gate as every other mutating tool.
 
 **On by default**, same as the other agent capabilities — the tools are
-always registered, so the agent knows they exist. Playwright itself still
-needs a one-time separate install (not part of the base dependency set, so
-a fresh `wells` install never pays for a Chromium download it doesn't use):
+always registered, so the agent knows they exist. Playwright the package
+still needs a one-time separate install (not part of the base dependency
+set):
 
 ```bash
 pip install 'wells[browser]'      # or: uv sync --extra browser
-playwright install chromium
 ```
 
-Calling a `browser_*` tool before that install returns a clear, actionable
-error instead of silently failing — the same pattern the
-`anthropic`/`ollama`/`google` provider profiles already use for their own
-optional packages. Turn the tools off entirely with `WELLS_BROWSER=0` (or
-the `/config` picker) if you don't want them offered at all.
+The Chromium **download** step (`playwright install chromium`) usually
+isn't needed at all — if Chrome, Edge, or Brave is already on the machine
+(true for almost everyone), Wells drives that instead. Only run it if none
+of those are installed. Calling a `browser_*` tool before Playwright itself
+is installed returns a clear, actionable error instead of silently
+failing — the same pattern the `anthropic`/`ollama`/`google` provider
+profiles already use for their own optional packages. Turn the tools off
+entirely with `WELLS_BROWSER=0` (or the `/config` picker) if you don't want
+them offered at all.
 
 **Configuration:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `WELLS_BROWSER` | `1` | Expose the `browser_*` tools (set `0` to disable; still needs the `browser` extra + a Chromium install to actually run) |
-| `WELLS_BROWSER_HEADLESS` | `1` | Run Chromium headless (set `0` to watch it drive a real window) |
+| `WELLS_BROWSER` | `1` | Expose the `browser_*` tools (set `0` to disable; still needs the `browser` extra installed to actually run) |
+| `WELLS_BROWSER_HEADLESS` | `1` | Run headless (set `0` to watch it drive a real window) |
+| `WELLS_BROWSER_EXECUTABLE` | _(auto-detect)_ | Pin an exact browser executable path, skipping auto-detection |
 
 ### Background agents — concurrent fan-out
 
@@ -906,8 +914,9 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start` / `bg_status` / `bg_collect` for concurrent fan-out |
 | `WELLS_BG_WORKTREES` | `1` | Allow `bg_start role=worktree` (isolated git worktree per sub-agent) |
 | `MODEL_PROFILE_VISION` | _(blank)_ | Profile routed to for image-attached tasks when the active profile isn't vision-capable (defaults to active) |
-| `WELLS_BROWSER` | `1` | Expose the `browser_*` tools (set `0` to disable; still needs the `browser` extra + a Chromium install to actually run) |
+| `WELLS_BROWSER` | `1` | Expose the `browser_*` tools (set `0` to disable; still needs the `browser` extra installed to actually run) |
 | `WELLS_BROWSER_HEADLESS` | `1` | Run the browser session headless (set `0` to watch it) |
+| `WELLS_BROWSER_EXECUTABLE` | _(auto-detect)_ | Pin an exact browser executable path, skipping auto-detection of Chrome/Edge/Brave |
 | `WELLS_SANDBOX_IMAGE` | `python:3.12-slim` | Container image used for `sandbox` mode's disposable container |
 | `WELLS_SANDBOX_RUNTIME` | _(auto)_ | Pin the container CLI (`podman` or `docker`); auto-detects, preferring Podman |
 

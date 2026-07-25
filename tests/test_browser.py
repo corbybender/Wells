@@ -39,6 +39,53 @@ def test_registered_by_default(monkeypatch):
         assert n in names
 
 
+# ---------------------------------------------------------------------------
+# System-browser detection: prefer an already-installed Chrome/Edge/Brave/
+# Chromium over Playwright's own bundled download.
+# ---------------------------------------------------------------------------
+
+
+def test_system_browser_env_pin_takes_priority(monkeypatch, tmp_path):
+    fake = tmp_path / "fake-chrome.exe"
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setenv("WELLS_BROWSER_EXECUTABLE", str(fake))
+    assert browser._find_system_browser() == str(fake)
+
+
+def test_system_browser_env_pin_missing_file_returns_none(monkeypatch, tmp_path):
+    monkeypatch.setenv("WELLS_BROWSER_EXECUTABLE", str(tmp_path / "does-not-exist.exe"))
+    assert browser._find_system_browser() is None
+
+
+def test_system_browser_found_via_path(monkeypatch):
+    monkeypatch.delenv("WELLS_BROWSER_EXECUTABLE", raising=False)
+    monkeypatch.setattr(
+        browser.shutil, "which",
+        lambda name: "/usr/bin/google-chrome-stable" if name == "google-chrome-stable" else None,
+    )
+    assert browser._find_system_browser() == "/usr/bin/google-chrome-stable"
+
+
+def test_system_browser_none_found_returns_none(monkeypatch):
+    monkeypatch.delenv("WELLS_BROWSER_EXECUTABLE", raising=False)
+    monkeypatch.setattr(browser.shutil, "which", lambda name: None)
+    monkeypatch.setattr(browser.platform, "system", lambda: "Linux")
+    assert browser._find_system_browser() is None
+
+
+def test_system_browser_found_via_windows_path(monkeypatch, tmp_path):
+    monkeypatch.delenv("WELLS_BROWSER_EXECUTABLE", raising=False)
+    monkeypatch.setattr(browser.shutil, "which", lambda name: None)
+    monkeypatch.setattr(browser.platform, "system", lambda: "Windows")
+    chrome_dir = tmp_path / "Google" / "Chrome" / "Application"
+    chrome_dir.mkdir(parents=True)
+    (chrome_dir / "chrome.exe").write_text("", encoding="utf-8")
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path))
+    monkeypatch.delenv("PROGRAMFILES(X86)", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    assert browser._find_system_browser() == str(chrome_dir / "chrome.exe")
+
+
 def test_not_registered_when_disabled(monkeypatch):
     # ALL_TOOLS is a shared, additive-only module-level registry -- once a
     # tool is added in-process it's never removed, so an earlier test in
