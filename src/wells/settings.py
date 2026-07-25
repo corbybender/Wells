@@ -268,6 +268,17 @@ SETTINGS: list[Setting] = [
         "1",
         choices=("0", "1"),
     ),
+    Setting(
+        "WELLS_BROWSER",
+        "Browser tools (navigate/click/type/screenshot)",
+        "Capabilities",
+        "Expose browser_* tools for JS-rendered/interactive pages. Needs "
+        "Playwright installed separately (pip install 'wells[browser]' + "
+        "playwright install chromium) -- a call before that gives a clear "
+        "install hint rather than failing silently.",
+        "1",
+        choices=("0", "1"),
+    ),
 ]
 
 SETTINGS_BY_KEY: dict[str, Setting] = {s.key: s for s in SETTINGS}

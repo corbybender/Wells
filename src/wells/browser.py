@@ -9,10 +9,14 @@ same category of capability OpenHands' browsing agent provides, but opt-in
 and lazily imported so it costs nothing until actually used.
 
 Guardrails:
-  * ``WELLS_BROWSER=0`` (the default) keeps every browser_* tool out of the
-    registry entirely. Unlike ``web_search``/``fetch_url`` this pulls in
-    Playwright *and* a downloaded Chromium binary (``playwright install
-    chromium``), so — unlike the always-on web tools — it's opt-in.
+  * On by default, same as the other agent capabilities (``WELLS_BROWSER=0``
+    opts out). Playwright itself still needs a separate one-time install
+    (``pip install 'wells[browser]'`` + ``playwright install chromium`` —
+    not part of the base dependency set, so a fresh `wells` install never
+    pays for a Chromium download it doesn't use) — a call made before that
+    step returns a clear, actionable error instead of the tool silently not
+    existing, the same pattern the ``anthropic``/``ollama``/``google``
+    provider profiles already use for their optional packages.
   * ``browser_navigate`` / ``browser_read`` / ``browser_screenshot`` are
     read-only (no safety gate, mirroring ``fetch_url``). ``browser_click`` /
     ``browser_type`` can have real side effects (submit a form, trigger a
@@ -48,9 +52,9 @@ _page = None
 
 
 def enabled() -> bool:
-    """Whether the browser_* tools are registered (``WELLS_BROWSER`` == 1; off by default)."""
-    return os.environ.get("WELLS_BROWSER", "0").strip().lower() not in (
-        "0", "false", "no", "off", "",
+    """Whether the browser_* tools are registered (on by default; ``WELLS_BROWSER=0`` opts out)."""
+    return os.environ.get("WELLS_BROWSER", "1").strip().lower() not in (
+        "0", "false", "no", "off",
     )
 
 
