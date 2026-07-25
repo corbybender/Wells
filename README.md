@@ -116,7 +116,7 @@ Answers stream token-by-token.
 | `/mode plan\|approve\|auto\|dryrun\|sandbox` | Switch operating mode (read-only / confirm each change / full autonomy / simulate / containerized shell) |
 | `/add <path>` / `/drop <path>` / `/context` | Pin files into every prompt (guaranteed context, token-trimmed) |
 | `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
-| `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env` |
+| `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env`. Choice-constrained settings (`HARNESS_SAFETY`, `PLAN_MODE`, ...) open an arrow+Enter picker instead of typing — no way to mistype a value |
 | `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
 | `/rules` | Operating rules + open liabilities (`list` / `reload` / `discharge <id>`) |
 | `/skills` | Modal skills manager — list / view / add / edit / remove `SKILL.md` know-how |
@@ -285,7 +285,7 @@ The agent operates inside a **workspace root** (path escapes blocked) and a
 | `approve` | Every destructive action pauses the run and asks y/N in the TUI. |
 | `dryrun` | Never execute — describe what *would* happen. Truly side-effect free. |
 | `plan` (`PLAN_MODE=1`) | All mutating tools simulate; reads still work. Preview exactly what would change. |
-| `sandbox` | Same full autonomy as `auto` — but shell commands (`run_command`) execute inside a disposable container instead of directly on your machine. Requires Podman (recommended, lightweight) or Docker; picked explicitly, per run. |
+| `sandbox` | Same full autonomy as `auto` — but shell commands (`run_command`) *and* CodeAct's `run_code` execute inside a disposable container instead of directly on your machine. Requires Podman (recommended, lightweight) or Docker; picked explicitly, per run. |
 
 `sandbox` is opt-in and additive: every other mode behaves exactly as
 before, so day-to-day use never launches a container runtime. Reach for it when you
@@ -296,7 +296,8 @@ container, so both sides see identical bytes; Wells' own workspace
 confinement already keeps those inside `WORKSPACE_ROOT` regardless of mode.
 One container is launched per workspace (lazily, on the first sandboxed
 command) and reused for the rest of the session; `WELLS_SANDBOX_IMAGE`
-overrides the default `python:3.12-slim` image.
+overrides the default `python:3.12-slim` image. Pick the mode with the new
+`/config` choice picker (arrow keys + Enter) or `/mode sandbox`.
 
 Two extra safety nets regardless of mode: every run **snapshots the working
 tree** (including untracked files) to a hidden git commit before starting —
@@ -566,12 +567,14 @@ for s in ["2024-01-15", "99-1-1", "2024-13-40"]:
 | **Output truncation** | stdout capped at 8 KB, stderr at 4 KB — a runaway `print` in a loop can't blow the budget |
 | **Timeout** | Hard wall-clock cap (default 30s via `CODEACT_TIMEOUT`; also bounded by `SHELL_TIMEOUT`) |
 | **Safety gate** | Honours plan/dry-run/approve modes like every other mutating tool |
+| **Sandbox mode** | Under `HARNESS_SAFETY=sandbox` / `/mode sandbox`, `run_code` executes inside the same disposable container as `run_command` (piped over stdin) instead of a host subprocess — see [Safety model](#safety-model) |
 
 **Why a confined subprocess, not Hyperlight/Monty?** Zero extra dependencies —
 works out of the box everywhere Python runs. Workspace confinement + the
 existing safety gate + the deny-list give the same first line of defense the
-article's `LocalShellExecutor` relies on. A Docker-isolated executor is a
-future option for untrusted input.
+article's `LocalShellExecutor` relies on, and `sandbox` mode (see
+[Safety model](#safety-model)) adds real container isolation on top for
+anyone who wants it, without imposing it by default.
 
 **Configuration:**
 

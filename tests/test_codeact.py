@@ -142,3 +142,56 @@ def test_direct_handler_call(ctx: tools.ToolContext):
     r = codeact.run_code(ctx, "print(6 * 7)")
     assert r.ok
     assert "42" in r.output
+
+
+# ---------------------------------------------------------------------------
+# Sandbox mode routing
+# ---------------------------------------------------------------------------
+
+
+def test_run_code_sandbox_without_runtime_fails_clean(monkeypatch, workspace: Path):
+    from wells import sandbox
+    monkeypatch.setattr(sandbox, "runtime_available", lambda: False)
+    ctx = tools.ToolContext(workspace=str(workspace), safety="sandbox")
+    r = tools.dispatch("run_code", {"code": "print(1)"}, ctx)
+    assert not r.ok
+    assert "container runtime" in r.error.lower()
+
+
+def test_run_code_auto_mode_never_touches_sandbox(monkeypatch, ctx: tools.ToolContext):
+    from wells import sandbox
+    called = []
+    monkeypatch.setattr(
+        sandbox, "runtime_available", lambda: called.append(True) or False
+    )
+    r = tools.dispatch("run_code", {"code": "print(1)"}, ctx)
+    assert r.ok
+    assert not called
+
+
+def _runtime_up() -> bool:
+    from wells import sandbox
+    try:
+        return sandbox.runtime_available()
+    except Exception:
+        return False
+
+
+requires_docker = pytest.mark.skipif(
+    not _runtime_up(),
+    reason="No container runtime reachable (start Podman or Docker to run this)",
+)
+
+
+@requires_docker
+def test_run_code_sandbox_executes_in_container(workspace: Path):
+    from wells import sandbox
+    ctx = tools.ToolContext(workspace=str(workspace), safety="sandbox", shell_timeout=60)
+    r = tools.dispatch(
+        "run_code",
+        {"code": "import platform; print(platform.system())"},
+        ctx,
+    )
+    assert r.ok
+    assert "linux" in r.output.lower()
+    sandbox.teardown(str(workspace))

@@ -118,3 +118,105 @@ def test_lone_fast_enter_with_no_prior_burst_still_submits():
             assert submitted == [""]
 
     _run(body)
+
+
+# ---------------------------------------------------------------------------
+# ChoicePickScreen — the arrow+Enter picker for choice-constrained settings
+# (HARNESS_SAFETY, PLAN_MODE, ...), replacing free-text typing for them.
+# ---------------------------------------------------------------------------
+
+
+def test_choice_pick_screen_lists_all_choices_and_marks_current():
+    from wells.tui import ChoicePickScreen, WellsApp
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = ChoicePickScreen(
+                    "HARNESS_SAFETY", ("auto", "approve", "dryrun", "sandbox"), "auto"
+                )
+                app.push_screen(screen)
+                await pilot.pause()
+
+                lst = screen.query_one("#choice-list")
+                labels = [
+                    str(lst.get_option_at_index(i).prompt)
+                    for i in range(lst.option_count)
+                ]
+                assert len(labels) == 4
+                assert any("auto" in lbl and "current" in lbl for lbl in labels)
+                assert any("sandbox" in lbl and "current" not in lbl for lbl in labels)
+
+    _run(body)
+
+
+def test_choice_pick_screen_dismisses_with_picked_value():
+    from wells.tui import ChoicePickScreen, WellsApp
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                picked: list[str | None] = []
+                screen = ChoicePickScreen(
+                    "HARNESS_SAFETY", ("auto", "approve", "dryrun", "sandbox"), "auto"
+                )
+                app.push_screen(screen, picked.append)
+                await pilot.pause()
+
+                # Simulate selecting "sandbox" the way OptionList.OptionSelected
+                # would arrive from a real Enter keypress on that row.
+                from textual.widgets import OptionList as _OptionList
+
+                lst = screen.query_one("#choice-list")
+                event = _OptionList.OptionSelected(
+                    lst, lst.get_option("sandbox"), lst.get_option_index("sandbox")
+                )
+                screen.on_option_list_option_selected(event)
+                await pilot.pause()
+
+                assert picked == ["sandbox"]
+
+    _run(body)
+
+
+def test_settings_screen_opens_picker_for_choice_settings(monkeypatch):
+    """Selecting a choices-constrained row (HARNESS_SAFETY) must push
+    ChoicePickScreen, not the free-text Input box."""
+    from wells.tui import SettingsScreen, WellsApp
+    from wells import settings as settings_mod
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = SettingsScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                pushed: list = []
+                monkeypatch.setattr(
+                    app, "push_screen",
+                    lambda scr, cb=None: pushed.append(scr),
+                )
+
+                s = settings_mod.SETTINGS_BY_KEY["HARNESS_SAFETY"]
+                assert s.choices  # sanity: this setting IS choice-constrained
+                from textual.widgets import OptionList as _OptionList
+
+                lst = screen.query_one("#settings-list")
+                event = _OptionList.OptionSelected(
+                    lst,
+                    lst.get_option("HARNESS_SAFETY"),
+                    lst.get_option_index("HARNESS_SAFETY"),
+                )
+                screen.on_option_list_option_selected(event)
+
+                assert len(pushed) == 1
+                from wells.tui import ChoicePickScreen
+                assert isinstance(pushed[0], ChoicePickScreen)
+                # The free-text input must stay hidden for choice settings.
+                assert screen.query_one("#settings-input").display is False
+
+    _run(body)

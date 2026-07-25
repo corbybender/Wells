@@ -110,6 +110,26 @@ def run_code(ctx: ToolContext, code: str, *, language: str = "python") -> ToolRe
     timeout = float(os.environ.get("CODEACT_TIMEOUT", "") or _DEFAULT_TIMEOUT)
     timeout = min(timeout, ctx.shell_timeout or timeout)
 
+    if ctx.safety == "sandbox":
+        from wells import sandbox
+        if not sandbox.runtime_available():
+            return ToolResult(
+                False, "",
+                "sandbox mode requires a container runtime (Podman or Docker) "
+                "to be running — none responded. Start it, or switch modes "
+                "with /mode.",
+            )
+        from wells.tools import ShellCancelled
+        try:
+            proc = sandbox.run_python_stdin(code, ctx.workspace, timeout)
+        except subprocess.TimeoutExpired:
+            return ToolResult(False, "", f"run_code timed out after {timeout}s")
+        except ShellCancelled:
+            return ToolResult(False, "", "[cancelled by user]")
+        except Exception as e:
+            return ToolResult(False, "", f"run_code failed: {e}")
+        return _finish(proc)
+
     # Write to a temp file under the OS temp dir (NOT the workspace — we don't
     # want the snippet itself showing up as a repo file or in the repo map).
     try:
@@ -144,6 +164,11 @@ def run_code(ctx: ToolContext, code: str, *, language: str = "python") -> ToolRe
         except Exception:
             pass
 
+    return _finish(proc)
+
+
+def _finish(proc) -> ToolResult:
+    """Build the ToolResult tail shared by the host and sandboxed code paths."""
     stdout = _truncate((proc.stdout or "").rstrip(), _MAX_STDOUT_CHARS)
     stderr = _truncate((proc.stderr or "").rstrip(), _MAX_STDERR_CHARS)
     rc = proc.returncode
