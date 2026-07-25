@@ -1043,6 +1043,26 @@ def _register_optional_tools() -> None:
     except Exception:
         ok = False
 
+    # Browser: browser_navigate/click/type/read/screenshot (Playwright,
+    # opt-in via WELLS_BROWSER=1 — importing this module never requires
+    # Playwright itself, only actually calling a tool does).
+    try:
+        from wells import browser as _browser_mod
+
+        if _browser_mod.enabled():
+            for t in (
+                _browser_mod.BROWSER_NAVIGATE_TOOL,
+                _browser_mod.BROWSER_CLICK_TOOL,
+                _browser_mod.BROWSER_TYPE_TOOL,
+                _browser_mod.BROWSER_READ_TOOL,
+                _browser_mod.BROWSER_SCREENSHOT_TOOL,
+            ):
+                if t.name not in existing:
+                    ALL_TOOLS.append(t)
+                    existing.add(t.name)
+    except Exception:
+        ok = False
+
     if ok:
         _optional_registered = True
     _rebuild_index()

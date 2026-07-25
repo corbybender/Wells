@@ -29,6 +29,11 @@ embeddings = [
     "fastembed>=0.3.0",
     "sqlite-vec>=0.1.6",
 ]
+# Browser-driving tools (browser_navigate/click/type/read/screenshot).
+# Install with:  pip install 'wells[browser]'  then:  playwright install chromium
+browser = [
+    "playwright>=1.48.0",
+]
 
 [build-system]
 requires = ["hatchling"]
