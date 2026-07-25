@@ -109,12 +109,24 @@ across sessions), and an always-on status bar showing workspace, model, live
 token count **and dollar cost**, operating mode, pinned-file count, and — while
 running — the current agent activity (`coder-1 · step 12/60`, current tool).
 **Escape cancels a running task** cooperatively at the next step boundary.
-Answers stream token-by-token.
+Answers stream token-by-token. **F2** hides the panel (full-width select/copy);
+**F4** stages a clipboard screenshot as an image attachment (see below —
+Ctrl+V can't do this: terminals intercept it as their own paste keybinding
+and swallow it when the clipboard holds an image instead of text).
+
+The right-hand panel always shows one of two states, never blank: a plain
+`○ chat` line when idle, or — the moment anything routes through the
+planning graph — the full `indexer → planner → architect → coder → tester →
+reviewer → summarizer → finisher` step list, with the in-flight step
+highlighted (`▶` yellow + elapsed time), completed steps checked off
+(`✓` green), and failures marked (`✗` red).
 
 | Command | What it does |
 |---|---|
-| `/mode plan\|approve\|auto\|dryrun\|sandbox` | Switch operating mode (read-only / confirm each change / full autonomy / simulate / containerized shell) |
+| `/mode plan\|approve\|auto\|dryrun\|sandbox` | Switch operating mode (read-only / confirm each change / full autonomy / simulate / containerized shell) — or pick it visually via the `/config` choice picker |
 | `/add <path>` / `/drop <path>` / `/context` | Pin files into every prompt (guaranteed context, token-trimmed) |
+| `/image <path>` / `clear` | Attach an image file to the next task (screenshot of a bug, a design mock, a diagram) |
+| `/paste-image` (or **F4**) | Grab an image from the system clipboard and attach it to the next task |
 | `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
 | `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env`. Choice-constrained settings (`HARNESS_SAFETY`, `PLAN_MODE`, ...) open an arrow+Enter picker instead of typing — no way to mistype a value |
 | `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
@@ -131,6 +143,16 @@ Under `approve` mode, destructive tool calls (writes, shell commands, MCP
 calls) pause the run and ask y/N in the TUI. `AUTO_COMMIT=1` (opt-in) commits
 each successful run with an LLM-generated Conventional Commits message and a
 Wells authorship trailer.
+
+Images staged with `/image`, `/paste-image`, or F4 are sent to whatever
+model is active — but if it isn't vision-capable (most coding-tuned models
+aren't), the harness automatically routes just that one call to
+`MODEL_PROFILE_VISION` instead (see
+[Provider profiles](#provider-profiles-model-agnostic)) and reverts to
+normal routing on the very next call. No manual switching back and forth.
+The `browser_screenshot` tool (see [Browser](#browser--drive-a-real-js-rendered-session))
+uses the same `MODEL_PROFILE_VISION` routing independently, to describe a
+page back to the agent in text.
 
 ## Provider profiles (model-agnostic)
 
