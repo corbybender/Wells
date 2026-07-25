@@ -91,6 +91,10 @@ ZAI_MODEL_CHEAP: str = os.getenv("ZAI_MODEL_CHEAP", "").strip()
 MODEL_PROFILES: str = os.getenv("MODEL_PROFILES", "zai").strip() or "zai"
 ACTIVE_PROFILE: str = os.getenv("MODEL_PROFILE", "").strip() or "zai"
 CHEAP_PROFILE: str = os.getenv("MODEL_PROFILE_CHEAP", "").strip()
+# Profile routed to when a task carries image attachments and the active
+# profile isn't vision-capable (see wells.vision.provider_supports_vision).
+# Blank = same as active (images just get sent to whatever's active).
+VISION_PROFILE: str = os.getenv("MODEL_PROFILE_VISION", "").strip()
 # Shown in logs/reports; falls back to the active profile's resolved model.
 ACTIVE_MODEL_LABEL: str = os.getenv("ACTIVE_MODEL_LABEL", "").strip()
 
@@ -420,6 +424,13 @@ def cheap_profile_name() -> str:
     """Name of the cheap provider profile (falls back to active when unset/missing)."""
     if CHEAP_PROFILE and CHEAP_PROFILE in MODEL_PROFILES.split(","):
         return CHEAP_PROFILE
+    return ACTIVE_PROFILE
+
+
+def vision_profile_name() -> str:
+    """Name of the vision-capable provider profile (falls back to active when unset/missing)."""
+    if VISION_PROFILE and VISION_PROFILE in MODEL_PROFILES.split(","):
+        return VISION_PROFILE
     return ACTIVE_PROFILE
 
 

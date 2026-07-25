@@ -59,6 +59,16 @@ SETTINGS: list[Setting] = [
         "",
     ),
     Setting(
+        "MODEL_PROFILE_VISION",
+        "Vision provider profile",
+        "Providers",
+        "Profile routed to when a task has image attachments and the active "
+        "profile isn't vision-capable. Blank = same as active. Use 'Switch / "
+        "edit provider profile' or 'Add a new provider profile' to configure "
+        "the profile this points to (e.g. a free OpenRouter vision model).",
+        "",
+    ),
+    Setting(
         "MODEL_PROFILES",
         "Available profiles",
         "Providers",
