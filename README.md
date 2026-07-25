@@ -411,11 +411,12 @@ Inspect the active principles with `wells principles` or the MCP
 
 ## Agent capabilities
 
-Three capability layers let the claw *teach itself*, *compute*, and *work in
-parallel* — each is a self-contained, feature-gated module that plugs into the
-same executor loop and safety model. Together they address the core insight
-from the [Microsoft Agent Framework "scaling the claw"](https://devblogs.microsoft.com/agent-framework/agent-harness-scaling-the-claw-or-harness-capabilities/)
-article: stuffing every instruction into the system prompt doesn't scale, some
+Three capability layers let Wells' agents *teach themselves*, *compute*, and
+*work in parallel* — each is a self-contained, feature-gated module that
+plugs into the same executor loop and safety model. Together they address a
+core insight from Microsoft's Agent Framework write-up on
+[scaling harness capabilities](https://devblogs.microsoft.com/agent-framework/agent-harness-scaling-the-claw-or-harness-capabilities/):
+stuffing every instruction into the system prompt doesn't scale, some
 questions need *computation* not *reasoning*, and blocking fan-out wastes the
 parent agent's time.
 

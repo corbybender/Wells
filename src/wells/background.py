@@ -5,8 +5,9 @@ subagents in parallel — but it is **blocking**: ``parallel_research`` waits fo
 all of them to finish before returning. The agent can't do anything else while
 they run, and it can't decide *when* to check on them.
 
-This module adds the **async background-agent** pattern from the Microsoft
-Agent Framework "scaling the claw" article: the main agent gets three tools —
+This module adds the **async background-agent** pattern from Microsoft's
+Agent Framework write-up on scaling harness capabilities: the main agent
+gets three tools —
 
   * ``bg_start``  — launch a sub-agent on a background thread, get a handle id.
   * ``bg_status`` — check which background agents are running / done / failed.
