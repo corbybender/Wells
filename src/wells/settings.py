@@ -148,9 +148,10 @@ SETTINGS: list[Setting] = [
         "HARNESS_SAFETY",
         "Safety policy",
         "Run",
-        "How writes/shell are handled: auto (run), approve (ask), dryrun (simulate).",
+        "How writes/shell are handled: auto (run), approve (ask), dryrun (simulate), "
+        "sandbox (run, but shell commands go through a disposable container -- Podman or Docker).",
         "auto",
-        choices=("auto", "approve", "dryrun"),
+        choices=("auto", "approve", "dryrun", "sandbox"),
     ),
     Setting(
         "WORKSPACE_ROOT",

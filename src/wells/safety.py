@@ -18,6 +18,12 @@ Safety policy (``HARNESS_SAFETY``):
                   dry-run so nothing destructive happens unattended.
   * ``dryrun``  — never execute; the tool returns a description of what it
                   *would* do (used by plan mode and the MCP ``review`` paths).
+  * ``sandbox`` — execute immediately, same as ``auto`` (this gate only
+                  decides *whether* an action proceeds) — but shell commands
+                  are redirected to a disposable Docker container instead of
+                  the host; see :mod:`wells.sandbox`. Everyday modes
+                  (auto/approve/dryrun/plan) are completely unaffected —
+                  sandbox is a separate, opt-in mode a user picks per run.
 """
 
 from __future__ import annotations
@@ -50,7 +56,7 @@ class SafetyDecision:
     """Outcome of a safety gate check."""
 
     allowed: bool
-    mode: str  # auto | approve | dryrun
+    mode: str  # auto | approve | dryrun | sandbox
     simulated: bool  # True when we did NOT actually perform the action
     reason: str = ""
 
@@ -153,7 +159,7 @@ def policy(workspace_or_safety: str | None = None) -> str:
         .strip()
         .lower()
     )
-    return v if v in ("auto", "approve", "dryrun") else "auto"
+    return v if v in ("auto", "approve", "dryrun", "sandbox") else "auto"
 
 
 def gate(
@@ -171,7 +177,7 @@ def gate(
     the configured policy and any registered/local approver.
     """
     mode = policy(safety)
-    if mode == "auto":
+    if mode in ("auto", "sandbox"):
         return SafetyDecision(allowed=True, mode=mode, simulated=False)
     if mode == "dryrun":
         return SafetyDecision(
