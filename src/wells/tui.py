@@ -628,6 +628,50 @@ class ProfileSwitchScreen(ModalScreen["str | None"]):
         self.dismiss(None)
 
 
+class ChoicePickScreen(ModalScreen["str | None"]):
+    """Pick one value from a Setting's fixed ``choices`` — no typing required.
+
+    Every choice-constrained setting (HARNESS_SAFETY, PLAN_MODE, ...) gets
+    this instead of the free-text Input: arrow keys + Enter, current value
+    marked, Esc cancels. Generalizes the profile-switch picker pattern to
+    any settings.Setting with ``choices`` set.
+    """
+
+    CSS = """
+    ChoicePickScreen { align: center middle; }
+    #choice-panel {
+        width: 50; height: auto;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def __init__(self, title: str, choices: tuple[str, ...], current: str) -> None:
+        super().__init__()
+        self._title = title
+        self._choices = choices
+        self._current = current
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="choice-panel"):
+            yield Static(f"[bold]{self._title}[/bold]  [dim]· pick one[/dim]", markup=True)
+            yield OptionList(id="choice-list")
+
+    def on_mount(self) -> None:
+        lst = self.query_one("#choice-list", OptionList)
+        for value in self._choices:
+            suffix = "  ← current" if value == self._current else ""
+            lst.add_option(Option(f"{value}{suffix}", id=value))
+        lst.focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option_id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class ProfileAddScreen(ModalScreen["dict | None"]):
     """Form to add a new provider profile."""
 
@@ -801,6 +845,18 @@ class SettingsScreen(ModalScreen["dict | None"]):
         key = event.option_id or ""
         s = settings_mod.SETTINGS_BY_KEY.get(key)
         if s is None:
+            return
+        if s.choices:
+            # Fixed set of values — pick with arrows/Enter instead of typing
+            # the exact string (and instead of failing validation on a typo).
+            current = self._staged.get(key, settings_mod.current_value(s))
+
+            def _on_picked(value: str | None) -> None:
+                if value is not None:
+                    self._staged[key] = value
+                self._populate()
+
+            self.app.push_screen(ChoicePickScreen(s.key, s.choices, current), _on_picked)
             return
         self._editing = s
         help_widget = self.query_one("#settings-help", Static)

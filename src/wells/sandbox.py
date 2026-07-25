@@ -32,18 +32,19 @@ identical bytes — Wells' own path confinement (:mod:`wells.safety`) already
 keeps every read/write/edit inside the workspace regardless of mode. The
 actual risk a container isolates is *arbitrary process execution*:
 installing something, reaching out to the network, running an untrusted
-script — that's what ``run_command`` (and only ``run_command``, for now —
-see the module-level TODO) is redirected into the container for.
+script — that's what ``run_command`` and CodeAct's ``run_code`` are
+redirected into the container for.
 
 Lifecycle: one container per workspace, launched lazily on first sandboxed
 command and reused for the rest of the process (so state persists across a
 session the way a real terminal would) — ``--rm`` so it self-removes on
 stop, torn down explicitly via :func:`teardown` or at process exit.
 
-Not yet sandboxed: :mod:`wells.codeact`'s ``run_code`` still executes
-locally even in ``sandbox`` mode — routing it through the same container
-(piping the snippet over ``<runtime> exec -i <cid> python3 -``) is a
-follow-up, not done here to keep this first pass small and correct.
+:mod:`wells.codeact`'s ``run_code`` is sandboxed too, via
+:func:`run_python_stdin`: the snippet is piped over
+``<runtime> exec -i <cid> python3 -`` rather than written to a shared file,
+matching CodeAct's host-path behavior of keeping the snippet out of the
+workspace/repo map entirely.
 """
 
 from __future__ import annotations
@@ -132,30 +133,26 @@ def ensure_container(workspace: str) -> str:
     return cid
 
 
-def run_shell(command: str, workspace: str, timeout: float) -> subprocess.CompletedProcess:
-    """Run ``command`` inside ``workspace``'s sandbox container via ``<runtime> exec``.
-
-    Mirrors :func:`wells.tools._run_shell`'s Popen-and-poll loop (not a plain
-    blocking ``subprocess.run``) so Escape/`` /stop`` can still interrupt a
-    long-running sandboxed command — cancelling here kills the local
-    ``exec`` client process; the containerized process itself is reaped when
-    the container is torn down.
+def _popen_poll_loop(
+    proc: subprocess.Popen, label: str, timeout: float
+) -> subprocess.CompletedProcess:
+    """Shared Popen-and-poll loop for both :func:`run_shell` and
+    :func:`run_python_stdin`. Mirrors :func:`wells.tools._run_shell`'s
+    approach (not a plain blocking ``subprocess.run``) so Escape/``/stop``
+    can still interrupt a long-running sandboxed call — cancelling here
+    kills the local ``exec`` client process; the containerized process
+    itself is reaped when the container is torn down.
     """
     from wells.control import CONTROL, kill_process_tree
     from wells.tools import ShellCancelled
 
-    cid = ensure_container(workspace)
-    args = [_runtime_bin(), "exec", cid, "sh", "-c", command]
-    proc = subprocess.Popen(
-        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
     CONTROL.track_proc(proc)
     t0 = time.monotonic()
     try:
         while True:
             try:
                 out, err = proc.communicate(timeout=0.25)
-                return subprocess.CompletedProcess(command, proc.returncode, out, err)
+                return subprocess.CompletedProcess(label, proc.returncode, out, err)
             except subprocess.TimeoutExpired:
                 pass
             if CONTROL.cancelled():
@@ -163,12 +160,43 @@ def run_shell(command: str, workspace: str, timeout: float) -> subprocess.Comple
                 raise ShellCancelled()
             if time.monotonic() - t0 >= timeout:
                 kill_process_tree(proc)
-                raise subprocess.TimeoutExpired(command, timeout)
+                raise subprocess.TimeoutExpired(label, timeout)
     except BaseException:
         kill_process_tree(proc)
         raise
     finally:
         CONTROL.untrack_proc(proc)
+
+
+def run_shell(command: str, workspace: str, timeout: float) -> subprocess.CompletedProcess:
+    """Run ``command`` inside ``workspace``'s sandbox container via ``<runtime> exec``."""
+    cid = ensure_container(workspace)
+    args = [_runtime_bin(), "exec", cid, "sh", "-c", command]
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    return _popen_poll_loop(proc, command, timeout)
+
+
+def run_python_stdin(code: str, workspace: str, timeout: float) -> subprocess.CompletedProcess:
+    """Run ``code`` as a Python script inside ``workspace``'s sandbox container.
+
+    Piped over stdin (``<runtime> exec -i <cid> python3 -``) rather than
+    written to a shared file — keeps the snippet out of the bind-mounted
+    workspace/repo map, matching CodeAct's host-path behavior.
+    """
+    cid = ensure_container(workspace)
+    args = [_runtime_bin(), "exec", "-i", cid, "python3", "-"]
+    proc = subprocess.Popen(
+        args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        proc.stdin.write(code)
+        proc.stdin.close()
+    except Exception:
+        pass
+    return _popen_poll_loop(proc, "run_code", timeout)
 
 
 def teardown(workspace: str | None = None) -> None:
