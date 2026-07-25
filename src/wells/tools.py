@@ -623,8 +623,21 @@ def _run_command(ctx: ToolContext, command: str) -> ToolResult:
     if not decision.allowed:
         return ToolResult(True, decision.reason, simulated=decision.simulated)
 
+    if ctx.safety == "sandbox":
+        from wells import sandbox
+        if not sandbox.runtime_available():
+            return ToolResult(
+                False, "",
+                "sandbox mode requires a container runtime (Podman or Docker) "
+                "to be running — none responded. Start it, or switch modes "
+                "with /mode.",
+            )
+        run = lambda: sandbox.run_shell(command, ctx.workspace, ctx.shell_timeout)
+    else:
+        run = lambda: _run_shell(command, cwd=ctx.workspace, timeout=ctx.shell_timeout)
+
     try:
-        proc = _run_shell(command, cwd=ctx.workspace, timeout=ctx.shell_timeout)
+        proc = run()
     except subprocess.TimeoutExpired:
         return ToolResult(
             False, "", f"Command timed out after {ctx.shell_timeout}s: {command}"

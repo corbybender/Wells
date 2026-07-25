@@ -113,7 +113,7 @@ Answers stream token-by-token.
 
 | Command | What it does |
 |---|---|
-| `/mode plan\|approve\|auto\|dryrun` | Switch operating mode (read-only / confirm each change / full autonomy / simulate) |
+| `/mode plan\|approve\|auto\|dryrun\|sandbox` | Switch operating mode (read-only / confirm each change / full autonomy / simulate / containerized shell) |
 | `/add <path>` / `/drop <path>` / `/context` | Pin files into every prompt (guaranteed context, token-trimmed) |
 | `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
 | `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env` |
@@ -262,6 +262,7 @@ wells                                     # launch the TUI
 wells "<goal>"                            # run the full harness (single-shot)
 wells --workspace /path "fix the bug"     # run against another project
 wells --safety dryrun "goal"              # force dry-run (preview only)
+wells --safety sandbox "goal"             # shell commands run in a disposable container
 wells --plan "<goal>"                     # plan mode: plan edits, don't apply
 wells config                              # interactive settings menu (terminal)
 wells info                                # show effective configuration
@@ -284,6 +285,18 @@ The agent operates inside a **workspace root** (path escapes blocked) and a
 | `approve` | Every destructive action pauses the run and asks y/N in the TUI. |
 | `dryrun` | Never execute — describe what *would* happen. Truly side-effect free. |
 | `plan` (`PLAN_MODE=1`) | All mutating tools simulate; reads still work. Preview exactly what would change. |
+| `sandbox` | Same full autonomy as `auto` — but shell commands (`run_command`) execute inside a disposable container instead of directly on your machine. Requires Podman (recommended, lightweight) or Docker; picked explicitly, per run. |
+
+`sandbox` is opt-in and additive: every other mode behaves exactly as
+before, so day-to-day use never launches a container runtime. Reach for it when you
+don't fully trust a repo, want an unattended `auto` run walled off, or are
+testing something you'd rather not risk on the host. File reads/writes/edits
+are unaffected in every mode — the workspace is bind-mounted into the
+container, so both sides see identical bytes; Wells' own workspace
+confinement already keeps those inside `WORKSPACE_ROOT` regardless of mode.
+One container is launched per workspace (lazily, on the first sandboxed
+command) and reused for the rest of the session; `WELLS_SANDBOX_IMAGE`
+overrides the default `python:3.12-slim` image.
 
 Two extra safety nets regardless of mode: every run **snapshots the working
 tree** (including untracked files) to a hidden git commit before starting —
@@ -809,6 +822,7 @@ src/wells/
 ├── skills.py          # Agent skills: discoverable SKILL.md, load-on-demand
 ├── codeact.py         # CodeAct: sandboxed run_code tool
 ├── browser.py         # Browser tools: navigate/click/type/read/screenshot (Playwright, opt-in)
+├── sandbox.py         # sandbox mode: disposable per-workspace container (Podman/Docker) for run_command
 ├── background.py      # Background agents: bg_start/bg_status/bg_collect (research/fix/worktree)
 ├── worktree.py        # Per-subagent git worktrees (role=worktree isolation + cherry-pick)
 └── agents/            # planner / architect / coder / tester / reviewer
@@ -855,6 +869,8 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `MODEL_PROFILE_VISION` | _(blank)_ | Profile routed to for image-attached tasks when the active profile isn't vision-capable (defaults to active) |
 | `WELLS_BROWSER` | `0` | Expose the `browser_*` tools (requires the `browser` extra + a Chromium install) |
 | `WELLS_BROWSER_HEADLESS` | `1` | Run the browser session headless (set `0` to watch it) |
+| `WELLS_SANDBOX_IMAGE` | `python:3.12-slim` | Container image used for `sandbox` mode's disposable container |
+| `WELLS_SANDBOX_RUNTIME` | _(auto)_ | Pin the container CLI (`podman` or `docker`); auto-detects, preferring Podman |
 
 Legacy `ZAI_*` variables keep working unchanged — they seed the built-in `zai`
 profile.

@@ -347,6 +347,7 @@ class InfoPanel(Static):
             "approve": "[bold cyan]approve[/bold cyan]",
             "dryrun": "[bold magenta]dryrun[/bold magenta]",
             "auto": "[green]auto[/green]",
+            "sandbox": "[bold red]sandbox[/bold red]",
         }
         row("mode", mode_map.get(_cli.current_mode(), _cli.current_mode()))
         if _cli._REPL_STATE.get("force_mode") == "task":

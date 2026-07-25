@@ -103,8 +103,10 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
     (
         "/mode",
         "Switch operating mode",
-        "Usage: /mode [plan|approve|auto|dryrun]. plan = read-only, approve = confirm "
-        "each write/command, auto = full autonomy, dryrun = simulate everything.",
+        "Usage: /mode [plan|approve|auto|dryrun|sandbox]. plan = read-only, approve = "
+        "confirm each write/command, auto = full autonomy, dryrun = simulate everything, "
+        "sandbox = full autonomy but shell commands run in a disposable Docker "
+        "container (requires Podman or Docker).",
     ),
     (
         "/add",
@@ -1127,17 +1129,22 @@ _MODES = {
     "approve": ("0", "approve"),
     "auto":    ("0", "auto"),
     "dryrun":  ("0", "dryrun"),
+    "sandbox": ("0", "sandbox"),
 }
 
 
 def current_mode() -> str:
     if config.PLAN_MODE:
         return "plan"
-    return config.HARNESS_SAFETY if config.HARNESS_SAFETY in ("approve", "dryrun") else "auto"
+    return (
+        config.HARNESS_SAFETY
+        if config.HARNESS_SAFETY in ("approve", "dryrun", "sandbox")
+        else "auto"
+    )
 
 
 def _handle_mode(arg: str) -> None:
-    """Switch operating mode: plan | approve | auto | dryrun."""
+    """Switch operating mode: plan | approve | auto | dryrun | sandbox."""
     want = arg.strip().lower()
     if not want:
         console.print(
@@ -1146,12 +1153,26 @@ def _handle_mode(arg: str) -> None:
             "  approve — apply changes, but confirm each write/command\n"
             "  auto    — full autonomy inside the workspace\n"
             "  dryrun  — simulate every mutation\n"
-            "Usage: /mode <plan|approve|auto|dryrun>[/dim]\n"
+            "  sandbox — full autonomy, but shell commands run in a disposable\n"
+            "            container (Podman/Docker) instead of directly on this machine\n"
+            "Usage: /mode <plan|approve|auto|dryrun|sandbox>[/dim]\n"
         )
         return
     if want not in _MODES:
-        console.print(f"[red]Unknown mode: {want}[/red] [dim](plan|approve|auto|dryrun)[/dim]")
+        console.print(
+            f"[red]Unknown mode: {want}[/red] "
+            "[dim](plan|approve|auto|dryrun|sandbox)[/dim]"
+        )
         return
+    if want == "sandbox":
+        from wells import sandbox
+        if not sandbox.enabled():
+            console.print(
+                "[red]sandbox mode requires a container runtime on PATH.[/red] "
+                "[dim]Install Podman (lightweight, recommended) or Docker, "
+                "then try again.[/dim]"
+            )
+            return
     plan, safety_v = _MODES[want]
     os.environ["PLAN_MODE"] = plan
     if safety_v:
@@ -1162,6 +1183,7 @@ def _handle_mode(arg: str) -> None:
         "approve": "[bold cyan]approve[/bold cyan] — confirm each write/command",
         "auto": "[bold green]auto[/bold green] — full autonomy",
         "dryrun": "[bold magenta]dryrun[/bold magenta] — simulate everything",
+        "sandbox": "[bold red]sandbox[/bold red] — full autonomy, containerized shell",
     }
     console.print(f"Operating mode: {labels[want]}")
 
