@@ -20,6 +20,37 @@ git-checkpointed undo, a deterministic verification layer, **agent skills**
 (load-on-domain know-how), **CodeAct** (sandboxed code execution), and
 **background agents** (concurrent fan-out).
 
+## How Wells compares
+
+Wells sits in the same space as **Aider** and **OpenHands** (formerly
+OpenDevin) — an autonomous coding agent you run yourself, not an
+editor-embedded copilot. **Continue.dev** is a different category (an IDE
+extension) rather than a competing harness, so it isn't compared here.
+
+### vs Aider
+
+| | Aider | Wells |
+|---|---|---|
+| Loop | Single-pass edit → diff → commit | Full graph: `indexer → planner → [architect] → coder → tester → reviewer ↔ summarizer → finisher` — plan, execute, test, and review are separate, checkpointed stages |
+| Repo grounding | Static ctags repo-map | Planner *agentically* investigates (`find_symbol`/`grep`/`read_file`, plus parallel research fan-out) before writing a plan with exact files and line numbers |
+| Test verification | Model interprets test output | **Deterministic test-gate**: the real suite's exit code is ground truth — a green suite skips the LLM interpretation pass entirely |
+| Broken edits | Caught on the next round-trip | Self-heal runs ruff/`node --check`/JSON-parse after every write and feeds failures back the *same* round |
+| Weak/local models | Assumes a capable model | Built for them: structured-output JSON-grammar fallback, Ollama context-window auto-detect + warmup, compact-prompt mode |
+| Policy enforcement | None built in | Tiered rules engine (`.wells/rules.yaml`) + liabilities tracking + `hooks.yaml` — deterministic, not just prompted |
+| Recovery | Re-run from scratch | Per-node session checkpoints (`/resume`), pre-run git snapshot (`/undo`), full run trace + replay |
+| Parallel edits | Sequential | Background git-worktree fan-out — multiple sub-agents edit concurrently in isolated checkouts, cherry-picked back on collect |
+
+### vs OpenHands
+
+| | OpenHands | Wells |
+|---|---|---|
+| Footprint | Docker sandbox + web UI | CLI/TUI — one Python env, no container required |
+| Operational visibility | Browser-based event stream | Textual TUI dashboard in one pane: live token/cost ledger, pipeline-stage breadcrumb with the active step highlighted, pinned-file context, MCP server manager, index stats, git branch, open liabilities |
+| Providers | Typically one model per session | Named provider profiles (`zai`/`openai`/`anthropic`/`gemini`/`ollama`/`openrouter`/`local`/...), with automatic cheap-task *and* vision-task routing per call |
+| Interop | Its own agent, standalone | MCP **server** (drive Wells from Claude Code/OpenCode/other CLIs) *and* MCP **client** (give Wells external tool servers) |
+| Domain know-how | Baked into the base prompt | **Skills**: progressive-disclosure `SKILL.md` files — name + one-line description always visible, full body loads only when relevant |
+| Deterministic computation | Reasons it out | **CodeAct**: sandboxed `run_code` tool for exact arithmetic/regex/counts instead of eyeballed answers |
+
 ## What it does
 
 ```
