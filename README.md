@@ -17,8 +17,10 @@ OpenCode style. **Provider-agnostic**: drive it with Z.ai GLM, OpenAI,
 Anthropic, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Ships with a
 Rust structural repo index (`wells-index`), an MCP server *and* MCP client,
 git-checkpointed undo, a deterministic verification layer, **agent skills**
-(load-on-domain know-how), **CodeAct** (sandboxed code execution), and
-**background agents** (concurrent fan-out).
+(load-on-domain know-how), **CodeAct** (sandboxed code execution),
+**background agents** (concurrent fan-out), and an opt-in **browser tool**
+(Playwright — navigate, click, type, read, screenshot a real JS-rendered
+session).
 
 ## How Wells compares
 
@@ -161,7 +163,18 @@ Select which profiles exist and which is active:
 MODEL_PROFILES=zai,openrouter,local
 MODEL_PROFILE=openrouter           # the active profile
 MODEL_PROFILE_CHEAP=zai            # optional: cheaper model for subtasks
+MODEL_PROFILE_VISION=openrouter    # optional: routed to for image-attached
+                                    # tasks when the active profile isn't
+                                    # vision-capable (e.g. a free OpenRouter
+                                    # vision model alongside a non-vision main)
 ```
+
+Manage every profile from `/config` — the settings list has full CRUD:
+**set** which profile an active/cheap/vision slot points to, **edit** a
+profile's model/key/URL ("Switch / edit provider profile"), **add** a new
+one from scratch, and **clear** any setting back to blank (`d` on the
+highlighted row) if a suggested profile stops being available or you'd
+rather use something else.
 
 Optional provider packages are imported lazily — the harness runs out-of-the-box
 with only `langchain-openai` (the OpenAI-compatible path covers Z.ai, OpenAI,
@@ -554,6 +567,58 @@ future option for untrusted input.
 | `WELLS_CODEACT` | `1` | Expose the `run_code` tool (set `0` to disable) |
 | `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
 
+### Browser — drive a real, JS-rendered session
+
+#### The problem
+
+`fetch_url` only ever sees a page's initial static HTML. Most real web
+apps — single-page apps, dashboards, a local dev server's own frontend —
+render their actual content with JavaScript, so `fetch_url` against them
+returns an empty shell. Verifying a UI change, working through a logged-in
+flow, or filling out a multi-step form needs a real browser, not a text fetch.
+
+#### The solution: `browser_navigate` / `browser_click` / `browser_type` / `browser_read` / `browser_screenshot`
+
+A genuine headless Chromium session (Playwright), lazily launched on first
+use and kept alive for the rest of the process — cookies and login state
+persist across calls within a session, the same way a human keeps one tab
+open.
+
+| Tool | What it does |
+|---|---|
+| `browser_navigate` | Open a URL; returns the title + rendered visible text |
+| `browser_click` | Click an element by CSS selector or visible text (falls back to a text search) |
+| `browser_type` | Type into an input by selector or visible label/placeholder; optional `submit` |
+| `browser_read` | Return the current page's rendered visible text |
+| `browser_screenshot` | Screenshot the page and get back a text description of its layout and every interactive element |
+
+`browser_screenshot` routes the PNG through the configured **vision
+profile** (`MODEL_PROFILE_VISION` — see [Provider profiles](#provider-profiles-model-agnostic))
+automatically, so screenshots are readable even when the active model isn't
+vision-capable itself; if no vision profile resolves to something usable it
+still saves the file and says so instead of failing the call.
+
+`browser_navigate` / `browser_read` / `browser_screenshot` are read-only
+(no safety gate, same as `fetch_url`); `browser_click` / `browser_type` can
+have real side effects (submit a form, click "delete") and go through the
+same plan/approve/dryrun gate as every other mutating tool.
+
+**Off by default** — unlike the always-on web tools, this pulls in
+Playwright *and* a downloaded Chromium binary, so it's opt-in:
+
+```bash
+pip install 'wells[browser]'      # or: uv sync --extra browser
+playwright install chromium
+WELLS_BROWSER=1                    # then set in .env / `/config`
+```
+
+**Configuration:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `WELLS_BROWSER` | `0` | Expose the `browser_*` tools (requires the `browser` extra + a Chromium install) |
+| `WELLS_BROWSER_HEADLESS` | `1` | Run Chromium headless (set `0` to watch it drive a real window) |
+
 ### Background agents — concurrent fan-out
 
 #### The problem
@@ -743,6 +808,7 @@ src/wells/
 ├── principles.py      # AGENT.md injection
 ├── skills.py          # Agent skills: discoverable SKILL.md, load-on-demand
 ├── codeact.py         # CodeAct: sandboxed run_code tool
+├── browser.py         # Browser tools: navigate/click/type/read/screenshot (Playwright, opt-in)
 ├── background.py      # Background agents: bg_start/bg_status/bg_collect (research/fix/worktree)
 ├── worktree.py        # Per-subagent git worktrees (role=worktree isolation + cherry-pick)
 └── agents/            # planner / architect / coder / tester / reviewer
@@ -786,6 +852,9 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start` / `bg_status` / `bg_collect` for concurrent fan-out |
 | `WELLS_BG_WORKTREES` | `1` | Allow `bg_start role=worktree` (isolated git worktree per sub-agent) |
+| `MODEL_PROFILE_VISION` | _(blank)_ | Profile routed to for image-attached tasks when the active profile isn't vision-capable (defaults to active) |
+| `WELLS_BROWSER` | `0` | Expose the `browser_*` tools (requires the `browser` extra + a Chromium install) |
+| `WELLS_BROWSER_HEADLESS` | `1` | Run the browser session headless (set `0` to watch it) |
 
 Legacy `ZAI_*` variables keep working unchanged — they seed the built-in `zai`
 profile.
@@ -807,7 +876,8 @@ profile.
 ## Tests & CI
 
 ```bash
-uv run pytest -q          # 650 tests
+uv run pytest -q          # 700+ tests (a handful more if the optional
+                           # `browser` extra + Chromium are installed)
 ```
 
 The suite covers provider resolution, tool confinement + every safety mode,
