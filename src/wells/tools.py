@@ -1056,9 +1056,9 @@ def _register_optional_tools() -> None:
     except Exception:
         ok = False
 
-    # Browser: browser_navigate/click/type/read/screenshot (Playwright,
-    # opt-in via WELLS_BROWSER=1 — importing this module never requires
-    # Playwright itself, only actually calling a tool does).
+    # Browser: browser_navigate/click/type/read/screenshot (Playwright).
+    # On by default (WELLS_BROWSER=0 opts out) — importing this module never
+    # requires Playwright itself, only actually calling a tool does.
     try:
         from wells import browser as _browser_mod
 

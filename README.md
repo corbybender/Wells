@@ -24,8 +24,8 @@ in Wells requires them. Ships with a Rust structural repo index
 (`wells-index`), an MCP server *and* MCP client, git-checkpointed undo, a
 deterministic verification layer, **agent skills** (load-on-domain
 know-how), **CodeAct** (sandboxed code execution), **background agents**
-(concurrent fan-out), and an opt-in **browser tool** (Playwright —
-navigate, click, type, read, screenshot a real JS-rendered session).
+(concurrent fan-out), and a **browser tool** (Playwright — navigate, click,
+type, read, screenshot a real JS-rendered session).
 
 ## How Wells compares
 
@@ -648,20 +648,27 @@ still saves the file and says so instead of failing the call.
 have real side effects (submit a form, click "delete") and go through the
 same plan/approve/dryrun gate as every other mutating tool.
 
-**Off by default** — unlike the always-on web tools, this pulls in
-Playwright *and* a downloaded Chromium binary, so it's opt-in:
+**On by default**, same as the other agent capabilities — the tools are
+always registered, so the agent knows they exist. Playwright itself still
+needs a one-time separate install (not part of the base dependency set, so
+a fresh `wells` install never pays for a Chromium download it doesn't use):
 
 ```bash
 pip install 'wells[browser]'      # or: uv sync --extra browser
 playwright install chromium
-WELLS_BROWSER=1                    # then set in .env / `/config`
 ```
+
+Calling a `browser_*` tool before that install returns a clear, actionable
+error instead of silently failing — the same pattern the
+`anthropic`/`ollama`/`google` provider profiles already use for their own
+optional packages. Turn the tools off entirely with `WELLS_BROWSER=0` (or
+the `/config` picker) if you don't want them offered at all.
 
 **Configuration:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `WELLS_BROWSER` | `0` | Expose the `browser_*` tools (requires the `browser` extra + a Chromium install) |
+| `WELLS_BROWSER` | `1` | Expose the `browser_*` tools (set `0` to disable; still needs the `browser` extra + a Chromium install to actually run) |
 | `WELLS_BROWSER_HEADLESS` | `1` | Run Chromium headless (set `0` to watch it drive a real window) |
 
 ### Background agents — concurrent fan-out
@@ -853,7 +860,7 @@ src/wells/
 ├── principles.py      # AGENT.md injection
 ├── skills.py          # Agent skills: discoverable SKILL.md, load-on-demand
 ├── codeact.py         # CodeAct: sandboxed run_code tool
-├── browser.py         # Browser tools: navigate/click/type/read/screenshot (Playwright, opt-in)
+├── browser.py         # Browser tools: navigate/click/type/read/screenshot (Playwright)
 ├── sandbox.py         # sandbox mode: disposable per-workspace container (Podman/Docker) for run_command
 ├── background.py      # Background agents: bg_start/bg_status/bg_collect (research/fix/worktree)
 ├── worktree.py        # Per-subagent git worktrees (role=worktree isolation + cherry-pick)
@@ -899,7 +906,7 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start` / `bg_status` / `bg_collect` for concurrent fan-out |
 | `WELLS_BG_WORKTREES` | `1` | Allow `bg_start role=worktree` (isolated git worktree per sub-agent) |
 | `MODEL_PROFILE_VISION` | _(blank)_ | Profile routed to for image-attached tasks when the active profile isn't vision-capable (defaults to active) |
-| `WELLS_BROWSER` | `0` | Expose the `browser_*` tools (requires the `browser` extra + a Chromium install) |
+| `WELLS_BROWSER` | `1` | Expose the `browser_*` tools (set `0` to disable; still needs the `browser` extra + a Chromium install to actually run) |
 | `WELLS_BROWSER_HEADLESS` | `1` | Run the browser session headless (set `0` to watch it) |
 | `WELLS_SANDBOX_IMAGE` | `python:3.12-slim` | Container image used for `sandbox` mode's disposable container |
 | `WELLS_SANDBOX_RUNTIME` | _(auto)_ | Pin the container CLI (`podman` or `docker`); auto-detects, preferring Podman |

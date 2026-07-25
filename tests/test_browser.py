@@ -17,26 +17,18 @@ from wells import browser, tools
 # ---------------------------------------------------------------------------
 
 
-def test_disabled_by_default(monkeypatch):
+def test_enabled_by_default(monkeypatch):
     monkeypatch.delenv("WELLS_BROWSER", raising=False)
-    assert not browser.enabled()
-
-
-def test_enabled_via_env(monkeypatch):
-    monkeypatch.setenv("WELLS_BROWSER", "1")
     assert browser.enabled()
 
 
-def test_not_registered_by_default(monkeypatch):
+def test_disabled_via_env(monkeypatch):
+    monkeypatch.setenv("WELLS_BROWSER", "0")
+    assert not browser.enabled()
+
+
+def test_registered_by_default(monkeypatch):
     monkeypatch.delenv("WELLS_BROWSER", raising=False)
-    tools._optional_registered = False
-    tools._register_optional_tools()
-    names = [t.name for t in tools.ALL_TOOLS]
-    assert "browser_navigate" not in names
-
-
-def test_registered_when_enabled(monkeypatch):
-    monkeypatch.setenv("WELLS_BROWSER", "1")
     tools._optional_registered = False
     tools._register_optional_tools()
     names = [t.name for t in tools.ALL_TOOLS]
@@ -45,6 +37,21 @@ def test_registered_when_enabled(monkeypatch):
         "browser_read", "browser_screenshot",
     ):
         assert n in names
+
+
+def test_not_registered_when_disabled(monkeypatch):
+    # ALL_TOOLS is a shared, additive-only module-level registry -- once a
+    # tool is added in-process it's never removed, so an earlier test in
+    # this same session may have already registered browser_* tools. Reset
+    # to a browser-free baseline here so this test verifies the actual guard
+    # condition instead of depending on test ordering.
+    monkeypatch.setenv("WELLS_BROWSER", "0")
+    fresh = [t for t in tools.ALL_TOOLS if not t.name.startswith("browser_")]
+    monkeypatch.setattr(tools, "ALL_TOOLS", fresh)
+    tools._optional_registered = False
+    tools._register_optional_tools()
+    names = [t.name for t in tools.ALL_TOOLS]
+    assert "browser_navigate" not in names
 
 
 def test_click_without_session_errors():
