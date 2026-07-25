@@ -3,20 +3,29 @@
 ``fetch_url`` only ever sees the initial static HTML — most real web apps
 (SPAs, dashboards, a local dev server's frontend) render their actual content
 with JavaScript, so ``fetch_url`` against them returns an empty shell. This
-module gives the agent a genuine browser (Playwright + Chromium) it can
-navigate, click, type into, read the rendered text of, and screenshot — the
-same category of capability OpenHands' browsing agent provides, but opt-in
-and lazily imported so it costs nothing until actually used.
+module gives the agent a genuine browser it can navigate, click, type into,
+read the rendered text of, and screenshot — the same category of capability
+OpenHands' browsing agent provides, but lazily imported so it costs nothing
+until actually used.
+
+Playwright is the driver (mature, cross-platform, great auto-waiting/
+selector API) — but its own bundled Chromium download (~150-300MB via
+``playwright install chromium``) is the one real weight in this feature, not
+the library itself. :func:`_find_system_browser` avoids that download for
+the large majority of users by launching an already-installed Chrome/Edge/
+Brave/Chromium instead (Playwright drives any Chromium-based browser over
+CDP just as well as its own bundled copy) — the bundled-Chromium path is
+only a fallback for a machine with none of those installed.
 
 Guardrails:
   * On by default, same as the other agent capabilities (``WELLS_BROWSER=0``
-    opts out). Playwright itself still needs a separate one-time install
-    (``pip install 'wells[browser]'`` + ``playwright install chromium`` —
-    not part of the base dependency set, so a fresh `wells` install never
-    pays for a Chromium download it doesn't use) — a call made before that
-    step returns a clear, actionable error instead of the tool silently not
-    existing, the same pattern the ``anthropic``/``ollama``/``google``
-    provider profiles already use for their optional packages.
+    opts out). Playwright the package still needs a one-time install
+    (``pip install 'wells[browser]'`` — not part of the base dependency set)
+    — a call made before that returns a clear, actionable error instead of
+    the tool silently not existing, the same pattern the
+    ``anthropic``/``ollama``/``google`` provider profiles already use for
+    their optional packages. The Chromium *download* step
+    (``playwright install chromium``) usually isn't needed at all — see above.
   * ``browser_navigate`` / ``browser_read`` / ``browser_screenshot`` are
     read-only (no safety gate, mirroring ``fetch_url``). ``browser_click`` /
     ``browser_type`` can have real side effects (submit a form, trigger a
@@ -35,6 +44,8 @@ from __future__ import annotations
 
 import atexit
 import os
+import platform
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -50,6 +61,30 @@ _playwright = None
 _browser = None
 _page = None
 
+# Candidate executables to check, in preference order (Chrome/Edge are the
+# best-tested against Playwright's CDP driving; generic distro "chromium"
+# packages can occasionally lag in CDP compatibility but usually work fine).
+# PATH-lookup names (checked via shutil.which) cover Linux; absolute paths
+# cover the common install locations Windows/macOS don't put on PATH.
+_PATH_NAMES = [
+    "google-chrome", "google-chrome-stable", "chrome",
+    "microsoft-edge", "microsoft-edge-stable",
+    "brave-browser", "brave",
+    "chromium", "chromium-browser",
+]
+_WINDOWS_PATHS = [
+    r"Google\Chrome\Application\chrome.exe",
+    r"Microsoft\Edge\Application\msedge.exe",
+    r"BraveSoftware\Brave-Browser\Application\brave.exe",
+    r"Chromium\Application\chrome.exe",
+]
+_MACOS_PATHS = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+]
+
 
 def enabled() -> bool:
     """Whether the browser_* tools are registered (on by default; ``WELLS_BROWSER=0`` opts out)."""
@@ -58,8 +93,50 @@ def enabled() -> bool:
     )
 
 
+def _find_system_browser() -> str | None:
+    """Find an already-installed Chromium-based browser to drive instead of
+    downloading Playwright's own copy. ``WELLS_BROWSER_EXECUTABLE`` pins an
+    exact path, taking priority over auto-detection. None if nothing found
+    (caller falls back to Playwright's bundled Chromium)."""
+    pinned = os.environ.get("WELLS_BROWSER_EXECUTABLE", "").strip()
+    if pinned:
+        return pinned if Path(pinned).is_file() else None
+
+    for name in _PATH_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
+
+    system = platform.system()
+    if system == "Windows":
+        roots = [
+            os.environ.get("PROGRAMFILES", ""),
+            os.environ.get("PROGRAMFILES(X86)", ""),
+            os.environ.get("LOCALAPPDATA", ""),
+        ]
+        for root in roots:
+            if not root:
+                continue
+            for rel in _WINDOWS_PATHS:
+                candidate = Path(root) / rel
+                if candidate.is_file():
+                    return str(candidate)
+    elif system == "Darwin":
+        for candidate in _MACOS_PATHS:
+            if Path(candidate).is_file():
+                return candidate
+    return None
+
+
 def _ensure_page():
-    """Lazily launch a headless Chromium session; reused across calls/tools."""
+    """Lazily launch a browser session; reused across calls/tools.
+
+    Prefers an already-installed system Chrome/Edge/Brave/Chromium (no
+    download) over Playwright's bundled Chromium (requires ``playwright
+    install chromium``), falling back to the bundled copy — or, if that
+    isn't installed either, a clear actionable error — when no system
+    browser is found.
+    """
     global _playwright, _browser, _page
     if _page is not None:
         return _page
@@ -67,14 +144,37 @@ def _ensure_page():
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         raise RuntimeError(
-            "Playwright is not installed. Run: uv pip install playwright && "
-            "uv run playwright install chromium"
+            "Playwright is not installed. Run: uv pip install playwright"
         ) from exc
     _playwright = sync_playwright().start()
     headless = os.environ.get("WELLS_BROWSER_HEADLESS", "1").strip().lower() not in (
         "0", "false", "no",
     )
-    _browser = _playwright.chromium.launch(headless=headless)
+    system_browser = _find_system_browser()
+    try:
+        if system_browser:
+            _browser = _playwright.chromium.launch(
+                headless=headless, executable_path=system_browser,
+            )
+        else:
+            _browser = _playwright.chromium.launch(headless=headless)
+    except Exception as exc:
+        if system_browser:
+            # The detected browser failed to launch (unsupported build,
+            # damaged install, ...) -- retry with Playwright's own bundled
+            # Chromium rather than failing outright.
+            try:
+                _browser = _playwright.chromium.launch(headless=headless)
+            except Exception:
+                raise RuntimeError(
+                    f"Could not launch {system_browser!r} or Playwright's "
+                    f"bundled Chromium: {exc}. Run: playwright install chromium"
+                ) from exc
+        else:
+            raise RuntimeError(
+                f"No browser found. Install Chrome/Edge/Brave, or run: "
+                f"playwright install chromium ({exc})"
+            ) from exc
     _page = _browser.new_page()
     _page.set_default_timeout(_DEFAULT_TIMEOUT_MS)
     return _page
