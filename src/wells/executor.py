@@ -1360,6 +1360,26 @@ def _run_executor_impl(
     cap = max_steps if max_steps is not None else config.MAX_TOOL_STEPS
     profile = profile or config.ACTIVE_PROFILE
 
+    # Route to the configured vision profile when this call has image
+    # attachments and the chosen profile doesn't natively support them —
+    # a per-call swap (not a global mode switch), so the very next call
+    # with no images reverts to normal profile selection on its own.
+    if images and not seed_messages:
+        from wells import vision as _vision
+
+        current = config.providers.load_profile(profile)
+        current_label = current.label() if current else profile
+        if not _vision.provider_supports_vision(current_label):
+            vision_name = config.vision_profile_name()
+            if vision_name != profile and config.providers.load_profile(vision_name):
+                _ui(
+                    "warn",
+                    f"  [dim]📎 {len(images)} image(s) attached — routing this task "
+                    f"to vision profile '{vision_name}' ('{profile}' isn't "
+                    f"vision-capable)[/dim]",
+                )
+                profile = vision_name
+
     # Per-LLM-call usage log: populated by _account_usage, surfaced on
     # ExecutorResult and persisted into the run trace so `wells analyze`
     # can report cache efficiency round-by-round.

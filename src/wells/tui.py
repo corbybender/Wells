@@ -739,7 +739,10 @@ class SettingsScreen(ModalScreen["dict | None"]):
     }
     """
 
-    BINDINGS = [Binding("escape", "back", "Back / close", priority=True)]
+    BINDINGS = [
+        Binding("escape", "back", "Back / close", priority=True),
+        Binding("d", "clear_selected", "Clear value"),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -843,6 +846,27 @@ class SettingsScreen(ModalScreen["dict | None"]):
         else:
             self.dismiss(self._staged or None)
 
+    def action_clear_selected(self) -> None:
+        """'d' on a highlighted setting: reset it to blank/default.
+
+        Guarded on ``_editing`` because the same key must reach the Input
+        widget as a literal "d" character while a value is being typed.
+        """
+        if self._editing is not None:
+            return
+        from wells import settings as settings_mod
+        lst = self.query_one("#settings-list", OptionList)
+        if lst.highlighted is None:
+            return
+        opt = lst.get_option_at_index(lst.highlighted)
+        key = opt.id or ""
+        s = settings_mod.SETTINGS_BY_KEY.get(key)
+        if s is None:
+            return
+        if settings_mod.current_value(s) or key in self._staged:
+            self._staged[key] = ""
+            self._populate()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         from wells import providers as providers_mod
         event.stop()
@@ -867,7 +891,7 @@ class SettingsScreen(ModalScreen["dict | None"]):
         active = self._staged.get("MODEL_PROFILE", config_mod.ACTIVE_PROFILE)
         avails = providers_mod.available_profiles()
         profile_str = f"[yellow]{active}[/yellow]  ·  available: [green]{', '.join(avails)}[/green]"
-        title = f"Wells Settings  [dim](Enter: edit · Esc: close & save)[/dim]\n[bold]Profile:[/bold] {profile_str}"
+        title = f"Wells Settings  [dim](Enter: edit · d: clear value · Esc: close & save)[/dim]\n[bold]Profile:[/bold] {profile_str}"
         self.query_one("#settings-title", Static).update(title)
 
 
