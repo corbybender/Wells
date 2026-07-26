@@ -313,3 +313,89 @@ def test_agent_edit_screen_rejects_bad_toolset():
                 assert app.screen is screen
 
     _run(body)
+
+
+# ---------------------------------------------------------------------------
+# MemoryScreen / MemoryEditScreen — the /memory global-user-memory modal
+# ---------------------------------------------------------------------------
+
+
+def test_memory_screen_shows_empty_state(tmp_path, monkeypatch):
+    from wells.tui import MemoryScreen, WellsApp
+
+    monkeypatch.setenv("WELLS_USER_MEMORY_DIR", str(tmp_path / "memory"))
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = MemoryScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                lst = screen.query_one("#memory-list")
+                assert lst.option_count == 1
+                assert "add one" in str(lst.get_option_at_index(0).prompt)
+
+    _run(body)
+
+
+def test_memory_screen_add_creates_entry_on_disk(tmp_path, monkeypatch):
+    from wells import user_memory as um
+    from wells.tui import MemoryScreen, WellsApp
+
+    monkeypatch.setenv("WELLS_USER_MEMORY_DIR", str(tmp_path / "memory"))
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = MemoryScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.action_add()
+                await pilot.pause()
+
+                from wells.tui import MemoryEditScreen
+                edit_screen = app.screen
+                assert isinstance(edit_screen, MemoryEditScreen)
+                edit_screen.dismiss({
+                    "name": "terse-commits",
+                    "description": "Prefers terse commits.",
+                    "type": "feedback",
+                    "body": "Keep it short.",
+                })
+                await pilot.pause()
+
+                e = um.memories().by_name("terse-commits")
+                assert e is not None
+                assert e.type == "feedback"
+                assert e.body == "Keep it short."
+
+                lst = screen.query_one("#memory-list")
+                labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+                assert any("terse-commits" in lbl for lbl in labels)
+
+    _run(body)
+
+
+def test_memory_edit_screen_rejects_bad_name_on_create():
+    from wells.tui import MemoryEditScreen, WellsApp
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = MemoryEditScreen(existing=None)
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.query_one("#memory-name").value = "Bad Name"
+                screen.action_save()
+                await pilot.pause()
+
+                # Bad name must block the save -- the screen stays open.
+                assert app.screen is screen
+
+    _run(body)

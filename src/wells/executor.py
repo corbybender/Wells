@@ -395,13 +395,21 @@ TOOL CALLING — MANDATORY:
 - If the same operation has failed 3+ times with similar errors, STOP and report what is
   blocking you rather than continuing to retry.{structured_note}{examples_note}
 """
-    # Principles always first (the constitution), then the skills index (so the
-    # model knows which load_skill calls are available, without paying for the
-    # full bodies up front — progressive disclosure). Skills are an advanced,
-    # optional capability — skipped in compact mode to save the (small) cost
-    # for a model that's already struggling to fit the essentials in its
-    # context window.
+    # Principles always first (the constitution), then global user memory
+    # (small, budget-capped standing preferences — kept even in compact mode,
+    # unlike skills/personas below, since these are exactly the kind of
+    # explicit reminder a weaker/local model benefits from most), then the
+    # skills index (so the model knows which load_skill calls are available,
+    # without paying for the full bodies up front — progressive disclosure).
+    # Skills/personas are advanced, optional capabilities — skipped in
+    # compact mode to save the (small) cost for a model that's already
+    # struggling to fit the essentials in its context window.
     out = inject_principles(base, workspace)
+
+    from wells import user_memory as _user_memory
+
+    out = _user_memory.inject_into_prompt(out)
+
     if not compact:
         from wells import skills as _skills
 

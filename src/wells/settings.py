@@ -253,6 +253,15 @@ SETTINGS: list[Setting] = [
         choices=("0", "1"),
     ),
     Setting(
+        "WELLS_USER_MEMORY",
+        "Global user memory",
+        "Capabilities",
+        "Inject standing preferences from ~/.wells/memory/ into every project's "
+        "prompts (manage with /memory).",
+        "1",
+        choices=("0", "1"),
+    ),
+    Setting(
         "WELLS_CODEACT",
         "CodeAct (run_code)",
         "Capabilities",
