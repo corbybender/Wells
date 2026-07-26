@@ -51,6 +51,7 @@ global install, or want the full walkthrough of every option? →
 - [Quick start](#quick-start) — cloning, embedding, global install, manual setup
 - [CLI](#cli)
 - [Scheduled runs](#scheduled-runs) — unattended recurring runs (Task Scheduler / cron)
+- [Notifications & daily spend cap](#notifications--daily-spend-cap) — desktop/webhook alerts, cross-run budget
 - [Safety model](#safety-model) — auto / approve / dryrun / plan / sandbox
 - [Operating rules](#operating-rules--deterministic-not-hopeful) — deterministic enforcement + permission allowlists
 - [Repository index](#repository-index-wells-index) (`wells-index`)
@@ -114,10 +115,10 @@ built on overlapping ideas, not a one-sided list.
 
 | | OpenCode | Wells |
 |---|---|---|
-| Test verification | Model-driven (runs tests via its own tool calls, no ground-truth gate) | **Deterministic test-gate**: the real suite's exit code is ground truth — a green suite skips the LLM interpretation pass entirely, and post-edit self-heal (ruff/`node --check`/JSON-parse) catches broken syntax the same round |
+| Test verification | Model-driven (runs tests via its own tool calls, no ground-truth gate) | **Deterministic test-gate**: the real suite's exit code is ground truth — a green suite skips the LLM interpretation pass entirely, and post-edit self-heal (fast: ruff/`node --check`/JSON-parse; optional semantic: pyright/`tsc`/`cargo check`/`go vet`) catches broken syntax *and* type errors the same round |
 | Sandboxing | Permission gating (allow/deny/ask); no container/VM isolation found | `sandbox` mode: `run_command` and `run_code` execute in a disposable Podman/Docker container, picked explicitly per run |
 | MCP | Client only (connects out to MCP servers) | **Server** (drive Wells from Claude Code/OpenCode/other CLIs) *and* **client** |
-| Unattended operation | Not found | `wells schedule` — Task Scheduler/cron, no live process required |
+| Unattended operation | Not found | `wells schedule` — Task Scheduler/cron, no live process required, with completion notifications (desktop/webhook) and a cross-run daily spend cap |
 | Code intelligence | Live LSP servers per language (accurate, but a process to start/maintain per language) | Precomputed Rust structural index (`wells-index`) — `find_symbol`/`find_references`/`find_callers` in one lookup, ~98% fewer tokens than a live search; a different tradeoff (speed + low overhead vs. a language server's live accuracy), not a strict upgrade |
 | Parallel work | Subagents (blocking) | Both blocking (`parallel_research`) *and* non-blocking (`bg_start`/`bg_status`/`bg_collect`) fan-out, plus `fleet` — N full parallel worktree attempts at the same task, pick the winner |
 
@@ -134,7 +135,7 @@ further:
 | Provider | Anthropic's Claude only | Any of them — Claude, OpenAI, Gemini, Z.ai, OpenRouter, any OpenAI-compatible endpoint, or fully local (Ollama/vLLM), switchable per task, not a one-time choice |
 | Test verification | Model decides whether/when to run tests via its own Bash calls | **Deterministic test-gate** + automatic post-edit self-heal — enforced by the harness, not left to model judgment |
 | Sandboxing | Bash tool runs on the host directly (as far as the CLI itself exposes) | `sandbox` mode: disposable Podman/Docker container per run, opt-in |
-| Unattended operation | Cloud-hosted scheduled routines (Anthropic's infrastructure, needs an account/plan tier) | `wells schedule` — your own machine's Task Scheduler/cron, no cloud dependency |
+| Unattended operation | Cloud-hosted scheduled routines (Anthropic's infrastructure, needs an account/plan tier) | `wells schedule` — your own machine's Task Scheduler/cron, no cloud dependency; completion notifications + a cross-run daily spend cap guard against a stuck/runaway recurring goal |
 | Parallel fan-out | Task-tool subagent delegation (blocking) | Blocking *and* non-blocking (`bg_start`), plus `fleet` — N parallel worktree attempts, pick the winner, merge or discard |
 | Code intelligence | Grep/Glob live search each time | Precomputed structural index (`wells-index`) — exact file:line answers, ~98% fewer tokens per lookup |
 | Cost visibility | Point-in-time (`/cost`) | Live, continuously-updating token/dollar ledger in the status panel throughout the run |
@@ -188,7 +189,10 @@ START → indexer → planner ──(simple plan)──────────�
   After each write, the harness itself runs the fastest checker for the file
   type (ruff/py_compile, `node --check`, JSON parse) and injects failures
   into the model's next observation — broken code is caught in milliseconds,
-  not a tester round-trip later.
+  not a tester round-trip later. Opt in to a slower, project-aware **semantic**
+  pass (`WELLS_SEMANTIC_CHECK=1`) that runs a real type-checker — pyright/mypy,
+  `tsc`, `cargo check`, `go vet` — for the file's language and catches type
+  errors and bad cross-file references the fast pass can't see.
 - **Tester** runs a *deterministic gate first*: if the repo has a recognizable
   test setup, the harness executes the suite and records the exit code as
   ground truth. Green suite → the LLM interpretation pass is skipped entirely.
@@ -447,6 +451,44 @@ getting nested command-line quoting right (especially on Windows) is
 fragile. A PowerShell here-string / bash heredoc, written directly by
 Python and never re-parsed through a shell, sidesteps that whole class of
 bug.
+
+## Notifications & daily spend cap
+
+Two gaps a scheduled/unattended run opens up: no way to know it finished
+without checking logs by hand, and no ceiling on how much a stuck or
+runaway recurring goal can spend across a day.
+
+**Run-completion notifications** (`WELLS_NOTIFY=1`) fire on every run —
+headless or TUI — once it finishes:
+
+* **Desktop popup** via each OS's own native mechanism: a balloon tip
+  (`System.Windows.Forms.NotifyIcon`) on Windows, `osascript` on macOS,
+  `notify-send` on Linux. No extra package on any platform.
+* **Webhook** — `WELLS_NOTIFY_WEBHOOK_URL` gets a POST of
+  `{"text": ..., "event": ..., "detail": ...}`. That's exactly the shape
+  Slack's Incoming Webhooks expect, so pointing it at a Slack webhook URL
+  works with zero Slack-specific code; any other JSON-accepting endpoint
+  works too.
+
+Both channels are best-effort — a notification failure never affects the
+run's own reported outcome.
+
+**Daily spend cap** (`WELLS_DAILY_BUDGET`, dollars) tracks cumulative
+spend across every run in `~/.wells/spend.json` (global, resets at
+midnight local time) and refuses to *start* a new run once the day's
+budget is reached — headless exits `1` with a clear error, the TUI
+prints the same message and doesn't launch. This is a different guarantee
+from `MAX_RUN_TOKENS` (which caps *one* run's tokens): the daily cap stops
+the *next* run in a recurring schedule from starting once the day's
+money is spent. Unset or `0` (the default) means no cap.
+
+```bash
+export WELLS_NOTIFY=1
+export WELLS_NOTIFY_WEBHOOK_URL=https://hooks.slack.com/services/...
+export WELLS_DAILY_BUDGET=5.00
+```
+
+Or set any of the three from `/config` (category: Notifications).
 
 ## Safety model
 
@@ -1106,7 +1148,9 @@ src/wells/
 ├── runtime.py         # run_step(): LLM call + usage capture (reasoning nodes)
 ├── executor.py        # agentic tool loop: native+text tools, masking, streaming
 ├── tools.py           # repo tools: read/glob/grep/write/edit/shell/subagents
-├── checkers.py        # post-edit self-heal: ruff / node --check / json
+├── checkers.py        # post-edit self-heal: fast (ruff/node --check/json) + semantic (pyright/tsc/cargo/go vet)
+├── notify.py          # run-completion desktop + webhook notifications
+├── spend_guard.py     # cross-run daily spend cap
 ├── repomap.py         # goal-ranked repo map (files → key symbols)
 ├── safety.py          # workspace confinement + auto/approve/dryrun gate
 ├── subagents.py       # parallel read-only research fan-out
@@ -1162,6 +1206,10 @@ specifically to avoid colliding with that package.</sup>
 | `PLANNER_MAX_STEPS` / `TESTER_MAX_STEPS` / `REVIEWER_MAX_STEPS` / `SUBAGENT_MAX_STEPS` | `0` (no limit) | Per-agent step caps |
 | `MAX_RUN_TOKENS` | `0` (off) | Hard token cap per run; warns at 80% |
 | `SELF_CHECK` | `1` | Post-edit lint/syntax self-heal |
+| `WELLS_SEMANTIC_CHECK` | `0` | Post-edit **type-checker** self-heal (pyright/mypy, tsc, cargo check, go vet) — project-aware, opt-in |
+| `WELLS_NOTIFY` | `0` | Desktop + webhook notification on run completion |
+| `WELLS_NOTIFY_WEBHOOK_URL` | _(blank)_ | POST target for run-completion notifications (Slack-compatible payload) |
+| `WELLS_DAILY_BUDGET` | `0` (off) | Refuse new runs once today's cumulative spend reaches this many dollars |
 | `CHEAP_VERIFY` | `1` | Route tester/reviewer to the cheap profile |
 | `AUTO_COMMIT` | `0` | Commit each successful run (Conventional Commits) |
 | `STREAM_OUTPUT` | `1` | Stream answers token-by-token |
