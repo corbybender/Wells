@@ -22,10 +22,49 @@ provider you already have an API key for. Local models are a first-class
 option, not the point — they're just another provider profile, and nothing
 in Wells requires them. Ships with a Rust structural repo index
 (`wells-index`), an MCP server *and* MCP client, git-checkpointed undo, a
-deterministic verification layer, **agent skills** (load-on-domain
+deterministic verification layer, **agent skills** (load-on-demand
 know-how), **CodeAct** (sandboxed code execution), **background agents**
 (concurrent fan-out), and a **browser tool** (Playwright — navigate, click,
 type, read, screenshot a real JS-rendered session).
+
+## Get started in one command
+
+```bash
+uv tool install git+https://github.com/corbybender/Wells.git && wells config
+```
+
+That installs `wells` on your PATH from any directory (no clone needed) and
+opens the first-run provider setup — pick Claude, OpenAI, Gemini, Z.ai,
+OpenRouter, or a local model. No `uv`? `pipx install
+git+https://github.com/corbybender/Wells.git` works the same way.
+
+Prefer cloning the repo, running against a specific project without a
+global install, or want the full walkthrough of every option? →
+[Quick start](#quick-start).
+
+## Contents
+
+- [How Wells compares](#how-wells-compares) — [vs Aider](#vs-aider) · [vs OpenHands](#vs-openhands)
+- [What it does](#what-it-does) — the planner→coder→tester→reviewer graph
+- [The TUI](#the-tui) — commands, keyboard shortcuts, the info panel
+- [Provider profiles](#provider-profiles-model-agnostic) — model-agnostic setup
+- [Quick start](#quick-start) — cloning, embedding, global install, manual setup
+- [CLI](#cli)
+- [Scheduled runs](#scheduled-runs) — unattended recurring runs (Task Scheduler / cron)
+- [Safety model](#safety-model) — auto / approve / dryrun / plan / sandbox
+- [Operating rules](#operating-rules--deterministic-not-hopeful) — deterministic enforcement + permission allowlists
+- [Repository index](#repository-index-wells-index) (`wells-index`)
+- [Behavioral principles](#behavioral-principles-agentmd) (`AGENT.md`)
+- [Global user memory](#global-user-memory) — standing preferences across every project
+- [Agent capabilities](#agent-capabilities)
+  - [Skills](#skills--load-on-demand-know-how) · [CodeAct](#codeact--let-it-compute) · [Browser](#browser--drive-a-real-js-rendered-session)
+  - [Background agents](#background-agents--concurrent-fan-out) · [Subagent personas](#subagent-personas--custom-specialist-identities) · [Model-driven todo list](#model-driven-todo-list)
+- [MCP — server and client](#mcp--server-and-client)
+- [Project structure](#project-structure)
+- [Configuration reference](#configuration-reference)
+- [Token & cost optimization](#token--cost-optimization)
+- [Tests & CI](#tests--ci)
+- [Semantic code retrieval](#semantic-code-retrieval)
 
 ## How Wells compares
 
@@ -273,10 +312,15 @@ directory; Wells' own source is never touched.
 
 ### Option C — Global install (available everywhere)
 
-Install once, then `wells` (or `wells`) is on your PATH:
+Install once, directly from GitHub (not published to PyPI — only the
+`wells-index` native indexer is; `pip install wells` won't find this
+package), then `wells` is on your PATH from any directory:
 
 ```bash
-uv tool install Wells    # or: pipx install .
+uv tool install git+https://github.com/corbybender/Wells.git
+# or: pipx install git+https://github.com/corbybender/Wells.git
+# or, from a local clone: uv tool install . / pipx install .
+
 wells "your goal"                        # from any directory
 wells --workspace /path/to/project "goal"
 ```
