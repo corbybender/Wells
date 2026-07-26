@@ -44,7 +44,7 @@ global install, or want the full walkthrough of every option? →
 
 ## Contents
 
-- [How Wells compares](#how-wells-compares) — [vs Aider](#vs-aider) · [vs OpenHands](#vs-openhands)
+- [How Wells compares](#how-wells-compares) — [vs Aider](#vs-aider) · [vs OpenHands](#vs-openhands) · [vs OpenCode](#vs-opencode) · [vs Claude Code](#vs-claude-code) · [vs Cursor](#vs-cursor)
 - [What it does](#what-it-does) — the planner→coder→tester→reviewer graph
 - [The TUI](#the-tui) — commands, keyboard shortcuts, the info panel
 - [Provider profiles](#provider-profiles-model-agnostic) — model-agnostic setup
@@ -68,10 +68,14 @@ global install, or want the full walkthrough of every option? →
 
 ## How Wells compares
 
-Wells sits in the same space as **Aider** and **OpenHands** (formerly
-OpenDevin) — an autonomous coding agent you run yourself, not an
-editor-embedded copilot. **Continue.dev** is a different category (an IDE
-extension) rather than a competing harness, so it isn't compared here.
+Wells sits in the same space as **Aider**, **OpenHands** (formerly
+OpenDevin), **OpenCode**, and **Claude Code** — an autonomous coding agent
+you run yourself, not an editor-embedded copilot. **Continue.dev** is a
+different category (an IDE extension) rather than a competing harness, so
+it isn't compared here. **Cursor** is the same category mismatch (a full
+IDE, not a CLI/TUI) — but its Agent/Composer mode is a real, comparable
+agent loop, so it gets a table below with that caveat up front rather than
+being excluded outright.
 
 ### vs Aider
 
@@ -99,6 +103,60 @@ extension) rather than a competing harness, so it isn't compared here.
 | Subagent identities | One generic agent persona | Custom `PERSONA.md` specialists (system prompt + toolset), invoked per-call via `bg_start(persona=...)` — a security reviewer and a performance investigator get different framing, not the same generic prompt |
 | Unattended operation | Needs a live session | `wells schedule` registers a goal with the OS's own scheduler (Task Scheduler/cron) — no Wells process has to be running for it to fire |
 | Cross-project memory | Session-scoped | `~/.wells/memory/` — standing preferences that follow you to every project, distinct from per-repo `AGENTS.md` |
+
+### vs OpenCode
+
+The closest peer of the four — also a provider-agnostic TUI harness with
+subagents, custom commands, MCP, and a permission system. Credit where
+due: several Wells features exist because OpenCode (and Claude Code, next)
+already proved the pattern — this is a comparison between two harnesses
+built on overlapping ideas, not a one-sided list.
+
+| | OpenCode | Wells |
+|---|---|---|
+| Test verification | Model-driven (runs tests via its own tool calls, no ground-truth gate) | **Deterministic test-gate**: the real suite's exit code is ground truth — a green suite skips the LLM interpretation pass entirely, and post-edit self-heal (ruff/`node --check`/JSON-parse) catches broken syntax the same round |
+| Sandboxing | Permission gating (allow/deny/ask); no container/VM isolation found | `sandbox` mode: `run_command` and `run_code` execute in a disposable Podman/Docker container, picked explicitly per run |
+| MCP | Client only (connects out to MCP servers) | **Server** (drive Wells from Claude Code/OpenCode/other CLIs) *and* **client** |
+| Unattended operation | Not found | `wells schedule` — Task Scheduler/cron, no live process required |
+| Code intelligence | Live LSP servers per language (accurate, but a process to start/maintain per language) | Precomputed Rust structural index (`wells-index`) — `find_symbol`/`find_references`/`find_callers` in one lookup, ~98% fewer tokens than a live search; a different tradeoff (speed + low overhead vs. a language server's live accuracy), not a strict upgrade |
+| Parallel work | Subagents (blocking) | Both blocking (`parallel_research`) *and* non-blocking (`bg_start`/`bg_status`/`bg_collect`) fan-out, plus `fleet` — N full parallel worktree attempts at the same task, pick the winner |
+
+### vs Claude Code
+
+The actual named target for this project, and the one Wells borrows the
+most acknowledged patterns from: subagent personas, custom slash commands,
+hooks, a model-driven todo list, and cross-project memory all exist in
+Wells *because* Claude Code proved they work well. Where Wells tries to go
+further:
+
+| | Claude Code | Wells |
+|---|---|---|
+| Provider | Anthropic's Claude only | Any of them — Claude, OpenAI, Gemini, Z.ai, OpenRouter, any OpenAI-compatible endpoint, or fully local (Ollama/vLLM), switchable per task, not a one-time choice |
+| Test verification | Model decides whether/when to run tests via its own Bash calls | **Deterministic test-gate** + automatic post-edit self-heal — enforced by the harness, not left to model judgment |
+| Sandboxing | Bash tool runs on the host directly (as far as the CLI itself exposes) | `sandbox` mode: disposable Podman/Docker container per run, opt-in |
+| Unattended operation | Cloud-hosted scheduled routines (Anthropic's infrastructure, needs an account/plan tier) | `wells schedule` — your own machine's Task Scheduler/cron, no cloud dependency |
+| Parallel fan-out | Task-tool subagent delegation (blocking) | Blocking *and* non-blocking (`bg_start`), plus `fleet` — N parallel worktree attempts, pick the winner, merge or discard |
+| Code intelligence | Grep/Glob live search each time | Precomputed structural index (`wells-index`) — exact file:line answers, ~98% fewer tokens per lookup |
+| Cost visibility | Point-in-time (`/cost`) | Live, continuously-updating token/dollar ledger in the status panel throughout the run |
+| Permission allowlists | ✓ (`settings.json` allow/ask/deny) | ✓ (`.wells/rules.yaml` `severity: allow`) — built to reach parity with this, not a Wells-only feature |
+| Custom subagents / slash commands / hooks / todo list / auto-memory | ✓ (the originals) | ✓ (deliberately mirrored — `PERSONA.md`, `.wells/commands/`, `hooks.yaml`, `update_todos`, `~/.wells/memory/`) |
+
+### vs Cursor
+
+Cursor is a full IDE (a VS Code fork), not a CLI/TUI — genuinely a
+different product category, the same mismatch as Continue.dev. It gets a
+table anyway because its Agent/Composer mode is a real, comparable agent
+loop (runs terminal commands, edits multiple files, has its own rules and
+MCP support) — just wrapped in a GUI editor instead of a terminal.
+
+| | Cursor (Agent mode) | Wells |
+|---|---|---|
+| Interface | Full Electron-based IDE — a GUI is required | Terminal TUI or headless CLI (`wells -p --output-format json`) — scriptable, runs over SSH, no GUI needed |
+| Providers (BYOK) | OpenAI, Anthropic, Google, Azure, AWS Bedrock | All of those, plus Z.ai, OpenRouter, any OpenAI-compatible endpoint, and fully local (Ollama/vLLM) |
+| Background/parallel agents | Cloud Agents — isolated VMs in Cursor's own cloud infrastructure | `bg_start`/`fleet` — your own local git worktrees, on your own disk, nothing leaves your machine unless you choose a hosted provider for the model call itself |
+| Persistent instructions | `.cursor/rules` — static context injected at the start of every prompt | Both static (`AGENT.md`/`AGENTS.md`/`RULES.md`, prompt-injected) *and* a stateful liability ledger + tool-boundary enforcement that runs *before* a call, not just prompted |
+| Test verification | Not found as a distinct ground-truth gate | **Deterministic test-gate** + automatic post-edit self-heal |
+| MCP | Client only (confirmed); no evidence of an MCP server mode | **Server** *and* **client** |
 
 ## What it does
 
