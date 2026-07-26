@@ -73,10 +73,15 @@ _PATH_NAMES = [
     "chromium", "chromium-browser",
 ]
 _WINDOWS_PATHS = [
-    r"Google\Chrome\Application\chrome.exe",
-    r"Microsoft\Edge\Application\msedge.exe",
-    r"BraveSoftware\Brave-Browser\Application\brave.exe",
-    r"Chromium\Application\chrome.exe",
+    # Forward slashes, not backslashes: pathlib accepts "/" as a separator
+    # on WindowsPath too, but a literal "\" is just a character (not a
+    # separator) on PosixPath -- these run through pytest on Linux CI as
+    # well as on a Windows dev machine, so the platform-agnostic form is
+    # the one that actually joins into nested path segments on both.
+    "Google/Chrome/Application/chrome.exe",
+    "Microsoft/Edge/Application/msedge.exe",
+    "BraveSoftware/Brave-Browser/Application/brave.exe",
+    "Chromium/Application/chrome.exe",
 ]
 _MACOS_PATHS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
