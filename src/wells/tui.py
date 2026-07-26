@@ -1722,6 +1722,245 @@ class AgentsScreen(ModalScreen[None]):
 
 
 # ---------------------------------------------------------------------------
+# Global user memory manager (/memory) — same interaction model as /agents,
+# minus workspace-scoping: entries live in ~/.wells/memory/, not the repo.
+# ---------------------------------------------------------------------------
+
+class MemoryEditScreen(ModalScreen["dict | None"]):
+    """Form to create or edit a global memory entry: name, description, type, body.
+
+    When ``existing`` is provided, the fields are pre-filled for editing
+    (and the name field is read-only). Otherwise it's a new-entry form.
+    """
+
+    CSS = """
+    MemoryEditScreen { align: center middle; }
+    #memory-edit-panel {
+        width: 90; max-width: 96%; height: auto; max-height: 85%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #memory-edit-panel Static { height: auto; }
+    #memory-edit-panel Input { margin-bottom: 1; }
+    #memory-body { height: 10; margin-bottom: 1; }
+    #memory-edit-error { height: auto; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("ctrl+s", "save", "Save", priority=True),
+    ]
+
+    def __init__(self, existing: dict | None = None) -> None:
+        self._existing = existing  # {"name", "description", "type", "body"} or None
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        is_edit = self._existing is not None
+        title = "[bold]Edit memory entry[/bold]" if is_edit else "[bold]Add memory entry[/bold]"
+        with Vertical(id="memory-edit-panel"):
+            yield Static(
+                f"{title}  [dim](Ctrl+S saves · Esc cancels — applies to every project)[/dim]",
+                markup=True,
+            )
+            yield Static("Name [dim](lowercase, digits, hyphens)[/dim]", markup=True)
+            name_val = self._existing["name"] if self._existing else ""
+            name_input = Input(id="memory-name", value=name_val)
+            if is_edit:
+                name_input.disabled = True
+            yield name_input
+            yield Static("Description [dim](one line)[/dim]", markup=True)
+            desc_val = self._existing.get("description", "") if self._existing else ""
+            yield Input(id="memory-desc", value=desc_val)
+            yield Static("Type [dim](user / feedback / reference — free-form)[/dim]", markup=True)
+            type_val = self._existing.get("type", "") if self._existing else ""
+            yield Input(id="memory-type", value=type_val, placeholder="feedback")
+            yield Static("Body [dim](a short standing fact/preference)[/dim]", markup=True)
+            body_val = self._existing.get("body", "") if self._existing else ""
+            yield TextArea(body_val, id="memory-body", language="markdown")
+            yield Static("", id="memory-edit-error", markup=True)
+
+    def on_mount(self) -> None:
+        if self._existing:
+            self.query_one("#memory-desc", Input).focus()
+        else:
+            self.query_one("#memory-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        order = ["memory-name", "memory-desc", "memory-type"]
+        cur = event.input.id or ""
+        if cur in order and cur != order[-1]:
+            self.query_one(f"#{order[order.index(cur) + 1]}", Input).focus()
+        elif cur == "memory-type":
+            self.query_one("#memory-body", TextArea).focus()
+
+    def action_save(self) -> None:
+        from wells import user_memory as um
+
+        name = self.query_one("#memory-name", Input).value.strip()
+        desc = self.query_one("#memory-desc", Input).value.strip()
+        entry_type = self.query_one("#memory-type", Input).value.strip()
+        body = self.query_one("#memory-body", TextArea).text
+        if self._existing is None:
+            err = um.validate_name(name)
+            if err:
+                self.query_one("#memory-edit-error", Static).update(f"[red]{err}[/red]")
+                return
+        self.dismiss({
+            "name": name.lower(), "description": desc, "type": entry_type, "body": body,
+        })
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class MemoryScreen(ModalScreen[None]):
+    """Modal global-memory manager: list, view, add, edit, remove."""
+
+    CSS = """
+    MemoryScreen { align: center middle; }
+    #memory-panel {
+        width: 100; max-width: 96%; height: 75%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #memory-title { height: 2; text-style: bold; }
+    #memory-list { height: 1fr; border: none; }
+    #memory-status { height: 2; color: $text-muted; }
+    #memory-view { display: none; height: 1fr; border: solid $accent; padding: 0 1; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", priority=True),
+        Binding("a", "add", "Add"),
+        Binding("e", "edit", "Edit"),
+        Binding("d", "remove", "Remove"),
+        Binding("enter", "view", "View"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="memory-panel"):
+            yield Static(
+                "Global User Memory  [dim](applies to every project — Enter: view · "
+                "a: add · e: edit · d: remove · Esc: close)[/dim]",
+                id="memory-title", markup=True,
+            )
+            yield OptionList(id="memory-list")
+            yield Static("", id="memory-view", markup=True, disabled=True)
+            yield Static("", id="memory-status", markup=True)
+
+    def on_mount(self) -> None:
+        self._populate()
+        self.query_one("#memory-list", OptionList).focus()
+
+    # -- rendering ---------------------------------------------------------
+
+    def _status(self, text: str) -> None:
+        self.query_one("#memory-status", Static).update(text)
+
+    def _populate(self) -> None:
+        from wells import user_memory as um
+
+        lst = self.query_one("#memory-list", OptionList)
+        highlighted = lst.highlighted
+        lst.clear_options()
+        idx = um.memories()
+        if idx.is_empty():
+            lst.add_option(Option(
+                "[dim]No memory entries yet — press a to add one.[/dim]",
+                id="_hdr_empty", disabled=True,
+            ))
+        else:
+            for e in idx.entries:
+                desc = e.description or "(no description)"
+                tag = f"[{e.type}] " if e.type else ""
+                lst.add_option(Option(f"{e.name}  [dim]{tag}— {desc}[/dim]", id=e.name))
+        if highlighted is not None and lst.option_count:
+            lst.highlighted = min(highlighted, lst.option_count - 1)
+
+    def _selected(self) -> str | None:
+        lst = self.query_one("#memory-list", OptionList)
+        if lst.highlighted is None:
+            return None
+        opt = lst.get_option_at_index(lst.highlighted)
+        name = opt.id or ""
+        return None if name.startswith("_hdr_") else name
+
+    # -- actions -----------------------------------------------------------
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def action_view(self) -> None:
+        name = self._selected()
+        if not name:
+            return
+        from wells import user_memory as um
+        ok, raw = um.read_memory_raw(name)
+        if not ok:
+            self._status(f"[red]{raw}[/red]")
+            return
+        view = self.query_one("#memory-view", Static)
+        view.update(f"[bold cyan]── {name} ──[/bold cyan]\n{raw}")
+        path = um.entry_file_path(name)
+        self._status(f"[dim]{path}[/dim]" if path else "")
+
+    def action_add(self) -> None:
+        def _done(result: dict | None) -> None:
+            if not result:
+                return
+            from wells import user_memory as um
+            ok, msg = um.create_memory(
+                result["name"], result["description"], result["type"], result["body"],
+            )
+            self._populate()
+            (self._status(f"[green]{msg}[/green]")
+             if ok else self._status(f"[red]{msg}[/red]"))
+
+        self.app.push_screen(MemoryEditScreen(existing=None), _done)
+
+    def action_edit(self) -> None:
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select an entry to edit.[/dim]")
+            return
+        from wells import user_memory as um
+        entry = um.memories().by_name(name)
+        if entry is None:
+            self._status(f"[red]Unknown memory entry: {name}[/red]")
+            return
+        existing = {
+            "name": entry.name, "description": entry.description,
+            "type": entry.type, "body": entry.body,
+        }
+
+        def _done(result: dict | None) -> None:
+            if not result:
+                return
+            ok, msg = um.update_memory(
+                result["name"],
+                description=result["description"] or None,
+                entry_type=result["type"] or None,
+                body=result["body"],
+            )
+            self._populate()
+            (self._status(f"[green]{msg}[/green]")
+             if ok else self._status(f"[red]{msg}[/red]"))
+
+        self.app.push_screen(MemoryEditScreen(existing=existing), _done)
+
+    def action_remove(self) -> None:
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select an entry to remove.[/dim]")
+            return
+        from wells import user_memory as um
+        ok, msg = um.delete_memory(name)
+        self._populate()
+        (self._status(f"[green]{msg}[/green]")
+         if ok else self._status(f"[red]{msg}[/red]"))
+
+
+# ---------------------------------------------------------------------------
 # I/O capture helpers
 # ---------------------------------------------------------------------------
 
@@ -2364,6 +2603,25 @@ class WellsApp(App[None]):
                 else:
                     self.write_log(
                         "[dim]Usage: /agents edit <name> (or open the modal with bare /agents)[/dim]"
+                    )
+                return
+            # Non-blocking subcommands (list, show, remove) delegate to the CLI
+            # handler via the synchronous fallback below.
+
+        if cmd == "/memory":
+            sub = args[0].lower() if args else ""
+            if not sub:
+                # No subcommand: open the visual manager (like /config, /mcp).
+                self.push_screen(MemoryScreen())
+                return
+            if sub in ("add", "edit", "update") and not (len(args) >= 2):
+                # Bare /memory add or /memory edit with no name → use the modal
+                # (the CLI handler calls input() which deadlocks under Textual).
+                if sub == "add":
+                    self.push_screen(MemoryEditScreen(existing=None))
+                else:
+                    self.write_log(
+                        "[dim]Usage: /memory edit <name> (or open the modal with bare /memory)[/dim]"
                     )
                 return
             # Non-blocking subcommands (list, show, remove) delegate to the CLI

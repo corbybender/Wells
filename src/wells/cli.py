@@ -155,6 +155,13 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "invoked via bg_start(persona=<name>).",
     ),
     (
+        "/memory",
+        "Manage global user memory",
+        "Usage: /memory [list|show <name>|add <name>|edit <name>|remove <name>]. "
+        "Standing preferences that apply to every project (~/.wells/memory/), "
+        "distinct from this repo's AGENTS.md.",
+    ),
+    (
         "/btw",
         "Side chat while a task runs",
         "Usage: /btw <message>. Independent conversation that works even mid-"
@@ -299,6 +306,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_skills(arg)
     elif cmd == "/agents":
         _handle_agents(arg)
+    elif cmd == "/memory":
+        _handle_memory(arg)
     elif cmd == "/log":
         _handle_log(arg)
     elif cmd == "/image":
@@ -2141,6 +2150,162 @@ def _agents_edit_interactive(name: str, ws: str) -> None:
     ok, msg = pz.update_persona(
         name, ws, description=desc_kwarg, toolset=tools_kwarg, system_prompt=new_prompt
     )
+    (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+
+
+def _handle_memory(arg: str) -> None:
+    """Handle /memory [list|show <name>|add <name>|edit <name>|remove <name>].
+
+    Global, cross-project user memory (~/.wells/memory/) -- distinct from
+    this repo's AGENTS.md (:mod:`wells.memory`, managed automatically by the
+    finisher, not via a slash command).
+    """
+    from rich.panel import Panel
+    from rich.table import Table
+    from wells import user_memory as um
+
+    parts = arg.strip().split(None, 1)
+    sub = parts[0].lower() if parts else "list"
+    name_arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "list":
+        idx = um.memories()
+        if idx.is_empty():
+            console.print(
+                "[dim]No global memory entries yet. Create one with "
+                "[bold]/memory add <name>[/bold]. These apply to every "
+                "project, unlike this repo's AGENTS.md.[/dim]"
+            )
+            return
+        table = Table(show_header=True, header_style="bold cyan", expand=False)
+        table.add_column("Name", no_wrap=True)
+        table.add_column("Type", no_wrap=True)
+        table.add_column("Description")
+        for e in idx.entries:
+            table.add_row(e.name, e.type or "-", e.description or "[dim](no description)[/dim]")
+        console.print(table)
+        console.print(f"[dim]{len(idx.entries)} entr(ies). Stored under ~/.wells/memory/[/dim]")
+        return
+
+    if sub == "show":
+        if not name_arg:
+            console.print("[red]Usage: /memory show <name>[/red]")
+            return
+        ok, raw = um.read_memory_raw(name_arg)
+        if not ok:
+            console.print(f"[red]{raw}[/red]")
+            return
+        console.print(Panel(raw, title=f"[bold]Memory: {name_arg}[/bold]", border_style="cyan"))
+        return
+
+    if sub == "add":
+        _memory_add_interactive(name_arg)
+        return
+
+    if sub in ("edit", "update"):
+        if not name_arg:
+            console.print("[red]Usage: /memory edit <name>[/red]")
+            return
+        _memory_edit_interactive(name_arg)
+        return
+
+    if sub in ("remove", "rm", "delete"):
+        if not name_arg:
+            console.print("[red]Usage: /memory remove <name>[/red]")
+            return
+        ok, msg = um.delete_memory(name_arg)
+        (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+        return
+
+    console.print(
+        "[red]Usage: /memory [list|show <name>|add <name>|edit <name>|remove <name>][/red]"
+    )
+
+
+def _memory_add_interactive(name_arg: str) -> None:
+    """Interactive memory creation (plain-CLI path; TUI uses the modal form)."""
+    from wells import user_memory as um
+
+    name = name_arg
+    if not name:
+        try:
+            name = input("Memory entry name (lowercase, hyphens ok): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+    err = um.validate_name(name)
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return
+    try:
+        description = input("Description (one line): ").strip()
+        entry_type = input("Type [dim](user/feedback/reference, free-form)[/dim]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    console.print(
+        "[dim]Enter the memory body (a short standing fact/preference). "
+        "Type a line with just '.' on its own to finish:[/dim]"
+    )
+    body_lines: list[str] = []
+    try:
+        while True:
+            line = input()
+            if line.strip() == ".":
+                break
+            body_lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        pass
+    body = "\n".join(body_lines).strip()
+    ok, msg = um.create_memory(name, description, entry_type, body)
+    (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+
+
+def _memory_edit_interactive(name: str) -> None:
+    """Interactive memory editing (plain-CLI path; TUI uses the modal form)."""
+    from wells import user_memory as um
+
+    ok, raw = um.read_memory_raw(name)
+    if not ok:
+        console.print(f"[red]{raw}[/red]")
+        return
+    entry = um.memories().by_name(name)
+    console.print(
+        f"[dim]Current description:[/dim] {entry.description if entry else '?'}"
+    )
+    try:
+        new_desc = input("New description [dim](Enter to keep)[/dim]: ").strip()
+        new_type = input(
+            f"New type [dim](Enter to keep '{entry.type if entry else ''}')[/dim]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    console.print(
+        "[dim]Current body (first 5 lines):[/dim]\n"
+        + "\n".join((entry.body if entry else "").splitlines()[:5])
+    )
+    console.print(
+        "[dim]Enter the new body. Type a line with just '.' on its own to finish, "
+        "or type just '.' immediately to keep the existing body:[/dim]"
+    )
+    body_lines: list[str] = []
+    new_body: str | None = None  # None = keep existing
+    try:
+        first = input()
+        if first.strip() != ".":
+            body_lines.append(first)
+            while True:
+                line = input()
+                if line.strip() == ".":
+                    break
+                body_lines.append(line)
+            new_body = "\n".join(body_lines).strip()
+    except (EOFError, KeyboardInterrupt):
+        pass
+    desc_kwarg = new_desc if new_desc else None
+    type_kwarg = new_type if new_type else None
+    ok, msg = um.update_memory(name, description=desc_kwarg, entry_type=type_kwarg, body=new_body)
     (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
 
 
