@@ -164,6 +164,13 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "distinct from this repo's AGENTS.md.",
     ),
     (
+        "/schedule",
+        "Unattended recurring runs",
+        "Usage: /schedule [list|add|remove <name>]. Registers a goal to run "
+        "on a recurring interval via Task Scheduler/cron -- wells needn't be "
+        "running for it to fire.",
+    ),
+    (
         "/btw",
         "Side chat while a task runs",
         "Usage: /btw <message>. Independent conversation that works even mid-"
@@ -310,6 +317,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_agents(arg)
     elif cmd == "/memory":
         _handle_memory(arg)
+    elif cmd == "/schedule":
+        _handle_schedule(arg)
     elif cmd == "/log":
         _handle_log(arg)
     elif cmd == "/image":
@@ -2319,6 +2328,73 @@ def _memory_edit_interactive(name: str) -> None:
     desc_kwarg = new_desc if new_desc else None
     type_kwarg = new_type if new_type else None
     ok, msg = um.update_memory(name, description=desc_kwarg, entry_type=type_kwarg, body=new_body)
+    (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+
+
+def _handle_schedule(arg: str) -> None:
+    """Handle /schedule [list|add|remove <name>].
+
+    Registers a goal to run unattended via the OS's native scheduler (Task
+    Scheduler on Windows, cron on Linux/macOS) -- wells doesn't need to be
+    running for a scheduled run to fire.
+    """
+    from rich.table import Table
+    from wells import schedule as sched
+
+    parts = arg.strip().split(None, 1)
+    sub = parts[0].lower() if parts else "list"
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "list":
+        items = sched.list_schedules()
+        if not items:
+            console.print(
+                "[dim]No schedules registered. Create one with "
+                "[bold]/schedule add[/bold].[/dim]"
+            )
+            return
+        table = Table(show_header=True, header_style="bold cyan", expand=False)
+        table.add_column("Name", no_wrap=True)
+        table.add_column("Interval", no_wrap=True)
+        table.add_column("Workspace")
+        table.add_column("Goal")
+        for e in items:
+            table.add_row(e["name"], e["interval"], e["workspace"], e["goal"][:60])
+        console.print(table)
+        return
+
+    if sub == "add":
+        _schedule_add_interactive()
+        return
+
+    if sub in ("remove", "rm", "delete"):
+        if not rest:
+            console.print("[red]Usage: /schedule remove <name>[/red]")
+            return
+        ok, msg = sched.remove_schedule(rest)
+        (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+        return
+
+    console.print("[red]Usage: /schedule [list|add|remove <name>][/red]")
+
+
+def _schedule_add_interactive() -> None:
+    """Interactive schedule creation (plain-CLI path; TUI uses the modal form)."""
+    from wells import schedule as sched
+
+    try:
+        name = input("Schedule name (lowercase, hyphens ok): ").strip()
+        interval = input(
+            "Interval [dim](every15m / every2h / daily@09:00)[/dim]: "
+        ).strip()
+        workspace = input(
+            f"Workspace [dim](Enter for {config.WORKSPACE_ROOT})[/dim]: "
+        ).strip() or config.WORKSPACE_ROOT
+        goal = input("Goal (the task to run): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    ok, msg = sched.add_schedule(name, goal, interval, workspace)
     (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
 
 
