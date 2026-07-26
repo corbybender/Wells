@@ -406,6 +406,13 @@ TOOL CALLING — MANDATORY:
         from wells import skills as _skills
 
         out = _skills.inject_into_prompt(out, workspace)
+
+        from wells import background as _background
+
+        if _background.enabled():
+            from wells import personas as _personas
+
+            out = _personas.inject_into_prompt(out, workspace)
     return out
 
 

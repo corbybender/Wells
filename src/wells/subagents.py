@@ -30,10 +30,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from wells import executor, tools
 from wells.executor import ExecutorResult
 from wells.tools import ToolContext
+
+if TYPE_CHECKING:
+    from wells import personas
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +55,9 @@ class SubagentSpec:
     toolset: str = "readonly"  # readonly | exec | full
     max_steps: int | None = None  # None -> config.SUBAGENT_MAX_STEPS (0 = no limit)
     temperature: float = 0.1
+    # A custom persona's system prompt (wells.personas), prepended as this
+    # subagent's system_prefix. "" for the default research/fix builders below.
+    system_prefix: str = ""
 
 
 @dataclass
@@ -127,6 +134,7 @@ def run_subagent(
             max_steps=cap,
             profile=profile,
             temperature=spec.temperature,
+            system_prefix=spec.system_prefix,
             step_label=f"subagent-{spec.name}",
             quiet=quiet,
         )
@@ -211,4 +219,33 @@ def fix_subagent(name: str, change: str, *, max_steps: int | None = None) -> Sub
     )
     return SubagentSpec(
         name=name, role="fix", task=task, toolset="full", max_steps=max_steps
+    )
+
+
+def persona_subagent(
+    name: str,
+    persona: "personas.Persona",
+    task: str,
+    role: str,
+    *,
+    max_steps: int | None = None,
+) -> SubagentSpec:
+    """A subagent driven by a user-authored :class:`wells.personas.Persona`.
+
+    ``persona.system_prompt`` becomes this subagent's system_prefix — its
+    identity/expertise/voice — while ``task`` is used as-is (no generic
+    research/fix wrapper text, since the persona's own prompt already
+    establishes behavior). ``role`` still governs mutation/isolation
+    mechanics: ``research`` is always forced read-only regardless of what
+    the persona's ``tools:`` front-matter requests — the role is the safety
+    ceiling, the persona is the voice/expertise within it.
+    """
+    toolset = "readonly" if role == "research" else (persona.toolset or "full")
+    return SubagentSpec(
+        name=name,
+        role=role,
+        task=task,
+        toolset=toolset,
+        max_steps=max_steps,
+        system_prefix=persona.system_prompt,
     )

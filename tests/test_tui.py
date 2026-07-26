@@ -220,3 +220,96 @@ def test_settings_screen_opens_picker_for_choice_settings(monkeypatch):
                 assert screen.query_one("#settings-input").display is False
 
     _run(body)
+
+
+# ---------------------------------------------------------------------------
+# AgentsScreen / AgentEditScreen — the /agents subagent-persona modal manager
+# ---------------------------------------------------------------------------
+
+
+def test_agents_screen_shows_empty_state(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells.tui import AgentsScreen, WellsApp
+
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(tmp_path))
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = AgentsScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                lst = screen.query_one("#agents-list")
+                assert lst.option_count == 1
+                assert "add one" in str(lst.get_option_at_index(0).prompt)
+
+    _run(body)
+
+
+def test_agents_screen_add_creates_persona_on_disk(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells import personas as pz
+    from wells.tui import AgentsScreen, WellsApp
+
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(tmp_path))
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = AgentsScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                # Simulate AgentEditScreen dismissing with a filled-in form,
+                # the same shape action_add's _done callback expects.
+                screen.action_add()
+                await pilot.pause()
+
+                edit_screen = app.screen
+                from wells.tui import AgentEditScreen
+                assert isinstance(edit_screen, AgentEditScreen)
+                edit_screen.dismiss({
+                    "name": "reviewer",
+                    "description": "Reviews things.",
+                    "tools": "readonly",
+                    "system_prompt": "You are a reviewer.",
+                })
+                await pilot.pause()
+
+                idx = pz.personas_for(str(tmp_path))
+                p = idx.by_name("reviewer")
+                assert p is not None
+                assert p.toolset == "readonly"
+                assert p.system_prompt == "You are a reviewer."
+
+                lst = screen.query_one("#agents-list")
+                labels = [str(lst.get_option_at_index(i).prompt) for i in range(lst.option_count)]
+                assert any("reviewer" in lbl for lbl in labels)
+
+    _run(body)
+
+
+def test_agent_edit_screen_rejects_bad_toolset():
+    from wells.tui import AgentEditScreen, WellsApp
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = AgentEditScreen(existing=None)
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.query_one("#agent-name").value = "ok-name"
+                screen.query_one("#agent-tools").value = "bogus"
+                screen.action_save()
+                await pilot.pause()
+
+                # Bad toolset must block the save -- the screen stays open
+                # (not dismissed) rather than silently accepting garbage.
+                assert app.screen is screen
+
+    _run(body)

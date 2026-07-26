@@ -396,6 +396,7 @@ def _bg_start(
     task: str,
     role: str = "research",
     max_steps: int | None = None,
+    persona: str = "",
 ) -> ToolResult:
     """Start a background sub-agent; returns its handle id immediately."""
     if ctx.subagent:
@@ -414,6 +415,27 @@ def _bg_start(
 
     from wells import subagents
     from wells import worktree as _wt
+
+    persona_obj = None
+    if persona.strip():
+        from wells import personas as _personas
+
+        persona_obj = _personas.personas_for(ctx.workspace).by_name(persona.strip())
+        if persona_obj is None:
+            avail = ", ".join(p.name for p in _personas.personas_for(ctx.workspace).personas)
+            return ToolResult(
+                False, "",
+                f"Unknown persona {persona!r}."
+                + (f" Available: {avail}" if avail else " No personas are configured."),
+            )
+
+    def _spec(spec_name: str) -> "subagents.SubagentSpec":
+        """Build this call's SubagentSpec — persona-driven if one was given."""
+        if persona_obj is not None:
+            return subagents.persona_subagent(spec_name, persona_obj, task, role, max_steps=max_steps)
+        if role == "research":
+            return subagents.research_subagent(spec_name, task, max_steps=max_steps)
+        return subagents.fix_subagent(spec_name, task, max_steps=max_steps)
 
     name = f"{role}-{int(time.time() * 1000) % 100000}"
 
@@ -450,7 +472,7 @@ def _bg_start(
             )
         parent_workspace = ctx.workspace
         run_ctx = _replace(ctx, workspace=worktree_handle.worktree_path)
-        spec = subagents.fix_subagent(name, task, max_steps=max_steps)
+        spec = _spec(name)
         try:
             bgid = REGISTRY.start(
                 spec,
@@ -465,23 +487,22 @@ def _bg_start(
             except Exception:
                 pass
             raise
+        persona_note = f" as persona '{persona_obj.name}'" if persona_obj is not None else ""
         return ToolResult(
             True,
-            f"Started background worktree-isolated agent {bgid} ({name}) in "
+            f"Started background worktree-isolated agent {bgid} ({name}){persona_note} in "
             f"branch {worktree_handle.branch}. It runs concurrently and writes "
             f"to its own checkout — keep working, then bg_collect to merge "
             f"(or receive the diff on conflict).",
         )
 
-    if role == "fix":
-        spec = subagents.fix_subagent(name, task, max_steps=max_steps)
-    else:
-        spec = subagents.research_subagent(name, task, max_steps=max_steps)
+    spec = _spec(name)
     bgid = REGISTRY.start(spec, ctx)
     desc = "read-only research" if role == "research" else "scoped edit"
+    persona_note = f" as persona '{persona_obj.name}'" if persona_obj is not None else ""
     return ToolResult(
         True,
-        f"Started background {desc} agent {bgid} ({name}). "
+        f"Started background {desc} agent {bgid} ({name}){persona_note}. "
         f"It runs concurrently — keep working, then bg_status / bg_collect.",
     )
 
@@ -561,7 +582,11 @@ BG_START_TOOL = ToolDef(
         "disjoint files or only one agent writes at a time); role=worktree runs "
         "the agent in its own isolated git worktree and merges its commit back "
         "into the parent on collect (use when multiple write-fan-outs target "
-        "overlapping areas — requires git). You can have several running at once."
+        "overlapping areas — requires git). You can have several running at once. "
+        "Pass persona=<name> (see the AVAILABLE SUBAGENT PERSONAS index, if any "
+        "are configured) to give this subagent a specialized identity/expertise "
+        "instead of the generic research/fix behavior; role still governs "
+        "mutation/isolation mechanics regardless of the chosen persona."
     ),
     input_schema={
         "type": "object",
@@ -573,6 +598,11 @@ BG_START_TOOL = ToolDef(
                 "default": "research",
             },
             "max_steps": {"type": "integer", "default": 0},
+            "persona": {
+                "type": "string",
+                "description": "Name of a configured persona (see the persona index) for a specialized subagent identity. Omit for default research/fix behavior.",
+                "default": "",
+            },
         },
         "required": ["task"],
     },

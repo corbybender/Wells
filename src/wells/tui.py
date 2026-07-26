@@ -1478,6 +1478,250 @@ class SkillsScreen(ModalScreen[None]):
 
 
 # ---------------------------------------------------------------------------
+# Subagent personas manager (/agents) — same interaction model as /skills.
+# ---------------------------------------------------------------------------
+
+class AgentEditScreen(ModalScreen["dict | None"]):
+    """Form to create or edit a persona: name, description, tools, system prompt.
+
+    When ``existing`` is provided, the fields are pre-filled for editing
+    (and the name field is read-only). Otherwise it's a new-persona form.
+    """
+
+    CSS = """
+    AgentEditScreen { align: center middle; }
+    #agent-edit-panel {
+        width: 90; max-width: 96%; height: auto; max-height: 85%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #agent-edit-panel Static { height: auto; }
+    #agent-edit-panel Input { margin-bottom: 1; }
+    #agent-prompt { height: 12; margin-bottom: 1; }
+    #agent-edit-error { height: auto; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("ctrl+s", "save", "Save", priority=True),
+    ]
+
+    def __init__(self, existing: dict | None = None) -> None:
+        self._existing = existing  # {"name", "description", "tools", "system_prompt"} or None
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        is_edit = self._existing is not None
+        title = "[bold]Edit persona[/bold]" if is_edit else "[bold]Add persona[/bold]"
+        with Vertical(id="agent-edit-panel"):
+            yield Static(
+                f"{title}  [dim](Ctrl+S saves · Esc cancels)[/dim]",
+                markup=True,
+            )
+            yield Static("Name [dim](lowercase, digits, hyphens)[/dim]", markup=True)
+            name_val = self._existing["name"] if self._existing else ""
+            name_input = Input(id="agent-name", value=name_val)
+            if is_edit:
+                name_input.disabled = True
+            yield name_input
+            yield Static("Description [dim](one line shown to the parent agent)[/dim]", markup=True)
+            desc_val = self._existing.get("description", "") if self._existing else ""
+            yield Input(id="agent-desc", value=desc_val)
+            yield Static("Tools [dim](readonly / exec / full — default full)[/dim]", markup=True)
+            tools_val = self._existing.get("tools", "full") if self._existing else "full"
+            yield Input(id="agent-tools", value=tools_val, placeholder="full")
+            yield Static("System prompt [dim](this persona's identity/expertise/constraints)[/dim]", markup=True)
+            prompt_val = self._existing.get("system_prompt", "") if self._existing else ""
+            yield TextArea(prompt_val, id="agent-prompt", language="markdown")
+            yield Static("", id="agent-edit-error", markup=True)
+
+    def on_mount(self) -> None:
+        if self._existing:
+            self.query_one("#agent-desc", Input).focus()
+        else:
+            self.query_one("#agent-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        order = ["agent-name", "agent-desc", "agent-tools"]
+        cur = event.input.id or ""
+        if cur in order and cur != order[-1]:
+            self.query_one(f"#{order[order.index(cur) + 1]}", Input).focus()
+        elif cur == "agent-tools":
+            self.query_one("#agent-prompt", TextArea).focus()
+
+    def action_save(self) -> None:
+        from wells import personas as pz
+
+        name = self.query_one("#agent-name", Input).value.strip()
+        desc = self.query_one("#agent-desc", Input).value.strip()
+        tools = self.query_one("#agent-tools", Input).value.strip() or "full"
+        prompt = self.query_one("#agent-prompt", TextArea).text
+        error_widget = self.query_one("#agent-edit-error", Static)
+        if self._existing is None:
+            err = pz.validate_name(name)
+            if err:
+                error_widget.update(f"[red]{err}[/red]")
+                return
+        err = pz.validate_toolset(tools)
+        if err:
+            error_widget.update(f"[red]{err}[/red]")
+            return
+        self.dismiss({
+            "name": name.lower(), "description": desc,
+            "tools": tools.lower(), "system_prompt": prompt,
+        })
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class AgentsScreen(ModalScreen[None]):
+    """Modal subagent-persona manager: list, view, add, edit, remove."""
+
+    CSS = """
+    AgentsScreen { align: center middle; }
+    #agents-panel {
+        width: 100; max-width: 96%; height: 75%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #agents-title { height: 2; text-style: bold; }
+    #agents-list { height: 1fr; border: none; }
+    #agents-status { height: 2; color: $text-muted; }
+    #agents-view { display: none; height: 1fr; border: solid $accent; padding: 0 1; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", priority=True),
+        Binding("a", "add", "Add"),
+        Binding("e", "edit", "Edit"),
+        Binding("d", "remove", "Remove"),
+        Binding("enter", "view", "View"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="agents-panel"):
+            yield Static(
+                "Subagent Personas  [dim](Enter: view · a: add · e: edit · "
+                "d: remove · Esc: close)[/dim]",
+                id="agents-title", markup=True,
+            )
+            yield OptionList(id="agents-list")
+            yield Static("", id="agents-view", markup=True, disabled=True)
+            yield Static("", id="agents-status", markup=True)
+
+    def on_mount(self) -> None:
+        self._populate()
+        self.query_one("#agents-list", OptionList).focus()
+
+    # -- rendering ---------------------------------------------------------
+
+    def _status(self, text: str) -> None:
+        self.query_one("#agents-status", Static).update(text)
+
+    def _populate(self) -> None:
+        from wells import personas as pz
+
+        lst = self.query_one("#agents-list", OptionList)
+        highlighted = lst.highlighted
+        lst.clear_options()
+        idx = pz.personas_for(config.WORKSPACE_ROOT)
+        if idx.is_empty():
+            lst.add_option(Option(
+                "[dim]No personas yet — press a to add one.[/dim]",
+                id="_hdr_empty", disabled=True,
+            ))
+        else:
+            for p in idx.personas:
+                desc = p.description or "(no description)"
+                lst.add_option(Option(f"{p.name}  [dim]({p.toolset}) — {desc}[/dim]", id=p.name))
+        if highlighted is not None and lst.option_count:
+            lst.highlighted = min(highlighted, lst.option_count - 1)
+
+    def _selected(self) -> str | None:
+        lst = self.query_one("#agents-list", OptionList)
+        if lst.highlighted is None:
+            return None
+        opt = lst.get_option_at_index(lst.highlighted)
+        name = opt.id or ""
+        return None if name.startswith("_hdr_") else name
+
+    # -- actions -----------------------------------------------------------
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def action_view(self) -> None:
+        name = self._selected()
+        if not name:
+            return
+        from wells import personas as pz
+        ok, raw = pz.read_persona_raw(name, config.WORKSPACE_ROOT)
+        if not ok:
+            self._status(f"[red]{raw}[/red]")
+            return
+        view = self.query_one("#agents-view", Static)
+        view.update(f"[bold cyan]── {name} ──[/bold cyan]\n{raw}")
+        path = pz.persona_file_path(name, config.WORKSPACE_ROOT)
+        self._status(f"[dim]{path}[/dim]" if path else "")
+
+    def action_add(self) -> None:
+        def _done(result: dict | None) -> None:
+            if not result:
+                return
+            from wells import personas as pz
+            ok, msg = pz.create_persona(
+                result["name"], result["description"], result["system_prompt"],
+                result["tools"], config.WORKSPACE_ROOT,
+            )
+            self._populate()
+            (self._status(f"[green]{msg}[/green]")
+             if ok else self._status(f"[red]{msg}[/red]"))
+
+        self.app.push_screen(AgentEditScreen(existing=None), _done)
+
+    def action_edit(self) -> None:
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select a persona to edit.[/dim]")
+            return
+        from wells import personas as pz
+        persona = pz.personas_for(config.WORKSPACE_ROOT).by_name(name)
+        if persona is None:
+            self._status(f"[red]Unknown persona: {name}[/red]")
+            return
+        existing = {
+            "name": persona.name, "description": persona.description,
+            "tools": persona.toolset, "system_prompt": persona.system_prompt,
+        }
+
+        def _done(result: dict | None) -> None:
+            if not result:
+                return
+            ok, msg = pz.update_persona(
+                result["name"], config.WORKSPACE_ROOT,
+                description=result["description"] or None,
+                toolset=result["tools"] or None,
+                system_prompt=result["system_prompt"],
+            )
+            self._populate()
+            (self._status(f"[green]{msg}[/green]")
+             if ok else self._status(f"[red]{msg}[/red]"))
+
+        self.app.push_screen(AgentEditScreen(existing=existing), _done)
+
+    def action_remove(self) -> None:
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select a persona to remove.[/dim]")
+            return
+        from wells import personas as pz
+        ok, msg = pz.delete_persona(name, config.WORKSPACE_ROOT)
+        self._populate()
+        (self._status(f"[green]{msg}[/green]")
+         if ok else self._status(f"[red]{msg}[/red]"))
+
+
+# ---------------------------------------------------------------------------
 # I/O capture helpers
 # ---------------------------------------------------------------------------
 
@@ -2101,6 +2345,25 @@ class WellsApp(App[None]):
                 else:
                     self.write_log(
                         "[dim]Usage: /skills edit <name> (or open the modal with bare /skills)[/dim]"
+                    )
+                return
+            # Non-blocking subcommands (list, show, remove) delegate to the CLI
+            # handler via the synchronous fallback below.
+
+        if cmd == "/agents":
+            sub = args[0].lower() if args else ""
+            if not sub:
+                # No subcommand: open the visual manager (like /config, /mcp).
+                self.push_screen(AgentsScreen())
+                return
+            if sub in ("add", "edit", "update") and not (len(args) >= 2):
+                # Bare /agents add or /agents edit with no name → use the modal
+                # (the CLI handler calls input() which deadlocks under Textual).
+                if sub == "add":
+                    self.push_screen(AgentEditScreen(existing=None))
+                else:
+                    self.write_log(
+                        "[dim]Usage: /agents edit <name> (or open the modal with bare /agents)[/dim]"
                     )
                 return
             # Non-blocking subcommands (list, show, remove) delegate to the CLI

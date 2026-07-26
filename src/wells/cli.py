@@ -148,6 +148,13 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
         "Skills are discoverable know-how loaded on demand by the agent.",
     ),
     (
+        "/agents",
+        "Manage subagent personas (PERSONA.md)",
+        "Usage: /agents [list|show <name>|add <name>|edit <name>|remove <name>]. "
+        "Personas are custom subagent identities (system prompt + toolset) "
+        "invoked via bg_start(persona=<name>).",
+    ),
+    (
         "/btw",
         "Side chat while a task runs",
         "Usage: /btw <message>. Independent conversation that works even mid-"
@@ -290,6 +297,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_rules(arg)
     elif cmd == "/skills":
         _handle_skills(arg)
+    elif cmd == "/agents":
+        _handle_agents(arg)
     elif cmd == "/log":
         _handle_log(arg)
     elif cmd == "/image":
@@ -1961,6 +1970,176 @@ def _skills_edit_interactive(name: str, ws: str) -> None:
     desc_kwarg = new_desc if new_desc else None
     ok, msg = sk.update_skill(
         name, ws, description=desc_kwarg, body=new_body
+    )
+    (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+
+
+def _handle_agents(arg: str) -> None:
+    """Handle /agents [list|show <name>|add <name>|edit <name>|remove <name>]."""
+    from rich.panel import Panel
+    from rich.table import Table
+    from wells import personas as pz
+
+    ws = config.WORKSPACE_ROOT
+    parts = arg.strip().split(None, 1)
+    sub = parts[0].lower() if parts else "list"
+    name_arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "list":
+        idx = pz.personas_for(ws)
+        if idx.is_empty():
+            console.print(
+                "[dim]No subagent personas configured. Create one with "
+                "[bold]/agents add <name>[/bold], or add a [/dim]"
+                "[dim]agents/<name>/PERSONA.md file. Use with "
+                "bg_start(persona=<name>, ...).[/dim]"
+            )
+            return
+        table = Table(show_header=True, header_style="bold cyan", expand=False)
+        table.add_column("Name", no_wrap=True)
+        table.add_column("Tools", no_wrap=True)
+        table.add_column("Description")
+        for p in idx.personas:
+            table.add_row(p.name, p.toolset, p.description or "[dim](no description)[/dim]")
+        console.print(table)
+        console.print(
+            f"[dim]{len(idx.personas)} persona(s). Roots: "
+            + ", ".join(str(r) for r in idx.roots)
+            + "[/dim]"
+        )
+        return
+
+    if sub == "show":
+        if not name_arg:
+            console.print("[red]Usage: /agents show <name>[/red]")
+            return
+        ok, raw = pz.read_persona_raw(name_arg, ws)
+        if not ok:
+            console.print(f"[red]{raw}[/red]")
+            return
+        console.print(Panel(raw, title=f"[bold]Persona: {name_arg}[/bold]", border_style="cyan"))
+        return
+
+    if sub == "add":
+        _agents_add_interactive(name_arg, ws)
+        return
+
+    if sub in ("edit", "update"):
+        if not name_arg:
+            console.print("[red]Usage: /agents edit <name>[/red]")
+            return
+        _agents_edit_interactive(name_arg, ws)
+        return
+
+    if sub in ("remove", "rm", "delete"):
+        if not name_arg:
+            console.print("[red]Usage: /agents remove <name>[/red]")
+            return
+        ok, msg = pz.delete_persona(name_arg, ws)
+        (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+        return
+
+    console.print(
+        "[red]Usage: /agents [list|show <name>|add <name>|edit <name>|remove <name>][/red]"
+    )
+
+
+def _agents_add_interactive(name_arg: str, ws: str) -> None:
+    """Interactive persona creation (plain-CLI path; TUI uses the modal form)."""
+    from wells import personas as pz
+
+    name = name_arg
+    if not name:
+        try:
+            name = input("Persona name (lowercase, hyphens ok): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+    err = pz.validate_name(name)
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return
+    try:
+        description = input("Description (one line): ").strip()
+        tools_in = input("Tools [readonly/exec/full] (default full): ").strip() or "full"
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    err = pz.validate_toolset(tools_in)
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return
+    console.print(
+        "[dim]Enter the persona's system prompt (its identity/expertise/"
+        "constraints). Type a line with just '.' on its own to finish:[/dim]"
+    )
+    body_lines: list[str] = []
+    try:
+        while True:
+            line = input()
+            if line.strip() == ".":
+                break
+            body_lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        pass
+    system_prompt = "\n".join(body_lines).strip()
+    ok, msg = pz.create_persona(name, description, system_prompt, tools_in, ws)
+    (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+
+
+def _agents_edit_interactive(name: str, ws: str) -> None:
+    """Interactive persona editing (plain-CLI path; TUI uses the modal form)."""
+    from wells import personas as pz
+
+    ok, raw = pz.read_persona_raw(name, ws)
+    if not ok:
+        console.print(f"[red]{raw}[/red]")
+        return
+    persona = pz.personas_for(ws).by_name(name)
+    console.print(
+        f"[dim]Current description:[/dim] {persona.description if persona else '?'}"
+    )
+    try:
+        new_desc = input(
+            "New description [dim](Enter to keep)[/dim]: "
+        ).strip()
+        new_tools = input(
+            f"New tools [readonly/exec/full] [dim](Enter to keep '{persona.toolset if persona else 'full'}')[/dim]: "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    if new_tools:
+        err = pz.validate_toolset(new_tools)
+        if err:
+            console.print(f"[red]{err}[/red]")
+            return
+    console.print(
+        "[dim]Current system prompt (first 5 lines):[/dim]\n"
+        + "\n".join((persona.system_prompt if persona else "").splitlines()[:5])
+    )
+    console.print(
+        "[dim]Enter the new system prompt. Type a line with just '.' on its own to "
+        "finish, or type just '.' immediately to keep the existing one:[/dim]"
+    )
+    body_lines: list[str] = []
+    new_prompt: str | None = None  # None = keep existing
+    try:
+        first = input()
+        if first.strip() != ".":
+            body_lines.append(first)
+            while True:
+                line = input()
+                if line.strip() == ".":
+                    break
+                body_lines.append(line)
+            new_prompt = "\n".join(body_lines).strip()
+    except (EOFError, KeyboardInterrupt):
+        pass
+    desc_kwarg = new_desc if new_desc else None
+    tools_kwarg = new_tools if new_tools else None
+    ok, msg = pz.update_persona(
+        name, ws, description=desc_kwarg, toolset=tools_kwarg, system_prompt=new_prompt
     )
     (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
 
