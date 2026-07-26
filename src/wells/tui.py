@@ -1961,6 +1961,80 @@ class MemoryScreen(ModalScreen[None]):
 
 
 # ---------------------------------------------------------------------------
+# Rule add form (/rules add) — the permission-allowlist entry point. list/
+# reload/discharge/remove are all args-driven and need no modal; only "add"
+# prompts for several fields, so only it gets one (mirrors /agents, /memory).
+# ---------------------------------------------------------------------------
+
+class RuleAddScreen(ModalScreen["str | None"]):
+    """Form to add a new rule to the workspace's .wells/rules.yaml."""
+
+    CSS = """
+    RuleAddScreen { align: center middle; }
+    #rule-add-panel {
+        width: 90; max-width: 96%; height: auto; max-height: 85%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #rule-add-panel Static { height: auto; }
+    #rule-add-panel Input { margin-bottom: 1; }
+    #rule-add-error { height: auto; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("ctrl+s", "save", "Save", priority=True),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rule-add-panel"):
+            yield Static(
+                "[bold]Add rule[/bold]  [dim](Ctrl+S saves · Esc cancels — "
+                "writes to .wells/rules.yaml)[/dim]",
+                markup=True,
+            )
+            yield Static("Rule id [dim](lowercase, digits, hyphens)[/dim]", markup=True)
+            yield Input(id="rule-id")
+            yield Static("Severity [dim](block / confirm / warn / allow)[/dim]", markup=True)
+            yield Input(id="rule-severity", placeholder="warn")
+            yield Static("Tool [dim](blank = any tool, e.g. run_command)[/dim]", markup=True)
+            yield Input(id="rule-tool")
+            yield Static("Pattern [dim](regex matched against the call's args)[/dim]", markup=True)
+            yield Input(id="rule-pattern")
+            yield Static("Message [dim](shown to the model when this fires)[/dim]", markup=True)
+            yield Input(id="rule-message")
+            yield Static("", id="rule-add-error", markup=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#rule-id", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        order = ["rule-id", "rule-severity", "rule-tool", "rule-pattern", "rule-message"]
+        cur = event.input.id or ""
+        if cur in order and cur != order[-1]:
+            self.query_one(f"#{order[order.index(cur) + 1]}", Input).focus()
+        elif cur == "rule-message":
+            self.action_save()
+
+    def action_save(self) -> None:
+        from wells import rules as rules_mod
+
+        rule_id = self.query_one("#rule-id", Input).value.strip()
+        severity = self.query_one("#rule-severity", Input).value.strip().lower() or "warn"
+        tool = self.query_one("#rule-tool", Input).value.strip()
+        pattern = self.query_one("#rule-pattern", Input).value.strip()
+        message = self.query_one("#rule-message", Input).value.strip()
+        ok, msg = rules_mod.add_rule(config.WORKSPACE_ROOT, rule_id, severity, pattern, message, tool)
+        if not ok:
+            self.query_one("#rule-add-error", Static).update(f"[red]{msg}[/red]")
+            return
+        self.dismiss(msg)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ---------------------------------------------------------------------------
 # I/O capture helpers
 # ---------------------------------------------------------------------------
 
@@ -2607,6 +2681,18 @@ class WellsApp(App[None]):
                 return
             # Non-blocking subcommands (list, show, remove) delegate to the CLI
             # handler via the synchronous fallback below.
+
+        if cmd == "/rules" and args and args[0].lower() == "add":
+            # Bare /rules add (or with a partial id) → use the modal (the
+            # CLI handler calls input() for severity/tool/pattern/message,
+            # which deadlocks under Textual). list/reload/discharge/remove
+            # are all args-driven already and fall through to the CLI path.
+            def _rule_added(msg: str | None) -> None:
+                if msg:
+                    self.write_log(f"[green]{msg}[/green]")
+
+            self.push_screen(RuleAddScreen(), _rule_added)
+            return
 
         if cmd == "/memory":
             sub = args[0].lower() if args else ""

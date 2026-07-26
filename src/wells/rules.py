@@ -6,10 +6,15 @@ three enforcement tiers, strongest first:
 
 1. **Tool-boundary enforcement** (this module): rules from
    ``.wells/rules.yaml`` are checked against every tool call *before* it
-   executes. ``block`` refuses, ``confirm`` routes through the approval gate,
-   ``warn`` injects the rule verbatim into the model's next observation, and
-   ``liability`` registers a stateful obligation (e.g. "rented GPU must be
-   terminated") that the run **cannot silently close** while open.
+   executes. ``block`` refuses, ``confirm`` routes through the approval gate
+   (regardless of the current safety mode — even ``auto``), ``allow``
+   pre-clears a matching call so ``approve`` mode's normal per-action y/N is
+   *skipped* for it (this is the permission-allowlist knob: "always allow
+   `git status`, always ask before `rm`" instead of a blanket prompt for
+   every mutating call), ``warn`` injects the rule verbatim into the model's
+   next observation, and ``liability`` registers a stateful obligation (e.g.
+   "rented GPU must be terminated") that the run **cannot silently close**
+   while open.
 2. **Moment-of-relevance injection**: when a rule fires, its text lands in the
    tool observation the model reads next — one rule, at the exact moment it
    applies, in the freshest context position.
@@ -91,6 +96,13 @@ rules:
       RULE R8: This looks like a log-string monitor. Monitors must check
       PROCESS LIVENESS (kill -0 / pgrep) — tracebacks, OOM kills, and silent
       deaths never print your sentinel string.
+
+  - id: allow-safe-git-reads
+    severity: allow
+    trigger: { tool: run_command, pattern: '^\s*git\s+(status|diff|log|show|branch)\b' }
+    message: >-
+      Read-only git inspection commands are pre-approved -- no confirmation
+      needed even in approve mode.
 """
 
 
@@ -129,6 +141,10 @@ class Decision:
 
     allow: bool = True
     confirm: bool = False      # route through the approval gate
+    # An "allow"-severity rule matched: approve mode's blanket per-action
+    # y/N prompt should be skipped for this specific call (auto/dryrun/plan/
+    # sandbox modes are unaffected either way — there's no prompt to skip).
+    auto_approve: bool = False
     rule: Rule | None = None
     notes: list[str] = field(default_factory=list)  # inject into obs_text
     # Liability transitions matched by this call — applied only AFTER the
@@ -311,6 +327,12 @@ class RulesEngine:
                 d.confirm = True
                 d.rule = d.rule or r
                 d.notes.append(f"[RULES {r.id}: {r.message}]")
+            elif r.severity == "allow":
+                # Pre-clears approve mode's blanket per-action y/N for this
+                # call. Quiet by design (no model-facing note) -- the point
+                # is to reduce prompt noise, not add more of it.
+                d.auto_approve = True
+                d.rule = d.rule or r
             else:  # warn
                 d.notes.append(f"[RULES {r.id}: {r.message}]")
         return d
@@ -417,3 +439,108 @@ def reload_all() -> None:
     with _LOCK:
         for eng in _ENGINES.values():
             eng.load()
+
+
+# ---------------------------------------------------------------------------
+# /rules add / remove — simple pattern-triggered rules only (block/confirm/
+# warn/allow). Liability rules (open/close regex pairs) are more involved;
+# add those by hand to .wells/rules.yaml.
+# ---------------------------------------------------------------------------
+
+_VALID_SEVERITIES = ("block", "confirm", "warn", "allow")
+_RULE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def add_rule(
+    workspace: str,
+    rule_id: str,
+    severity: str,
+    pattern: str,
+    message: str,
+    tool: str = "",
+) -> tuple[bool, str]:
+    """Append a new rule to the workspace's ``.wells/rules.yaml``.
+
+    Text-appended, not a full YAML parse+rewrite — an existing hand-edited
+    rules.yaml keeps every comment and blank line exactly as written. Only
+    safe because appended rules always land as new entries at the end of
+    the ``rules:`` list; nothing existing is touched.
+    """
+    rule_id = (rule_id or "").strip().lower()
+    severity = (severity or "").strip().lower()
+    if not _RULE_ID_RE.match(rule_id):
+        return False, "Rule id must be lowercase letters, digits, and hyphens (e.g. 'my-rule')."
+    if severity not in _VALID_SEVERITIES:
+        return False, f"severity must be one of: {', '.join(_VALID_SEVERITIES)}"
+    if not pattern.strip():
+        return False, "pattern is required (a regex matched against the tool call's args)."
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        return False, f"Invalid regex pattern: {e}"
+    if not message.strip():
+        return False, "message is required (shown to the model when this rule fires)."
+
+    if rule_id in {r.id for r in engine_for(workspace).rules}:
+        return False, f"A rule with id {rule_id!r} already exists."
+
+    import yaml
+
+    entry: dict = {"id": rule_id, "severity": severity}
+    trigger: dict = {"pattern": pattern}
+    if tool.strip():
+        trigger["tool"] = tool.strip()
+    entry["trigger"] = trigger
+    entry["message"] = message.strip()
+
+    dumped = yaml.safe_dump(entry, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    lines = dumped.rstrip("\n").splitlines()
+    block = "\n".join(
+        ("  - " + lines[0]) if i == 0 else ("    " + ln) for i, ln in enumerate(lines)
+    )
+
+    path = Path(workspace) / ".wells" / "rules.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or not path.read_text(encoding="utf-8").strip():
+        path.write_text("rules:\n" + block + "\n", encoding="utf-8")
+    else:
+        existing = path.read_text(encoding="utf-8")
+        sep = "" if existing.endswith("\n") else "\n"
+        path.write_text(existing + sep + block + "\n", encoding="utf-8")
+    reload_all()
+    return True, f"Added rule {rule_id!r} to {path}"
+
+
+def remove_rule(workspace: str, rule_id: str) -> tuple[bool, str]:
+    """Remove a rule by id from the workspace's ``.wells/rules.yaml``.
+
+    Unlike :func:`add_rule`'s text-append, this does a full parse+rewrite —
+    hand-written comments in that file won't survive. Only removes from the
+    workspace file; a rule inherited from the global ``~/.wells/rules.yaml``
+    isn't touched (edit that file directly).
+    """
+    import yaml
+
+    rule_id = (rule_id or "").strip().lower()
+    path = Path(workspace) / ".wells" / "rules.yaml"
+    if not path.exists():
+        return False, f"No {path} — nothing to remove."
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        return False, f"Could not parse {path}: {e}"
+    items = raw.get("rules") or []
+    kept = [r for r in items if str(r.get("id", "")) != rule_id]
+    if len(kept) == len(items):
+        return (
+            False,
+            f"No rule {rule_id!r} in {path} — it may be inherited from the "
+            f"global ~/.wells/rules.yaml (edit that file directly to remove it).",
+        )
+    raw["rules"] = kept
+    path.write_text(
+        yaml.safe_dump(raw, sort_keys=False, default_flow_style=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    reload_all()
+    return True, f"Removed rule {rule_id!r} from {path}"

@@ -399,3 +399,75 @@ def test_memory_edit_screen_rejects_bad_name_on_create():
                 assert app.screen is screen
 
     _run(body)
+
+
+# ---------------------------------------------------------------------------
+# RuleAddScreen — the /rules add permission-allowlist form
+# ---------------------------------------------------------------------------
+
+
+def test_rule_add_screen_creates_rule_on_disk(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells import rules as rules_mod
+    from wells.tui import RuleAddScreen, WellsApp
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(ws))
+    monkeypatch.setattr(rules_mod, "_GLOBAL_RULES", tmp_path / "no-global.yaml")
+    rules_mod._ENGINES.clear()
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = RuleAddScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.query_one("#rule-id").value = "allow-ls"
+                screen.query_one("#rule-severity").value = "allow"
+                screen.query_one("#rule-tool").value = "run_command"
+                screen.query_one("#rule-pattern").value = r"^ls\b"
+                screen.query_one("#rule-message").value = "listing is safe"
+                screen.action_save()
+                await pilot.pause()
+
+                eng = rules_mod.engine_for(str(ws))
+                assert any(r.id == "allow-ls" for r in eng.rules)
+                d = eng.check("run_command", {"command": "ls -la"})
+                assert d.auto_approve
+
+    _run(body)
+
+
+def test_rule_add_screen_rejects_bad_severity(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells import rules as rules_mod
+    from wells.tui import RuleAddScreen, WellsApp
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(ws))
+    monkeypatch.setattr(rules_mod, "_GLOBAL_RULES", tmp_path / "no-global.yaml")
+    rules_mod._ENGINES.clear()
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = RuleAddScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.query_one("#rule-id").value = "x"
+                screen.query_one("#rule-severity").value = "bogus"
+                screen.query_one("#rule-pattern").value = "y"
+                screen.query_one("#rule-message").value = "z"
+                screen.action_save()
+                await pilot.pause()
+
+                # Bad severity must block the save -- the screen stays open.
+                assert app.screen is screen
+
+    _run(body)

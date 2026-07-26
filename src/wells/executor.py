@@ -2274,7 +2274,16 @@ def _run_executor_impl(
                         "",
                     )
             if result is None:
-                result = tools.dispatch(name, args, ctx)
+                call_ctx = ctx
+                if decision is not None and decision.auto_approve and ctx.safety == "approve":
+                    # An "allow"-severity rule matched: skip approve mode's
+                    # blanket per-action y/N for this call only (auto/
+                    # dryrun/plan/sandbox are untouched — there's no prompt
+                    # to skip in those modes either way).
+                    from dataclasses import replace as _replace_ctx
+
+                    call_ctx = _replace_ctx(ctx, safety="auto")
+                result = tools.dispatch(name, args, call_ctx)
             if name in _readonly_names:
                 if not _dedupe_hit and result.ok and not result.simulated:
                     _readonly_seen[call_key] = (rounds, steps)

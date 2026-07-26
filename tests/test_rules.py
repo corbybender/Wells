@@ -32,6 +32,10 @@ rules:
     severity: warn
     trigger: { tool: run_command, pattern: '\bsudo\b' }
     message: Avoid sudo in automation.
+  - id: allow-git-status
+    severity: allow
+    trigger: { tool: run_command, pattern: '^git status' }
+    message: pre-approved
 """
 
 
@@ -52,7 +56,8 @@ def engine(tmp_path: Path):
 
 def test_rules_load_from_workspace(engine: RulesEngine):
     assert {r.id for r in engine.rules} == {
-        "gpu-teardown", "block-curl-pipe", "confirm-force-push", "warn-sudo"
+        "gpu-teardown", "block-curl-pipe", "confirm-force-push", "warn-sudo",
+        "allow-git-status",
     }
 
 
@@ -95,6 +100,119 @@ def test_liability_opens_only_on_success(engine: RulesEngine):
     notes = engine.apply_liability(d, ok=True, simulated=False)
     assert len(engine.open_liabilities()) == 1
     assert any("gpu-teardown" in n for n in notes)
+
+
+# ---------------------------------------------------------------------------
+# Permission allowlist: severity=allow
+# ---------------------------------------------------------------------------
+
+
+def test_allow_rule_sets_auto_approve(engine: RulesEngine):
+    d = engine.check("run_command", {"command": "git status"})
+    assert d.allow and not d.confirm
+    assert d.auto_approve
+    assert d.rule.id == "allow-git-status"
+
+
+def test_allow_rule_no_model_facing_note(engine: RulesEngine):
+    """Unlike confirm/warn, allow is quiet -- no note injected into obs_text."""
+    d = engine.check("run_command", {"command": "git status"})
+    assert d.notes == []
+
+
+def test_non_matching_command_not_auto_approved(engine: RulesEngine):
+    d = engine.check("run_command", {"command": "echo hi"})
+    assert not d.auto_approve
+
+
+# ---------------------------------------------------------------------------
+# /rules add / remove
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def rules_ws(tmp_path: Path):
+    """A workspace with no rules.yaml yet, isolated from the real global file."""
+    ws = tmp_path / "ws2"
+    ws.mkdir()
+    with patch.object(rules_mod, "_GLOBAL_RULES", tmp_path / "no-global.yaml"):
+        rules_mod._ENGINES.clear()
+        yield ws
+        rules_mod._ENGINES.clear()
+
+
+def test_add_rule_creates_file_and_is_loaded(rules_ws: Path):
+    ok, msg = rules_mod.add_rule(
+        str(rules_ws), "no-npm-audit-fix", "warn", r"npm audit fix", "Don't auto-fix audit issues.",
+    )
+    assert ok, msg
+    eng = rules_mod.engine_for(str(rules_ws))
+    assert any(r.id == "no-npm-audit-fix" for r in eng.rules)
+    d = eng.check("run_command", {"command": "npm audit fix"})
+    assert any("no-npm-audit-fix" in n for n in d.notes)
+
+
+def test_add_rule_with_allow_severity(rules_ws: Path):
+    ok, msg = rules_mod.add_rule(
+        str(rules_ws), "allow-ls", "allow", r"^ls\b", "listing is safe",
+    )
+    assert ok, msg
+    eng = rules_mod.engine_for(str(rules_ws))
+    d = eng.check("run_command", {"command": "ls -la"})
+    assert d.auto_approve
+
+
+def test_add_rule_rejects_bad_severity(rules_ws: Path):
+    ok, msg = rules_mod.add_rule(str(rules_ws), "x", "bogus", "pat", "msg")
+    assert not ok
+    assert "severity" in msg.lower()
+
+
+def test_add_rule_rejects_bad_regex(rules_ws: Path):
+    ok, msg = rules_mod.add_rule(str(rules_ws), "x", "warn", "([", "msg")
+    assert not ok
+
+
+def test_add_rule_rejects_duplicate_id(rules_ws: Path):
+    rules_mod.add_rule(str(rules_ws), "dup", "warn", "pat", "msg")
+    ok, msg = rules_mod.add_rule(str(rules_ws), "dup", "warn", "pat2", "msg2")
+    assert not ok
+    assert "already exists" in msg
+
+
+def test_add_rule_preserves_existing_file_comments(rules_ws: Path):
+    """add_rule text-appends -- an existing hand-written comment survives."""
+    path = rules_ws / ".wells" / "rules.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# hand-written note about our rules\nrules:\n"
+        "  - id: existing\n    severity: warn\n"
+        "    trigger: { tool: run_command, pattern: 'x' }\n"
+        "    message: existing rule\n",
+        encoding="utf-8",
+    )
+    ok, msg = rules_mod.add_rule(str(rules_ws), "new-one", "warn", "y", "new rule")
+    assert ok, msg
+    text = path.read_text(encoding="utf-8")
+    assert "# hand-written note about our rules" in text
+    assert "existing" in text and "new-one" in text
+
+
+def test_remove_rule(rules_ws: Path):
+    rules_mod.add_rule(str(rules_ws), "to-remove", "warn", "pat", "msg")
+    ok, msg = rules_mod.remove_rule(str(rules_ws), "to-remove")
+    assert ok, msg
+    eng = rules_mod.engine_for(str(rules_ws))
+    assert not any(r.id == "to-remove" for r in eng.rules)
+
+
+def test_remove_unknown_rule_fails(rules_ws: Path):
+    ok, msg = rules_mod.add_rule(str(rules_ws), "keep-me", "warn", "pat", "msg")
+    assert ok
+    ok, msg = rules_mod.remove_rule(str(rules_ws), "does-not-exist")
+    assert not ok
+    eng = rules_mod.engine_for(str(rules_ws))
+    assert any(r.id == "keep-me" for r in eng.rules)  # untouched
 
 
 def test_liability_close_discharges(engine: RulesEngine):
@@ -257,3 +375,91 @@ def test_executor_confirm_with_approver_yes(tmp_path: Path):
         assert any(a.startswith("rule:") for a in asked)
     finally:
         safety.set_approver(orig)
+
+
+# ---------------------------------------------------------------------------
+# Permission allowlist end-to-end: allow-severity actually bypasses approve
+# mode's per-action y/N at the real tools.dispatch()/safety.gate() boundary
+# (not just rules.py's own separate confirm-severity approval path above --
+# these tests use REAL dispatch, unlike _scripted_executor_run's faked one,
+# so they exercise the ctx.safety override in executor.py directly).
+# ---------------------------------------------------------------------------
+
+
+def _approve_mode_run(tmp_path: Path, command: str, rules_yaml: str):
+    from langchain_core.messages import AIMessage
+
+    from wells import config, executor, tools
+    from wells.control import CONTROL
+    from wells.tokens import LEDGER
+
+    ws = tmp_path / "ws"
+    (ws / ".wells").mkdir(parents=True)
+    (ws / ".wells" / "rules.yaml").write_text(rules_yaml, encoding="utf-8")
+
+    script = [
+        AIMessage(
+            content="running",
+            tool_calls=[{"name": "run_command", "args": {"command": command}, "id": "c1"}],
+        ),
+        AIMessage(content="done"),
+    ]
+    asked: list[tuple[str, str]] = []
+
+    def _deny(action: str, detail: str) -> bool:
+        asked.append((action, detail))
+        return False
+
+    LEDGER.reset()
+    CONTROL.reset()
+    liab = tmp_path / "liab.json"
+    with (
+        patch.object(rules_mod, "_GLOBAL_RULES", tmp_path / "no-global.yaml"),
+        patch.object(rules_mod, "_LIABILITY_FILE", liab),
+        patch.object(rules_mod, "_ENGINES", {}),
+        patch.object(config, "_invoke_with_retry",
+                     side_effect=lambda l, m, _it=iter(script): next(_it)),
+        patch.object(executor, "_try_bind_tools", return_value=object()),
+    ):
+        RulesEngine._liab_cache = (0.0, [])
+        ctx = tools.ToolContext(workspace=str(ws), safety="approve", approver=_deny)
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=4, step_label="t")
+    RulesEngine._liab_cache = (0.0, [])
+    return result, asked
+
+
+def test_allow_rule_bypasses_approve_mode_denial(tmp_path: Path):
+    """A command matching an allow-severity rule actually runs in approve
+    mode even though the approver would deny everything -- the approver
+    (safety.gate's, not rules.py's own confirm-severity one) is never even
+    consulted for this specific call."""
+    rules_yaml = (
+        "rules:\n"
+        "  - id: allow-echo\n"
+        "    severity: allow\n"
+        "    trigger: { tool: run_command, pattern: 'echo hi' }\n"
+        "    message: pre-approved\n"
+    )
+    result, asked = _approve_mode_run(tmp_path, "echo hi", rules_yaml)
+    assert result.tool_calls[0]["ok"] is True
+    assert result.tool_calls[0]["simulated"] is False  # it actually ran, not just described
+    assert not asked  # safety.gate's approver was never consulted
+
+
+def test_non_allowlisted_command_still_denied_in_approve_mode(tmp_path: Path):
+    """Without a matching allow rule, approve mode's normal per-action
+    approval still applies -- the (denying) approver IS consulted and the
+    command does not execute."""
+    rules_yaml = (
+        "rules:\n"
+        "  - id: allow-echo\n"
+        "    severity: allow\n"
+        "    trigger: { tool: run_command, pattern: 'echo hi' }\n"
+        "    message: pre-approved\n"
+    )
+    result, asked = _approve_mode_run(tmp_path, "echo something-else", rules_yaml)
+    # A denied/simulated call is still "ok" in ToolResult terms (it validly
+    # reported what it would have done) -- "simulated" is the real signal
+    # that it did not actually execute.
+    assert result.tool_calls[0]["simulated"] is True
+    assert asked  # safety.gate's approver WAS consulted this time
