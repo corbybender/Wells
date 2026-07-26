@@ -245,6 +245,14 @@ SETTINGS: list[Setting] = [
         choices=("0", "1"),
     ),
     Setting(
+        "WELLS_AGENTS",
+        "Subagent personas (PERSONA.md)",
+        "Capabilities",
+        "Discover agents/<name>/PERSONA.md and expose them to bg_start(persona=...).",
+        "1",
+        choices=("0", "1"),
+    ),
+    Setting(
         "WELLS_CODEACT",
         "CodeAct (run_code)",
         "Capabilities",
