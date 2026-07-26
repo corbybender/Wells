@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from wells import config, main
+from wells import config, main, spend_guard
 
 
 class _FakeGraph:
@@ -121,6 +121,79 @@ def test_text_mode_unchanged_prints_human_readable(capsys):
     # Must NOT be JSON — no attempt to parse the whole thing as one object.
     with pytest.raises(json.JSONDecodeError):
         json.loads(out)
+
+
+# ---------------------------------------------------------------------------
+# spend cap + notifications integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _isolated_spend(tmp_path, monkeypatch):
+    monkeypatch.setenv("WELLS_SPEND_FILE", str(tmp_path / "spend.json"))
+    monkeypatch.delenv("WELLS_DAILY_BUDGET", raising=False)
+    monkeypatch.delenv("WELLS_NOTIFY", raising=False)
+
+
+def test_budget_exceeded_refuses_run_json_mode(capsys, _isolated_spend, monkeypatch):
+    monkeypatch.setenv("WELLS_DAILY_BUDGET", "1.00")
+    spend_guard.add_spend(1.00)
+    with patch.object(main, "_ensure_model_configured", return_value=True):
+        with pytest.raises(SystemExit) as ei:
+            main._run_goal("do the thing", output_format="json")
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "error"
+    assert "budget" in payload["error"].lower()
+    assert ei.value.code == 1
+
+
+def test_budget_exceeded_refuses_run_text_mode(capsys, _isolated_spend, monkeypatch):
+    monkeypatch.setenv("WELLS_DAILY_BUDGET", "1.00")
+    spend_guard.add_spend(1.00)
+    with patch.object(main, "_ensure_model_configured", return_value=True):
+        with pytest.raises(SystemExit):
+            main._run_goal("do the thing", output_format="text")
+    out = capsys.readouterr().out
+    assert "ERROR" in out and "budget" in out.lower()
+
+
+def test_successful_run_accumulates_spend(capsys, _isolated_spend):
+    assert spend_guard.today_spend() == 0.0
+    patchers = _patched({"review_complete": True, "implementation_steps": "done"})
+    with patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5], patchers[6], patchers[7]:
+        main._run_goal("do the thing", output_format="text")
+    capsys.readouterr()
+    assert spend_guard.today_spend() == pytest.approx(0.0123)
+
+
+def test_successful_run_fires_notification_when_enabled(capsys, _isolated_spend, monkeypatch):
+    monkeypatch.setenv("WELLS_NOTIFY", "1")
+    patchers = _patched({"review_complete": True, "implementation_steps": "done"})
+    with (
+        patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5], patchers[6], patchers[7],
+        patch("wells.notify.notify_run_complete") as mock_notify,
+    ):
+        main._run_goal("do the thing", output_format="text")
+    capsys.readouterr()
+    mock_notify.assert_called_once()
+    _, kwargs = mock_notify.call_args
+    assert kwargs["goal"] == "do the thing"
+    assert kwargs["status"] == "complete"
+    assert kwargs["cost"] == 0.0123
+
+
+def test_run_failure_in_notify_never_breaks_the_run(capsys, _isolated_spend, monkeypatch):
+    """notify/spend_guard failures are best-effort — a run must still report
+    its own outcome even if the notification plumbing throws."""
+    monkeypatch.setenv("WELLS_NOTIFY", "1")
+    patchers = _patched({"review_complete": True, "implementation_steps": "done"})
+    with (
+        patchers[0], patchers[1], patchers[2], patchers[3], patchers[4], patchers[5], patchers[6], patchers[7],
+        patch("wells.notify.notify_run_complete", side_effect=RuntimeError("boom")),
+    ):
+        main._run_goal("do the thing", output_format="text")
+    out = capsys.readouterr().out
+    assert "COMPLETE" in out
 
 
 # ---------------------------------------------------------------------------

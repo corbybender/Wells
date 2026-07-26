@@ -2255,6 +2255,10 @@ class WellsApp(App[None]):
         self._busy = False
         # Bumped by every run and by /stop — see _run_input's finally block.
         self._run_gen = 0
+        # Set fresh by _start_run before each run; defaults here only guard
+        # against _run_input somehow running without going through it first.
+        self._run_ledger_start = 0
+        self._run_t0 = _time.monotonic()
         # Live streaming region state (in-progress model output).
         self._live_buf = ""
         self._live_at = 0.0
@@ -3120,6 +3124,11 @@ class WellsApp(App[None]):
 
     def _start_run(self, text: str) -> None:
         import wells.cli as _cli
+        from wells import spend_guard
+
+        if spend_guard.budget_exceeded():
+            self.write_log(f"[bold red]{spend_guard.budget_message()}[/bold red]")
+            return
         CONTROL.reset()
         # Pick up /mode and /working-dir changes made since the last run.
         self._agent_state["safety"] = config.HARNESS_SAFETY
@@ -3140,6 +3149,14 @@ class WellsApp(App[None]):
         )
         _cli._REPL_STATE["busy_since"] = _time.monotonic()
         self.write_log(f"\n[bold cyan]>[/bold cyan] {text}\n")
+        # Snapshot the (session-cumulative, never-reset-per-run) ledger's step
+        # count so the finally block below can price just THIS run's calls —
+        # LEDGER.steps is append-only, so a slice from this index is exactly
+        # the delta, without needing a per-run reset the status bar relies on
+        # staying cumulative to show session totals.
+        from wells.tokens import LEDGER as _LEDGER
+        self._run_ledger_start = len(_LEDGER.steps)
+        self._run_t0 = _time.monotonic()
         self._run_input(text, my_gen)
 
     @work(thread=True)
@@ -3149,6 +3166,8 @@ class WellsApp(App[None]):
         from wells.cli import (
             _REPL_STATE, _run_task, _summarize_run,
         )
+
+        status = "complete"
 
         tui_console = _TUIConsole(self, thread_safe=True)
         tui_stdout = _TUIStdout(self)
@@ -3201,10 +3220,13 @@ class WellsApp(App[None]):
                 # "auto" (default) — direct executor, handles Q&A and tasks.
                 _run_auto(text, self._agent_state, callbacks)
         except Exception as e:
+            status = "error"
             self.call_from_thread(
                 self.write_log, f"[bold red]Error:[/bold red] {e}"
             )
         finally:
+            if CONTROL.cancelled():
+                status = "cancelled"
             # Flush any buffered output, then restore I/O — but only if this
             # worker still owns the redirect (a cancelled worker must never
             # clobber the redirect installed by a newer run).
@@ -3215,6 +3237,31 @@ class WellsApp(App[None]):
                 sys.stderr = orig_stderr
             if cli_mod.console is tui_console:
                 cli_mod.console = orig_cli_console
+
+            # Best-effort, never affects run outcome: accumulate today's
+            # spend and fire any configured notification channels for THIS
+            # run only (delta since _start_run's snapshot, not the session
+            # cumulative total the status bar shows).
+            try:
+                from wells import pricing
+                from wells.tokens import LEDGER as _LEDGER
+
+                with _LEDGER._lock:
+                    this_run_steps = list(_LEDGER.steps)[self._run_ledger_start:]
+                cost = pricing.ledger_cost(this_run_steps)
+                if cost:
+                    from wells import spend_guard
+                    spend_guard.add_spend(cost)
+                from wells import notify
+                notify.notify_run_complete(
+                    goal=text,
+                    status=status,
+                    workspace=config.WORKSPACE_ROOT,
+                    duration_seconds=int(_time.monotonic() - self._run_t0),
+                    cost=cost,
+                )
+            except Exception:
+                pass
 
             if run_gen == self._run_gen:
                 self._busy = False
