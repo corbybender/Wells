@@ -110,6 +110,154 @@ def test_quick_check_unknown_ext_ignored(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Semantic checkers (opt-in type-checkers: pyright/mypy, tsc, cargo, go vet)
+# ---------------------------------------------------------------------------
+
+
+def test_semantic_check_missing_file_returns_none(tmp_path: Path):
+    assert checkers.semantic_check("nope.py", str(tmp_path)) is None
+
+
+def test_semantic_check_unknown_ext_returns_none(tmp_path: Path):
+    (tmp_path / "x.zzz").write_text("whatever", encoding="utf-8")
+    assert checkers.semantic_check("x.zzz", str(tmp_path)) is None
+
+
+def test_semantic_check_no_toolchain_available_returns_none(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x: int = 1\n", encoding="utf-8")
+    with patch.object(checkers, "_has", return_value=False):
+        assert checkers.semantic_check("a.py", str(tmp_path)) is None
+
+
+def test_semantic_python_prefers_pyright_and_parses_json(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x: int = 'oops'\n", encoding="utf-8")
+    fake_json = (
+        '{"generalDiagnostics": ['
+        '{"severity": "error", "message": "type mismatch", '
+        '"range": {"start": {"line": 0}}},'
+        '{"severity": "warning", "message": "unused import", '
+        '"range": {"start": {"line": 1}}}'
+        ']}'
+    )
+    with (
+        patch.object(checkers, "_has", side_effect=lambda c: c == "pyright"),
+        patch.object(checkers, "_run_semantic", return_value=(1, fake_json)),
+    ):
+        report = checkers.semantic_check("a.py", str(tmp_path))
+    assert report is not None
+    assert "type mismatch" in report
+    assert "a.py:1" in report
+    assert "unused import" not in report  # warnings filtered out, errors only
+
+
+def test_semantic_python_pyright_no_errors_returns_none(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x: int = 1\n", encoding="utf-8")
+    with (
+        patch.object(checkers, "_has", side_effect=lambda c: c == "pyright"),
+        patch.object(checkers, "_run_semantic", return_value=(0, '{"generalDiagnostics": []}')),
+    ):
+        assert checkers.semantic_check("a.py", str(tmp_path)) is None
+
+
+def test_semantic_python_falls_back_to_mypy_when_no_pyright(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x: int = 'oops'\n", encoding="utf-8")
+    with (
+        patch.object(checkers, "_has", side_effect=lambda c: c == "mypy"),
+        patch.object(checkers, "_run_semantic", return_value=(1, "a.py:1: error: bad type")),
+    ):
+        report = checkers.semantic_check("a.py", str(tmp_path))
+    assert report and "bad type" in report
+
+
+@pytest.mark.skipif(not checkers._has("mypy"), reason="mypy not installed")
+def test_semantic_python_real_mypy_catches_type_error(tmp_path: Path):
+    (tmp_path / "a.py").write_text('x: int = "oops"\n', encoding="utf-8")
+    with patch.object(checkers, "_has", side_effect=lambda c: c == "mypy"):
+        report = checkers.semantic_check("a.py", str(tmp_path))
+    assert report  # real mypy invocation flags the type mismatch
+
+
+def test_semantic_typescript_no_tsconfig_checks_file_standalone(tmp_path: Path):
+    (tmp_path / "a.ts").write_text("const x: number = 1;\n", encoding="utf-8")
+    with (
+        patch.object(checkers, "_has", return_value=True),
+        patch.object(checkers, "_run_semantic", return_value=(1, "a.ts(1,7): error TS2322")) as mock_run,
+    ):
+        report = checkers.semantic_check("a.ts", str(tmp_path))
+    args = mock_run.call_args[0][0]
+    assert "-p" not in args
+    assert report and "TS2322" in report
+
+
+def test_semantic_typescript_project_mode_filters_to_changed_file(tmp_path: Path):
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "a.ts").write_text("const x: number = 1;\n", encoding="utf-8")
+    fake_out = "a.ts(1,7): error TS2322: bad\nb.ts(4,2): error TS2304: unrelated"
+    with (
+        patch.object(checkers, "_has", return_value=True),
+        patch.object(checkers, "_run_semantic", return_value=(1, fake_out)) as mock_run,
+    ):
+        report = checkers.semantic_check("a.ts", str(tmp_path))
+    args = mock_run.call_args[0][0]
+    assert "-p" in args
+    assert "TS2322" in report
+    assert "TS2304" not in report  # filtered out -- belongs to a different file
+
+
+@pytest.mark.skipif(not checkers._has("tsc"), reason="tsc not installed")
+def test_semantic_typescript_real_tsc_catches_type_error(tmp_path: Path):
+    (tmp_path / "a.ts").write_text("const x: number = 'oops';\n", encoding="utf-8")
+    report = checkers.semantic_check("a.ts", str(tmp_path))
+    assert report  # real tsc invocation flags the type mismatch
+
+
+def test_semantic_rust_filters_to_changed_file(tmp_path: Path):
+    (tmp_path / "a.rs").write_text("fn main() {}\n", encoding="utf-8")
+    fake_out = "error: mismatched types\n --> a.rs:1:1\nerror: bad\n --> b.rs:2:1"
+    with (
+        patch.object(checkers, "_has", return_value=True),
+        patch.object(checkers, "_run_semantic", return_value=(1, fake_out)),
+    ):
+        report = checkers.semantic_check("a.rs", str(tmp_path))
+    assert report and "a.rs" in report and "b.rs" not in report
+
+
+def test_semantic_go_filters_to_changed_file(tmp_path: Path):
+    (tmp_path / "a.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    fake_out = "./a.go:2:1: bad thing\n./b.go:3:1: unrelated"
+    with (
+        patch.object(checkers, "_has", return_value=True),
+        patch.object(checkers, "_run_semantic", return_value=(1, fake_out)),
+    ):
+        report = checkers.semantic_check("a.go", str(tmp_path))
+    assert report and "a.go" in report and "b.go" not in report
+
+
+def test_semantic_check_never_raises_on_timeout(tmp_path: Path):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    with (
+        patch.object(checkers, "_has", return_value=True),
+        patch.object(
+            checkers, "_run_semantic",
+            side_effect=subprocess.TimeoutExpired(cmd="mypy", timeout=60),
+        ),
+    ):
+        assert checkers.semantic_check("a.py", str(tmp_path)) is None
+
+
+def test_trim_semantic_caps_line_count():
+    report = "\n".join(f"line {i}" for i in range(50))
+    trimmed = checkers._trim_semantic(report)
+    lines = trimmed.splitlines()
+    assert len(lines) == checkers._MAX_SEMANTIC_LINES + 1
+    assert "more lines" in lines[-1]
+
+
+def test_trim_semantic_blank_report_returns_none():
+    assert checkers._trim_semantic("   \n  ") is None
+
+
+# ---------------------------------------------------------------------------
 # Repo map
 # ---------------------------------------------------------------------------
 

@@ -261,6 +261,13 @@ WELLS_STEPWISE: str = os.getenv("WELLS_STEPWISE", "auto").strip().lower() or "au
 # failure into the agent's next observation. Set 0 to disable.
 SELF_CHECK: bool = os.getenv("SELF_CHECK", "1") not in ("0", "false", "no", "")
 
+# Semantic self-heal: after every write/edit, additionally run a real
+# type-checker (pyright/mypy, tsc, cargo check, go vet) for that file type
+# and inject any type/reference errors into the agent's next observation.
+# Off by default -- unlike SELF_CHECK's millisecond syntax checks, these run
+# in whole-project mode and can take seconds; opt in with WELLS_SEMANTIC_CHECK=1.
+SEMANTIC_CHECK: bool = os.getenv("WELLS_SEMANTIC_CHECK", "0") not in ("0", "false", "no", "")
+
 # Per-run token budget: hard cap on input+output tokens across one run
 # (all agents combined — the ledger is reset at run start). 0 disables the cap.
 # A warning is printed when a run crosses 80% of the budget.

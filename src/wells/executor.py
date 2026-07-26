@@ -2444,19 +2444,19 @@ def _run_executor_impl(
             # Ground truth in the same round: a syntax error or undefined name
             # reaches the model immediately instead of surfacing a full tester
             # loop (an LLM call) later.
+            _write_tool_names = (
+                "write_file",
+                "edit_file",
+                "create_file",
+                "patch_file",
+                "str_replace_editor",
+                "str_replace",
+            )
             if (
-                config.SELF_CHECK
+                (config.SELF_CHECK or config.SEMANTIC_CHECK)
                 and result.ok
                 and not result.simulated
-                and name
-                in (
-                    "write_file",
-                    "edit_file",
-                    "create_file",
-                    "patch_file",
-                    "str_replace_editor",
-                    "str_replace",
-                )
+                and name in _write_tool_names
             ):
                 _checked_path = str(
                     args.get("path")
@@ -2464,21 +2464,41 @@ def _run_executor_impl(
                     or args.get("filename")
                     or ""
                 )
+                _quick_failed = False
                 if _checked_path:
                     from wells import checkers
 
-                    check_err = checkers.quick_check(_checked_path, ctx.workspace)
-                    if check_err:
-                        obs_text = obs_text + (
-                            f"\n\n[HARNESS CHECK: fast lint/syntax check FAILED for "
-                            f"{_short_path(_checked_path)} — fix these before doing "
-                            f"anything else:\n{check_err}]"
-                        )
-                        _ui(
-                            "warn",
-                            f"  [yellow]⚠ check failed: "
-                            f"{_short_path(_checked_path)}[/yellow]",
-                        )
+                    if config.SELF_CHECK:
+                        check_err = checkers.quick_check(_checked_path, ctx.workspace)
+                        if check_err:
+                            _quick_failed = True
+                            obs_text = obs_text + (
+                                f"\n\n[HARNESS CHECK: fast lint/syntax check FAILED for "
+                                f"{_short_path(_checked_path)} — fix these before doing "
+                                f"anything else:\n{check_err}]"
+                            )
+                            _ui(
+                                "warn",
+                                f"  [yellow]⚠ check failed: "
+                                f"{_short_path(_checked_path)}[/yellow]",
+                            )
+
+                    # A syntax error already told the model to stop and fix it;
+                    # a type-checker pass on the same broken file is redundant
+                    # noise, so only run it once the fast check is clean.
+                    if config.SEMANTIC_CHECK and not _quick_failed:
+                        semantic_err = checkers.semantic_check(_checked_path, ctx.workspace)
+                        if semantic_err:
+                            obs_text = obs_text + (
+                                f"\n\n[HARNESS CHECK: type-checker FAILED for "
+                                f"{_short_path(_checked_path)} — fix these before doing "
+                                f"anything else:\n{semantic_err}]"
+                            )
+                            _ui(
+                                "warn",
+                                f"  [yellow]⚠ type check failed: "
+                                f"{_short_path(_checked_path)}[/yellow]",
+                            )
 
             # ── Task-drift detection ────────────────────────────────────────
             # See the module-level comment above _rewrite_similarity for the

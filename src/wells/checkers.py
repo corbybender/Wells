@@ -92,3 +92,132 @@ def quick_check(path: str, workspace: str) -> str | None:
     except Exception:
         return None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Semantic checkers (opt-in, WELLS_SEMANTIC_CHECK=1) -- real type-checkers
+# instead of syntax-only checks. These run whole-project (a type error is
+# often only visible with cross-file context) so they're slower; the fast
+# path above stays the default.
+# ---------------------------------------------------------------------------
+
+_SEMANTIC_TIMEOUT = 60
+_MAX_SEMANTIC_LINES = 20
+
+
+def _run_semantic(args: list[str], cwd: str) -> tuple[int, str]:
+    # Resolve the command to its full path: on Windows, npm-installed CLIs
+    # (tsc, etc.) are ``.cmd`` shims that CreateProcess can't launch by bare
+    # name without shell=True. shutil.which already found it once for the
+    # _has() gate above, so this is a cheap, harmless no-op on POSIX.
+    cmd = list(args)
+    resolved = shutil.which(cmd[0])
+    if resolved:
+        cmd[0] = resolved
+    proc = subprocess.run(
+        cmd, cwd=cwd, capture_output=True, text=True, timeout=_SEMANTIC_TIMEOUT
+    )
+    out = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode, out.strip()
+
+
+def _filter_for_file(report: str, path: Path) -> str:
+    """Project-wide checkers report on every file; keep only lines about
+    the one just edited so the agent isn't drowned in unrelated errors."""
+    name = path.name
+    return "\n".join(l for l in report.splitlines() if name in l)
+
+
+def _trim_semantic(report: str) -> str | None:
+    if not report.strip():
+        return None
+    lines = [l for l in report.splitlines() if l.strip()]
+    if len(lines) > _MAX_SEMANTIC_LINES:
+        lines = lines[:_MAX_SEMANTIC_LINES] + [f"… {len(lines) - _MAX_SEMANTIC_LINES} more lines"]
+    return "\n".join(lines)
+
+
+def _semantic_python(path: Path, workspace: str) -> str | None:
+    if _has("pyright"):
+        _code, out = _run_semantic(["pyright", "--outputjson", str(path)], workspace)
+        try:
+            data = json.loads(out)
+        except Exception:
+            return None
+        errors = [
+            d for d in data.get("generalDiagnostics", []) if d.get("severity") == "error"
+        ]
+        if not errors:
+            return None
+        lines = []
+        for d in errors[:_MAX_SEMANTIC_LINES]:
+            line_no = d.get("range", {}).get("start", {}).get("line", 0) + 1
+            lines.append(f"{path.name}:{line_no}: {d.get('message', '')}")
+        return "\n".join(lines)
+    if _has("mypy"):
+        code, out = _run_semantic(
+            ["mypy", "--hide-error-context", "--no-color-output", "--no-error-summary", str(path)],
+            workspace,
+        )
+        return _trim_semantic(out) if code != 0 else None
+    return None
+
+
+def _semantic_typescript(path: Path, workspace: str) -> str | None:
+    if not _has("tsc"):
+        return None
+    tsconfig = Path(workspace) / "tsconfig.json"
+    if tsconfig.exists():
+        code, out = _run_semantic(["tsc", "--noEmit", "-p", workspace], workspace)
+        if code == 0:
+            return None
+        return _trim_semantic(_filter_for_file(out, path))
+    code, out = _run_semantic(["tsc", "--noEmit", str(path)], workspace)
+    return _trim_semantic(out) if code != 0 else None
+
+
+def _semantic_rust(path: Path, workspace: str) -> str | None:
+    if not _has("cargo"):
+        return None
+    code, out = _run_semantic(["cargo", "check", "--quiet", "--message-format=short"], workspace)
+    if code == 0:
+        return None
+    return _trim_semantic(_filter_for_file(out, path))
+
+
+def _semantic_go(path: Path, workspace: str) -> str | None:
+    if not _has("go"):
+        return None
+    code, out = _run_semantic(["go", "vet", "./..."], workspace)
+    if code == 0:
+        return None
+    return _trim_semantic(_filter_for_file(out, path))
+
+
+def semantic_check(path: str, workspace: str) -> str | None:
+    """Run a real type-checker (project-aware) for ``path``, when available.
+
+    Returns a short error report when the file fails, else None. Never
+    raises -- a missing/misconfigured toolchain just means no report,
+    same contract as ``quick_check``.
+    """
+    try:
+        p = Path(path)
+        if not p.is_absolute():
+            p = Path(workspace) / p
+        if not p.exists():
+            return None
+        ext = p.suffix.lower()
+        if ext in (".py", ".pyw"):
+            return _semantic_python(p, workspace)
+        if ext in (".ts", ".tsx"):
+            return _semantic_typescript(p, workspace)
+        if ext == ".rs":
+            return _semantic_rust(p, workspace)
+        if ext == ".go":
+            return _semantic_go(p, workspace)
+    except subprocess.TimeoutExpired:
+        return None
+    except Exception:
+        return None
+    return None
