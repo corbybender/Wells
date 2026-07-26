@@ -91,6 +91,9 @@ class RunControl:
         self._progress: dict[str, tuple[int, int]] = {}
         # Ordered pipeline stages: name -> {"status": run|done|fail, "t0", "secs"}.
         self._stages: dict[str, dict] = {}
+        # Model-declared todo list for the current task (update_todos tool):
+        # [{"content": str, "status": "pending"|"in_progress"|"completed"}, ...].
+        self._todos: list[dict] = []
         # Live subprocesses spawned by tool calls, for /stop's immediate hard-kill.
         self._procs: set[subprocess.Popen] = set()
 
@@ -104,6 +107,7 @@ class RunControl:
             self._steers.clear()
             self._progress.clear()
             self._stages.clear()
+            self._todos.clear()
 
     # -- per-stage progress (drives the info panel) ---------------------------
 
@@ -141,6 +145,20 @@ class RunControl:
                  v["secs"] if v["status"] != "run" else now - v["t0"])
                 for k, v in self._stages.items()
             ]
+
+    # -- model-declared todo list (drives the info panel) ---------------------
+
+    def set_todos(self, items: list[dict]) -> None:
+        """Replace the current todo list wholesale (the update_todos tool's
+        only mutation — the model resends the full list each call, same
+        contract as Claude Code's own TodoWrite)."""
+        with self._lock:
+            self._todos = list(items)
+
+    def todos(self) -> list[dict]:
+        """The current todo list, in the order the model declared it."""
+        with self._lock:
+            return list(self._todos)
 
     # -- mid-run steering ------------------------------------------------------
 

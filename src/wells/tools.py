@@ -1076,6 +1076,24 @@ def _register_optional_tools() -> None:
     except Exception:
         ok = False
 
+    # update_todos: model-declared task breakdown, rendered live in the TUI
+    # panel. Read-only (no workspace mutation, purely in-memory display
+    # state), so — like the web tools — it also joins READ_TOOLS.
+    try:
+        from wells import todo as _todo_mod
+
+        if _todo_mod.enabled():
+            existing_read = {t.name for t in READ_TOOLS}
+            t = _todo_mod.UPDATE_TODOS_TOOL
+            if t.name not in existing:
+                ALL_TOOLS.append(t)
+                existing.add(t.name)
+            if t.name not in existing_read:
+                READ_TOOLS.append(t)
+                existing_read.add(t.name)
+    except Exception:
+        ok = False
+
     if ok:
         _optional_registered = True
     _rebuild_index()

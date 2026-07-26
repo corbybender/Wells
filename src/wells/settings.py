@@ -262,6 +262,15 @@ SETTINGS: list[Setting] = [
         choices=("0", "1"),
     ),
     Setting(
+        "WELLS_TODO",
+        "Model-driven todo list",
+        "Capabilities",
+        "Expose update_todos so the model can declare a live task breakdown, "
+        "rendered in the TUI's info panel.",
+        "1",
+        choices=("0", "1"),
+    ),
+    Setting(
         "WELLS_CODEACT",
         "CodeAct (run_code)",
         "Capabilities",

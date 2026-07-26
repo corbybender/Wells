@@ -407,6 +407,26 @@ class InfoPanel(Static):
                 else:
                     L.append(f"  [green]✓ {name:<14}[/green][dim]{int(secs_f)}s[/dim]")
 
+        # -- model-declared todo list (update_todos tool) ---------------------------
+        # Complements the pipeline section above: that shows structural graph
+        # position (which fixed node is running); this shows the model's own
+        # dynamic task breakdown for what it's actually doing right now.
+        todos = CONTROL.todos()
+        if todos:
+            L.append(rule)
+            L.append("[bold]todo[/bold]")
+            for item in todos[-10:]:
+                content = item.get("content", "")
+                if len(content) > 32:
+                    content = content[:31] + "…"
+                status = item.get("status")
+                if status == "completed":
+                    L.append(f"  [green]✓[/green] [dim strike]{content}[/dim strike]")
+                elif status == "in_progress":
+                    L.append(f"  [yellow]▶[/yellow] [bold yellow]{content}[/bold yellow]")
+                else:
+                    L.append(f"  [dim]○ {content}[/dim]")
+
         # -- per-stage step progress (cap 0 = No Limit) ----------------------------
         prog = CONTROL.progress()
         if prog:
