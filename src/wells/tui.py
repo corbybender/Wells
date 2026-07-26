@@ -2035,6 +2035,79 @@ class RuleAddScreen(ModalScreen["str | None"]):
 
 
 # ---------------------------------------------------------------------------
+# Schedule add form (/schedule add) — unattended recurring runs via the OS
+# scheduler. list/remove are args-driven and need no modal; only "add"
+# prompts for several fields (mirrors /rules add's RuleAddScreen).
+# ---------------------------------------------------------------------------
+
+class ScheduleAddScreen(ModalScreen["str | None"]):
+    """Form to register a new schedule (Task Scheduler / cron)."""
+
+    CSS = """
+    ScheduleAddScreen { align: center middle; }
+    #schedule-add-panel {
+        width: 90; max-width: 96%; height: auto; max-height: 85%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #schedule-add-panel Static { height: auto; }
+    #schedule-add-panel Input { margin-bottom: 1; }
+    #schedule-add-error { height: auto; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("ctrl+s", "save", "Save", priority=True),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="schedule-add-panel"):
+            yield Static(
+                "[bold]Add schedule[/bold]  [dim](Ctrl+S saves · Esc cancels — "
+                "registers with Task Scheduler/cron)[/dim]",
+                markup=True,
+            )
+            yield Static("Name [dim](lowercase, digits, hyphens)[/dim]", markup=True)
+            yield Input(id="schedule-name")
+            yield Static(
+                "Interval [dim](every15m / every2h / daily@09:00)[/dim]", markup=True
+            )
+            yield Input(id="schedule-interval", placeholder="every1h")
+            yield Static("Workspace [dim](blank = current workspace)[/dim]", markup=True)
+            yield Input(id="schedule-workspace", placeholder=config.WORKSPACE_ROOT)
+            yield Static("Goal [dim](the task to run)[/dim]", markup=True)
+            yield Input(id="schedule-goal")
+            yield Static("", id="schedule-add-error", markup=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#schedule-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        order = ["schedule-name", "schedule-interval", "schedule-workspace", "schedule-goal"]
+        cur = event.input.id or ""
+        if cur in order and cur != order[-1]:
+            self.query_one(f"#{order[order.index(cur) + 1]}", Input).focus()
+        elif cur == "schedule-goal":
+            self.action_save()
+
+    def action_save(self) -> None:
+        from wells import schedule as sched
+
+        name = self.query_one("#schedule-name", Input).value.strip()
+        interval = self.query_one("#schedule-interval", Input).value.strip()
+        workspace = self.query_one("#schedule-workspace", Input).value.strip() or config.WORKSPACE_ROOT
+        goal = self.query_one("#schedule-goal", Input).value.strip()
+        ok, msg = sched.add_schedule(name, goal, interval, workspace)
+        if not ok:
+            self.query_one("#schedule-add-error", Static).update(f"[red]{msg}[/red]")
+            return
+        self.dismiss(msg)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ---------------------------------------------------------------------------
 # I/O capture helpers
 # ---------------------------------------------------------------------------
 
@@ -2712,6 +2785,17 @@ class WellsApp(App[None]):
                 return
             # Non-blocking subcommands (list, show, remove) delegate to the CLI
             # handler via the synchronous fallback below.
+
+        if cmd == "/schedule" and args and args[0].lower() == "add":
+            # Bare /schedule add → use the modal (the CLI handler calls
+            # input() for interval/workspace/goal, which deadlocks under
+            # Textual). list/remove are args-driven and fall through.
+            def _schedule_added(msg: str | None) -> None:
+                if msg:
+                    self.write_log(f"[green]{msg}[/green]")
+
+            self.push_screen(ScheduleAddScreen(), _schedule_added)
+            return
 
         if cmd == "/steer":
             note = " ".join(args)

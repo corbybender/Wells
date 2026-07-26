@@ -471,3 +471,78 @@ def test_rule_add_screen_rejects_bad_severity(tmp_path, monkeypatch):
                 assert app.screen is screen
 
     _run(body)
+
+
+# ---------------------------------------------------------------------------
+# ScheduleAddScreen — the /schedule add unattended-run form
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_add_screen_creates_schedule(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells import schedule as sched_mod
+    from wells.tui import ScheduleAddScreen, WellsApp
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(ws))
+    monkeypatch.setattr(sched_mod, "_REGISTRY", tmp_path / "schedules.json")
+    monkeypatch.setattr(sched_mod, "_SCRIPT_DIR", tmp_path / "schedule-scripts")
+    monkeypatch.setattr(sched_mod, "_LOG_DIR", tmp_path / "schedule-logs")
+
+    async def body():
+        with (
+            patch.object(WellsApp, "_ensure_repo_index", lambda self: None),
+            patch.object(sched_mod, "_register_windows", return_value=(True, "mocked")),
+            patch.object(sched_mod, "_register_cron", return_value=(True, "mocked")),
+        ):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = ScheduleAddScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.query_one("#schedule-name").value = "nightly"
+                screen.query_one("#schedule-interval").value = "every1h"
+                screen.query_one("#schedule-goal").value = "run the linter"
+                screen.action_save()
+                await pilot.pause()
+
+                entry = sched_mod.by_name("nightly")
+                assert entry is not None
+                assert entry["interval"] == "every1h"
+                assert entry["goal"] == "run the linter"
+
+    _run(body)
+
+
+def test_schedule_add_screen_rejects_bad_interval(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells import schedule as sched_mod
+    from wells.tui import ScheduleAddScreen, WellsApp
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(ws))
+    monkeypatch.setattr(sched_mod, "_REGISTRY", tmp_path / "schedules.json")
+    monkeypatch.setattr(sched_mod, "_SCRIPT_DIR", tmp_path / "schedule-scripts")
+    monkeypatch.setattr(sched_mod, "_LOG_DIR", tmp_path / "schedule-logs")
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(120, 40)) as pilot:
+                screen = ScheduleAddScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+
+                screen.query_one("#schedule-name").value = "x"
+                screen.query_one("#schedule-interval").value = "bogus"
+                screen.query_one("#schedule-goal").value = "y"
+                screen.action_save()
+                await pilot.pause()
+
+                # Bad interval must block the save -- the screen stays open.
+                assert app.screen is screen
+
+    _run(body)

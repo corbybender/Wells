@@ -19,6 +19,11 @@ Usage:
     # Parallel worktree fleet: N independent attempts at the same task
     wells fleet run 3 "refactor the auth module"
     wells fleet pick <fleet_id> <winning_index>   # merges winner, cleans up the rest
+
+    # Unattended recurring runs (Task Scheduler / cron -- wells needn't be running)
+    wells schedule add nightly-lint every1h "run the linter and fix any issues"
+    wells schedule list
+    wells schedule remove nightly-lint
 """
 
 from __future__ import annotations
@@ -659,6 +664,10 @@ def _print_usage() -> None:
         "  fleet show ID          show one fleet's member results\n"
         "  fleet pick ID I        merge member I's branch, clean up the rest\n"
         "  fleet drop ID          abandon a fleet, clean up all worktrees\n"
+        '  schedule add N I "G"  register goal G to run every interval I via\n'
+        "                         Task Scheduler/cron (wells needn't be running)\n"
+        "  schedule list          list registered schedules\n"
+        "  schedule remove NAME   unregister a schedule\n"
     )
 
 
@@ -780,6 +789,68 @@ def _run_fleet_cmd(args: list[str]) -> None:
         sys.exit(0 if ok else 1)
 
     print(f"Unknown fleet subcommand: {sub!r}")
+    sys.exit(2)
+
+
+def _run_schedule_cmd(args: list[str]) -> None:
+    """wells schedule add|list|remove -- unattended recurring runs via the
+    OS's native scheduler (Task Scheduler / cron). Wells doesn't need to be
+    running for a scheduled run to fire."""
+    from wells import schedule
+
+    if not args:
+        print(
+            "usage: wells schedule add <name> <interval> [--workspace <path>] \"<goal>\"\n"
+            "       wells schedule list\n"
+            "       wells schedule remove <name>\n"
+            "\n"
+            "interval: every<N>m (every15m), every<N>h (every2h), daily@HH:MM,\n"
+            "          or a 5-field cron expression (Linux/macOS only)"
+        )
+        sys.exit(2)
+    sub = args[0]
+
+    if sub == "add":
+        rest = args[1:]
+        if len(rest) < 3:
+            print('usage: wells schedule add <name> <interval> [--workspace <path>] "<goal>"')
+            sys.exit(2)
+        name, interval = rest[0], rest[1]
+        rest = rest[2:]
+        workspace = config.WORKSPACE_ROOT
+        if rest and rest[0] == "--workspace":
+            if len(rest) < 2:
+                print("ERROR: --workspace requires a path.")
+                sys.exit(2)
+            workspace = rest[1]
+            rest = rest[2:]
+        goal = " ".join(rest).strip()
+        if not goal:
+            print("ERROR: no goal given.")
+            sys.exit(2)
+        ok, msg = schedule.add_schedule(name, goal, interval, workspace)
+        print(msg)
+        sys.exit(0 if ok else 1)
+
+    if sub == "list":
+        items = schedule.list_schedules()
+        if not items:
+            print("No schedules registered.")
+            return
+        for e in items:
+            print(f"  {e['name']}  [{e['interval']}]  ws={e['workspace']}")
+            print(f"      goal: {e['goal'][:100]!r}")
+        return
+
+    if sub in ("remove", "rm"):
+        if len(args) < 2:
+            print("usage: wells schedule remove <name>")
+            sys.exit(2)
+        ok, msg = schedule.remove_schedule(args[1])
+        print(msg)
+        sys.exit(0 if ok else 1)
+
+    print(f"Unknown schedule subcommand: {sub!r}")
     sys.exit(2)
 
 
@@ -1062,6 +1133,9 @@ def main() -> None:
         return
     if remaining and remaining[0] == "fleet":
         _run_fleet_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "schedule":
+        _run_schedule_cmd(remaining[1:])
         return
 
     # ---- Pass 3: a goal run — separate goal args from KEY=VALUE overrides ----
