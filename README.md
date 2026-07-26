@@ -57,6 +57,9 @@ extension) rather than a competing harness, so it isn't compared here.
 | Interop | Its own agent, standalone | MCP **server** (drive Wells from Claude Code/OpenCode/other CLIs) *and* MCP **client** (give Wells external tool servers) |
 | Domain know-how | Baked into the base prompt | **Skills**: progressive-disclosure `SKILL.md` files — name + one-line description always visible, full body loads only when relevant |
 | Deterministic computation | Reasons it out | **CodeAct**: sandboxed `run_code` tool for exact arithmetic/regex/counts instead of eyeballed answers |
+| Subagent identities | One generic agent persona | Custom `PERSONA.md` specialists (system prompt + toolset), invoked per-call via `bg_start(persona=...)` — a security reviewer and a performance investigator get different framing, not the same generic prompt |
+| Unattended operation | Needs a live session | `wells schedule` registers a goal with the OS's own scheduler (Task Scheduler/cron) — no Wells process has to be running for it to fire |
+| Cross-project memory | Session-scoped | `~/.wells/memory/` — standing preferences that follow you to every project, distinct from per-repo `AGENTS.md` |
 
 ## What it does
 
@@ -124,7 +127,13 @@ The right-hand panel always shows one of two states, never blank: a plain
 planning graph — the full `indexer → planner → architect → coder → tester →
 reviewer → summarizer → finisher` step list, with the in-flight step
 highlighted (`▶` yellow + elapsed time), completed steps checked off
-(`✓` green), and failures marked (`✗` red).
+(`✓` green), and failures marked (`✗` red). A third, independent section
+renders the model's own **live task breakdown** (the `update_todos` tool —
+see [Agent capabilities](#agent-capabilities)) whenever it declares one: each
+item shown pending (dim), in-progress (`▶` yellow, at most one at a time),
+or completed (struck through) — complementary to the pipeline breadcrumb,
+which shows *structural* graph position, not what the model actually
+decided to do inside a step.
 
 | Command | What it does |
 |---|---|
@@ -135,8 +144,11 @@ highlighted (`▶` yellow + elapsed time), completed steps checked off
 | `/undo` | Revert everything the last run changed (automatic pre-run git checkpoint) |
 | `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env`. Choice-constrained settings (`HARNESS_SAFETY`, `PLAN_MODE`, ...) open an arrow+Enter picker instead of typing — no way to mistype a value |
 | `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
-| `/rules` | Operating rules + open liabilities (`list` / `reload` / `discharge <id>`) |
+| `/rules` | Operating rules + open liabilities (`list` / `reload` / `discharge <id>` / `add` / `remove <id>`) |
 | `/skills` | Modal skills manager — list / view / add / edit / remove `SKILL.md` know-how |
+| `/agents` | Modal subagent-persona manager — list / view / add / edit / remove `PERSONA.md` custom specialist identities |
+| `/memory` | Modal global-memory manager — list / view / add / edit / remove standing preferences (`~/.wells/memory/`, every project) |
+| `/schedule` | Register/list/remove unattended recurring runs (Task Scheduler / cron) |
 | `/orchestrate` | Route the next message through the full planning graph |
 | `/resume` / `/sessions` | Continue a previous session / browse history |
 | `/index` | Build or refresh the structural repo index |
@@ -302,6 +314,38 @@ wells "<goal>" MAX_ITERATIONS=5           # inline setting override
 In the TUI, `/config` opens the modal settings panel instead (same schema,
 same `.env` persistence).
 
+## Scheduled runs
+
+Register a goal to run **unattended, on a recurring interval**, via the
+OS's native scheduler — Task Scheduler on Windows, cron on Linux/macOS.
+Wells doesn't need to be running for a scheduled run to fire; the
+scheduler invokes `wells` directly.
+
+```bash
+wells schedule add nightly-lint every1h "run the linter and fix any issues"
+wells schedule list
+wells schedule remove nightly-lint
+```
+
+Or from inside the TUI/REPL: `/schedule add` (opens a form), `/schedule
+list`, `/schedule remove <name>`. Interval spec: `every<N>m` / `every<N>h`
+(e.g. `every15m`, `every2h`), `daily@HH:MM`, or a raw 5-field cron
+expression (Linux/macOS only — Windows Task Scheduler has no
+cron-expression concept, so it's rejected there rather than
+mistranslated). Schedules are tracked in `~/.wells/schedules.json` (so
+`wells schedule list` works even if the OS-side entry was later removed by
+hand) and mirrored into the real scheduler — verified live against Windows
+Task Scheduler: registration, `schtasks /query` showing the correct
+recurrence, removal, and confirmed-gone via a second query.
+
+Each schedule gets a small wrapper script (`~/.wells/schedule-scripts/`)
+instead of trying to embed the goal directly in a Task Scheduler/cron
+command line — a goal can contain spaces, quotes, and newlines, and
+getting nested command-line quoting right (especially on Windows) is
+fragile. A PowerShell here-string / bash heredoc, written directly by
+Python and never re-parsed through a shell, sidesteps that whole class of
+bug.
+
 ## Safety model
 
 The agent operates inside a **workspace root** (path escapes blocked) and a
@@ -339,10 +383,14 @@ rules at prompt top. Wells enforces rules in tiers, strongest first:
 1. **Tool-boundary enforcement** (`.wells/rules.yaml`, merged over
    `~/.wells/rules.yaml`): every tool call is checked *before* execution.
    `block` refuses outright, `confirm` pauses for y/N, `warn` injects the rule
-   into the model's next observation, and `liability` registers a stateful
-   obligation — e.g. *a rented GPU was started and must be terminated*.
-   **A run cannot silently end with an open liability**: Wells attempts an
-   automatic discharge pass, marks the run INCOMPLETE otherwise, shows a red
+   into the model's next observation, `allow` pre-clears `approve` mode's
+   normal per-action y/N for a matching call (a **permission allowlist** —
+   "always allow `git status`, always ask before `rm`" instead of a blanket
+   prompt for every mutating call; `auto`/`dryrun`/`plan`/`sandbox` are
+   unaffected either way), and `liability` registers a stateful obligation —
+   e.g. *a rented GPU was started and must be terminated*. **A run cannot
+   silently end with an open liability**: Wells attempts an automatic
+   discharge pass, marks the run INCOMPLETE otherwise, shows a red
    `⚠ LIABILITY` badge in the status bar, warns on next startup, and keeps
    the ledger in `~/.wells/liabilities.json` so even a crash can't lose track
    of a running paid resource.
@@ -354,11 +402,19 @@ rules at prompt top. Wells enforces rules in tiers, strongest first:
    rules) is injected into every system prompt, and the reviewer audits
    compliance — violations force the INCOMPLETE loop.
 
-Manage with `/rules` (list, reload after editing, `discharge <id>` to
-acknowledge a manually-closed resource). Default rules ship globally on first
-run: GPU-rental teardown tracking, force-push/hard-reset confirmation,
-bulk-rsync confirmation, auth-preflight and monitor-quality warnings.
-Kill-switch: `RULES_ENFORCE=0`; auto-discharge: `RULES_AUTODISCHARGE`.
+Manage with `/rules` (`list`, `reload` after editing, `discharge <id>` to
+acknowledge a manually-closed resource, `add`/`remove <id>` for simple
+pattern-triggered rules — liability rules, with their open/close regex
+pairs, stay hand-edited). `/rules add` (or the TUI form) writes a new rule
+by **appending** to `.wells/rules.yaml` — never a full parse+rewrite — so
+an existing hand-edited file keeps every comment exactly as written;
+`remove` does need a full rewrite and won't preserve comments. Default
+rules ship globally on first run: GPU-rental teardown tracking,
+force-push/hard-reset confirmation, bulk-rsync confirmation,
+auth-preflight and monitor-quality warnings, and one `allow` rule
+(`git status`/`diff`/`log`/`show`/`branch` never need confirmation, even
+in `approve` mode). Kill-switch: `RULES_ENFORCE=0`; auto-discharge:
+`RULES_AUTODISCHARGE`.
 
 ## Repository index (wells-index)
 
@@ -388,14 +444,15 @@ Evidence Over Confidence) are **always injected** into every agent's system
 prompt, so the harness behaves consistently whether you drive it with GLM, GPT,
 Claude, Gemini, or a local model.
 
-This is distinct from per-project `AGENTS.md` memory:
+This is distinct from per-project `AGENTS.md` memory, and from global,
+cross-project **user memory**:
 
-| | `AGENT.md` (bundled) | `AGENTS.md` (per-project) |
-|---|---|---|
-| **Purpose** | Behavioral rules — *how* the agent works | Project knowledge — *what* it knows about this repo |
-| **Scope** | Every run, every agent, every project | One project; accumulates over runs |
-| **Ship location** | Inside the harness package | The workspace root |
-| **Who writes it** | The harness authors (you can override) | The harness finisher + you |
+| | `AGENT.md` (bundled) | `AGENTS.md` (per-project) | User memory (global) |
+|---|---|---|---|
+| **Purpose** | Behavioral rules — *how* the agent works | Project knowledge — *what* it knows about this repo | Standing facts about *you* — how you like to work |
+| **Scope** | Every run, every agent, every project | One project; accumulates over runs | Every project you point Wells at |
+| **Ship location** | Inside the harness package | The workspace root | `~/.wells/memory/` |
+| **Who writes it** | The harness authors (you can override) | The harness finisher + you | You, via `/memory` |
 
 ### Override precedence (highest first)
 
@@ -408,6 +465,38 @@ This is distinct from per-project `AGENTS.md` memory:
 
 Inspect the active principles with `wells principles` or the MCP
 `get_principles` tool.
+
+## Global user memory
+
+`AGENTS.md` accumulates facts about *one repo*; this is the complementary,
+orthogonal piece — durable preferences that follow you to every project,
+the same category of thing Claude Code's own auto-memory keeps across
+conversations. An entry is a small `<name>.md` file directly under
+`~/.wells/memory/` (YAML front-matter + a short body):
+
+```markdown
+---
+name: terse-commit-messages
+type: feedback
+description: Prefers short, why-focused commit messages over detailed ones.
+---
+
+Keep commit subject lines under 50 chars. Only add a body when the "why"
+isn't obvious from the diff — never restate what changed.
+```
+
+Unlike skills/personas (below), entries are injected **directly and in
+full** into every system prompt — even in compact mode, alongside the
+`AGENT.md` principles — since these are meant to be short standing facts
+the agent should always have, not on-demand procedures. A total-size
+budget keeps an accumulated store from bloating every prompt, trimming the
+oldest entries with a notice rather than silently dropping one.
+
+Manage with `/memory` (list / show / add / edit / remove — CLI or the
+modal TUI form). `type` is free-form categorization (conventional values:
+`user`, `feedback`, `reference`) — it doesn't gate behavior, unlike a
+persona's `tools:` field. `WELLS_USER_MEMORY=0` disables the feature
+entirely.
 
 ## Agent capabilities
 
@@ -783,6 +872,73 @@ bg_collect(id="bg-3")                                                → merged 
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start`/`bg_status`/`bg_collect` (set `0` to disable) |
 | `WELLS_BG_WORKTREES` | `1` | Allow `bg_start role=worktree` (isolated git worktree per sub-agent; set `0` to refuse the role without disabling the bg tools) |
 
+### Subagent personas — custom specialist identities
+
+#### The problem
+
+`bg_start`'s `research`/`fix`/`worktree` roles control *mutation mechanics*
+(read-only vs. writes vs. isolated checkout) but say nothing about
+*expertise* — every subagent gets the same generic prompt regardless of
+what it's actually being asked to do. A security review and a performance
+investigation deserve different framing, different things to look for,
+different tone in the report back.
+
+#### The solution: `PERSONA.md` + `bg_start(persona=...)`
+
+A **persona** is a small `agents/<name>/PERSONA.md` file — discovered,
+cached, and CRUD'd exactly like [skills](#skills--load-on-demand-know-how)
+— that packages a subagent identity: a system prompt establishing its
+expertise/voice/constraints, plus which toolset tier it gets:
+
+```markdown
+---
+name: security-reviewer
+description: Reviews a diff for injection/auth/secrets issues before merge.
+tools: readonly
+---
+
+You are a senior application-security reviewer. For every file you're
+shown, look specifically for: injection (SQL/command/template), broken
+auth/session handling, hardcoded secrets, and unsafe deserialization.
+Report findings as `file:line — issue — why it's exploitable`.
+```
+
+Even cheaper than skills: a persona's full system prompt never touches the
+**parent's** context at all — only its name + one-line description show up
+there (so the parent knows it exists), and the full prompt is handed to the
+**subagent** run itself the moment `bg_start(persona=security-reviewer,
+role=research, task="review this diff")` picks it. `role` still governs
+mutation/isolation mechanics — `role=research` is always forced read-only
+regardless of what a persona's `tools:` front-matter requests; the role is
+the safety ceiling, the persona is the voice/expertise within it.
+
+Manage with `/agents` (list / show / add / edit / remove — CLI or the
+modal TUI form, identical interaction model to `/skills`). `WELLS_AGENTS=0`
+disables discovery; `WELLS_AGENTS_PATHS` adds extra search directories
+(path-separator list), same convention as `WELLS_SKILLS_PATHS`.
+
+### Model-driven todo list
+
+#### The problem
+
+The pipeline breadcrumb (in [The TUI](#the-tui)) shows *structural* graph
+position — which fixed node (planner/coder/tester/...) is running — but
+nothing about what the coder actually decided to do *inside* a long,
+multi-step task. That's the transparency Claude Code's own todo-list
+rendering gives that a fixed pipeline view can't.
+
+#### The solution: `update_todos`
+
+A tool the model calls to declare or update its own task breakdown for the
+current task — rendered live as a third, independent section of the info
+panel. Resends the full list each call (no partial-update API to keep in
+sync); at most one item may be `in_progress` at a time, so the panel always
+has one unambiguous point of progress to highlight. Read-only (pure
+in-memory display state, no workspace mutation), so it's available to
+read-only investigations too, same as `web_search`/`fetch_url`. Cleared at
+the start of every run — a todo list belongs to one task, not the whole
+session. `WELLS_TODO=0` disables it.
+
 
 ## MCP — server *and* client
 
@@ -872,10 +1028,20 @@ src/wells/
 ├── sandbox.py         # sandbox mode: disposable per-workspace container (Podman/Docker) for run_command
 ├── background.py      # Background agents: bg_start/bg_status/bg_collect (research/fix/worktree)
 ├── worktree.py        # Per-subagent git worktrees (role=worktree isolation + cherry-pick)
+├── personas.py        # Subagent personas: agents/<name>/PERSONA.md, discoverable custom identities*
+├── user_memory.py     # Global user memory: ~/.wells/memory/, cross-project standing preferences
+├── schedule.py        # wells schedule: unattended recurring runs (Task Scheduler / cron)
+├── todo.py            # update_todos tool: model-declared task breakdown for the info panel
 └── agents/            # planner / architect / coder / tester / reviewer
 wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 .github/workflows/     # ci.yml (pytest) + release-index.yml (PyPI wheels)
 ```
+
+<sup>*`personas.py` manages the workspace-level `agents/` **content** directory
+(user-authored `PERSONA.md` files) — a different thing from the
+`src/wells/agents/` **package** above it (the harness's own planner/
+architect/coder/tester/reviewer code). Named `personas.py`, not `agents.py`,
+specifically to avoid colliding with that package.</sup>
 
 ## Configuration reference
 
@@ -919,6 +1085,11 @@ wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 | `WELLS_BROWSER_EXECUTABLE` | _(auto-detect)_ | Pin an exact browser executable path, skipping auto-detection of Chrome/Edge/Brave |
 | `WELLS_SANDBOX_IMAGE` | `python:3.12-slim` | Container image used for `sandbox` mode's disposable container |
 | `WELLS_SANDBOX_RUNTIME` | _(auto)_ | Pin the container CLI (`podman` or `docker`); auto-detects, preferring Podman |
+| `WELLS_AGENTS` | `1` | Discover `agents/<name>/PERSONA.md` and expose them to `bg_start(persona=...)` |
+| `WELLS_AGENTS_PATHS` | _(blank)_ | Extra persona search dirs (path-separator list) |
+| `WELLS_USER_MEMORY` | `1` | Inject standing preferences from `~/.wells/memory/` into every project's prompts |
+| `WELLS_USER_MEMORY_DIR` | `~/.wells/memory` | Override the global memory directory (mainly for tests) |
+| `WELLS_TODO` | `1` | Expose `update_todos` for a model-declared live task breakdown in the info panel |
 
 Legacy `ZAI_*` variables keep working unchanged — they seed the built-in `zai`
 profile.
