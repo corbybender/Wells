@@ -295,6 +295,17 @@ SETTINGS: list[Setting] = [
         choices=("0", "1"),
     ),
     Setting(
+        "WELLS_SEMANTIC_CHECK",
+        "Semantic self-heal (type-checker)",
+        "Capabilities",
+        "After a write/edit, additionally run a real type-checker (pyright/"
+        "mypy, tsc, cargo check, go vet) and feed errors back to the model. "
+        "Off by default -- project-aware, so slower than the always-on fast "
+        "syntax check (SELF_CHECK).",
+        "0",
+        choices=("0", "1"),
+    ),
+    Setting(
         "WELLS_BROWSER",
         "Browser tools (navigate/click/type/screenshot)",
         "Capabilities",
