@@ -305,6 +305,35 @@ SETTINGS: list[Setting] = [
         "1",
         choices=("0", "1"),
     ),
+    # --- Notifications & budget ---------------------------------------------
+    Setting(
+        "WELLS_NOTIFY",
+        "Run-completion notifications",
+        "Notifications",
+        "Fire a desktop popup + webhook when a run finishes (on/off). Off by "
+        "default -- turn on for scheduled/headless runs so 'did it finish' "
+        "is visible without checking logs by hand.",
+        "0",
+        choices=("0", "1"),
+    ),
+    Setting(
+        "WELLS_NOTIFY_WEBHOOK_URL",
+        "Notification webhook URL",
+        "Notifications",
+        "POSTs a Slack-compatible {\"text\": ...} JSON payload here on run "
+        "completion (works out of the box with a Slack Incoming Webhook URL). "
+        "Blank = desktop notification only.",
+        "",
+    ),
+    Setting(
+        "WELLS_DAILY_BUDGET",
+        "Daily spend cap (USD)",
+        "Notifications",
+        "Refuse to start a new run once today's cumulative spend reaches this "
+        "many dollars (tracked in ~/.wells/spend.json, resets at midnight). "
+        "0 = unlimited (default) -- useful as a safety net for scheduled runs.",
+        "0",
+    ),
 ]
 
 SETTINGS_BY_KEY: dict[str, Setting] = {s.key: s for s in SETTINGS}

@@ -209,6 +209,16 @@ def _run_goal(
             print(json.dumps({"status": "error", "error": "model not configured"}))
         sys.exit(1)
 
+    from wells import spend_guard
+
+    if spend_guard.budget_exceeded():
+        msg = spend_guard.budget_message()
+        if json_mode:
+            print(json.dumps({"status": "error", "error": msg}))
+        else:
+            print(f"ERROR: {msg}")
+        sys.exit(1)
+
     LEDGER.reset()
     session_id = new_session_id()
     t0 = _time.time()
@@ -307,9 +317,34 @@ def _run_goal(
     t = LEDGER.totals()
     total = t["input"] + t["output"]
 
-    if json_mode:
-        from wells import pricing
+    from wells import pricing
 
+    cost = pricing.run_cost()
+
+    # Best-effort, never affects the run's own outcome: accumulate today's
+    # spend for the cross-run daily budget guard, and fire any configured
+    # notification channels (both no-op unless explicitly enabled).
+    try:
+        from wells import spend_guard
+
+        if cost:
+            spend_guard.add_spend(cost)
+    except Exception:
+        pass
+    try:
+        from wells import notify
+
+        notify.notify_run_complete(
+            goal=goal,
+            status=_stop_reason,
+            workspace=config.WORKSPACE_ROOT,
+            duration_seconds=duration,
+            cost=cost,
+        )
+    except Exception:
+        pass
+
+    if json_mode:
         payload = {
             "status": _stop_reason,
             "goal": goal,
@@ -327,7 +362,7 @@ def _run_goal(
                 "calls": t["calls"],
                 "cache_read": t["cache_read"],
             },
-            "cost_usd": pricing.run_cost(),
+            "cost_usd": cost,
             "duration_seconds": duration,
         }
         exit_code = 0 if payload["status"] == "complete" else 1
