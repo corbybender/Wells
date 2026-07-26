@@ -138,8 +138,10 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
     (
         "/rules",
         "Operating rules + open liabilities",
-        "Usage: /rules [list|reload|discharge <id>]. Rules are enforced at the "
-        "tool boundary (.wells/rules.yaml) and injected from RULES.md.",
+        "Usage: /rules [list|reload|discharge <id>|add|remove <id>]. Rules are "
+        "enforced at the tool boundary (.wells/rules.yaml) and injected from "
+        "RULES.md. severity=allow pre-clears approve mode's y/N for matching "
+        "calls -- a permission allowlist.",
     ),
     (
         "/skills",
@@ -1764,27 +1766,38 @@ def _enforce_liabilities(workspace: str) -> bool:
 
 
 def _handle_rules(arg: str) -> None:
-    """Handle /rules [list|reload|discharge <id>]."""
+    """Handle /rules [list|reload|discharge <id>|add|remove <id>]."""
     from rich.table import Table
     from wells import rules as rules_mod
 
     eng = rules_mod.engine_for(config.WORKSPACE_ROOT)
-    parts = arg.strip().split()
+    parts = arg.strip().split(None, 1)
     sub = parts[0].lower() if parts else "list"
+    rest = parts[1].strip() if len(parts) > 1 else ""
 
     if sub == "reload":
         rules_mod.reload_all()
         console.print(f"[green]Rules reloaded ({len(eng.rules)} active).[/green]")
         return
     if sub == "discharge":
-        if len(parts) < 2:
+        if not rest:
             console.print("[red]Usage: /rules discharge <rule-id>[/red]")
             return
-        n = eng.discharge(parts[1])
+        n = eng.discharge(rest)
         console.print(
-            f"[green]Discharged {n} liability(ies) for '{parts[1]}'.[/green]"
-            if n else f"[yellow]No open liabilities for '{parts[1]}'.[/yellow]"
+            f"[green]Discharged {n} liability(ies) for '{rest}'.[/green]"
+            if n else f"[yellow]No open liabilities for '{rest}'.[/yellow]"
         )
+        return
+    if sub == "add":
+        _rules_add_interactive(rest)
+        return
+    if sub in ("remove", "rm", "delete"):
+        if not rest:
+            console.print("[red]Usage: /rules remove <rule-id>[/red]")
+            return
+        ok, msg = rules_mod.remove_rule(config.WORKSPACE_ROOT, rest)
+        (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
         return
 
     # list
@@ -1793,7 +1806,7 @@ def _handle_rules(arg: str) -> None:
     table.add_column("Severity", no_wrap=True)
     table.add_column("Trigger")
     sev_color = {"block": "red", "confirm": "yellow", "warn": "cyan",
-                 "liability": "magenta"}
+                 "liability": "magenta", "allow": "green"}
     for r in eng.rules:
         c = sev_color.get(r.severity, "white")
         trig = (f"open: {r.open[:44]}…" if r.severity == "liability"
@@ -2306,6 +2319,31 @@ def _memory_edit_interactive(name: str) -> None:
     desc_kwarg = new_desc if new_desc else None
     type_kwarg = new_type if new_type else None
     ok, msg = um.update_memory(name, description=desc_kwarg, entry_type=type_kwarg, body=new_body)
+    (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+
+
+def _rules_add_interactive(id_arg: str) -> None:
+    """Interactive rule creation (plain-CLI path; TUI uses the modal form)."""
+    from wells import rules as rules_mod
+
+    rule_id = id_arg
+    if not rule_id:
+        try:
+            rule_id = input("Rule id (lowercase, hyphens ok): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[dim]Cancelled.[/dim]")
+            return
+    try:
+        severity = input("Severity [block/confirm/warn/allow]: ").strip().lower()
+        tool = input("Tool [dim](blank = any tool)[/dim]: ").strip()
+        pattern = input("Pattern (regex matched against the call's args): ").strip()
+        message = input("Message (shown to the model when this fires): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+    ok, msg = rules_mod.add_rule(
+        config.WORKSPACE_ROOT, rule_id, severity, pattern, message, tool
+    )
     (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
 
 
