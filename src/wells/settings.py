@@ -623,9 +623,9 @@ def _edit_vision_profile() -> dict[str, str] | None:
         default_model = ""
         if chosen == "openrouter":
             print("  Tip: OpenRouter has free vision models, e.g.")
-            print("       qwen/qwen2.5-vl-72b-instruct:free")
+            print("       nvidia/nemotron-nano-12b-v2-vl:free")
             print("  (needs API_KEY_openrouter, or reads OPENROUTER_API_KEY automatically)")
-            default_model = "qwen/qwen2.5-vl-72b-instruct:free"
+            default_model = "nvidia/nemotron-nano-12b-v2-vl:free"
         model = _prompt("Model id for this profile", default_model)
         if not model:
             print("  ! A model id is required.")

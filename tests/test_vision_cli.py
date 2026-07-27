@@ -115,6 +115,44 @@ def test_run_task_consumes_and_clears_pending_images(png_path: Path, monkeypatch
 
 
 # ---------------------------------------------------------------------------
+# _run_auto (the "auto" / direct-executor route) also consumes and clears
+# staged images -- regression test for the bug where pasted/staged images
+# were silently dropped on this route (only _run_task drained them).
+# ---------------------------------------------------------------------------
+
+
+def test_run_auto_forwards_pending_images_to_run_executor(png_path: Path, monkeypatch):
+    cli._REPL_STATE["pending_images"] = [str(png_path)]
+    captured = {}
+
+    def _fake_run_executor(**kwargs):
+        captured.update(kwargs)
+        from wells.executor import ExecutorResult
+
+        return ExecutorResult(summary="ok", stopped_reason="done", streamed=True)
+
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", str(png_path.parent))
+    monkeypatch.setattr(config, "INDEX_AUTO_UPDATE", False)
+
+    with (
+        patch("wells.executor.run_executor", side_effect=_fake_run_executor),
+        patch("wells.repomap.repo_map_block", return_value=""),
+        patch.object(cli, "_save_undo_checkpoint"),
+        patch.object(cli, "_enforce_liabilities", return_value=True),
+        patch.object(cli, "console"),
+        patch("wells.sessions.save_session"),
+        patch("wells.sessions.session_from_final_state", return_value={}),
+        patch("wells.sessions.new_session_id", return_value="x"),
+    ):
+        cli._run_auto("describe this image", {}, [])
+
+    assert captured.get("images") == [str(png_path)]
+    # One-shot attachment: cleared so it doesn't leak into every subsequent
+    # task for the rest of the session.
+    assert cli._REPL_STATE["pending_images"] == []
+
+
+# ---------------------------------------------------------------------------
 # main.py --image flag
 # ---------------------------------------------------------------------------
 

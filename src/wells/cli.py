@@ -733,6 +733,16 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
     resume_ctx: str | None = _REPL_STATE.pop("resume_context", None)
     _REPL_STATE.pop("resume_session_id", None)
 
+    # Images staged via /image or /paste-image (F4): one-shot, cleared after
+    # use -- they belong to THIS task, not every task for the rest of the
+    # session. The auto route bypasses agent_state entirely (it talks
+    # straight to run_executor), so it must drain pending_images itself
+    # rather than relying on _run_task's staging (which this route never hits).
+    staged_images: list[str] = list(_REPL_STATE.get("pending_images") or [])
+    if staged_images:
+        _REPL_STATE["pending_images"].clear()
+        console.print(f"[dim]📎 {len(staged_images)} image(s) attached to this task.[/dim]")
+
     original_goal = text
     effective_task = text
     if resume_ctx:
@@ -802,6 +812,7 @@ def _run_auto(text: str, agent_state: dict, callbacks) -> None:
             ctx=ctx,
             system_prefix=system_prefix,
             stream=config.STREAM_OUTPUT,
+            images=staged_images,
         )
 
         console.print()

@@ -95,7 +95,7 @@ def test_openrouter_legacy_env_key_fallback(monkeypatch):
     the openrouter profile without also needing API_KEY_openrouter set."""
     _clear_profile_env(monkeypatch)
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-legacy-key")
-    monkeypatch.setenv("MODEL_openrouter", "qwen/qwen2.5-vl-72b-instruct:free")
+    monkeypatch.setenv("MODEL_openrouter", "nvidia/nemotron-nano-12b-v2-vl:free")
 
     prof = providers.load_profile("openrouter")
     assert prof is not None
@@ -415,7 +415,7 @@ def test_edit_vision_profile_creates_new_openrouter_profile(monkeypatch):
     changes = settings._edit_vision_profile()
     assert changes is not None
     assert changes["MODEL_PROFILE_VISION"] == "openrouter"
-    assert changes["MODEL_openrouter"] == "qwen/qwen2.5-vl-72b-instruct:free"
+    assert changes["MODEL_openrouter"] == "nvidia/nemotron-nano-12b-v2-vl:free"
     assert changes["MODEL_PROFILES"] == "zai,openrouter"
     assert "API_KEY_openrouter" not in changes
     assert "BASE_URL_openrouter" not in changes
