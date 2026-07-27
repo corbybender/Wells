@@ -282,7 +282,7 @@ with `CHEAP_VERIFY`, the tester/reviewer).
 |---|---|---|
 | `zai` (default) | `openai` (OpenAI-compatible) | Z.ai GLM via the **coding endpoint** `/api/coding/paas/v4/`. Backward-compatible with legacy `ZAI_*` vars. |
 | `openai` | `openai` | OpenAI directly |
-| `openrouter` | `openai` | OpenRouter (hundreds of models) |
+| `openrouter` | `openai` | OpenRouter (hundreds of models, incl. several free-tier `:free` vision models — good fit for `MODEL_PROFILE_VISION`); auto-detects `OPENROUTER_API_KEY` |
 | `anthropic` | `anthropic` | Requires `pip install langchain-anthropic` |
 | `ollama` | `ollama` | Local models; requires `pip install langchain-ollama` |
 | `local` | `openai` | Any local vLLM / Ollama OpenAI shim |
@@ -298,6 +298,13 @@ API_KEY_<name>=<key>               # if the provider needs one
 BASE_URL_<name>=<url>              # for OpenAI-compatible endpoints
 ```
 
+`API_KEY_<name>` also falls back to that provider's own standard env var
+(`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `MISTRAL_API_KEY`,
+`DEEPSEEK_API_KEY`) for a profile named after that provider — so a key you
+already have set from another tool works immediately, no duplicate
+`API_KEY_<name>` needed.
+
 Select which profiles exist and which is active:
 
 ```bash
@@ -310,12 +317,20 @@ MODEL_PROFILE_VISION=openrouter    # optional: routed to for image-attached
                                     # vision model alongside a non-vision main)
 ```
 
-Manage every profile from `/config` — the settings list has full CRUD:
-**set** which profile an active/cheap/vision slot points to, **edit** a
-profile's model/key/URL ("Switch / edit provider profile"), **add** a new
-one from scratch, and **clear** any setting back to blank (`d` on the
-highlighted row) if a suggested profile stops being available or you'd
-rather use something else.
+Manage every profile from `/config` (full CRUD, no manual `.env` editing
+required):
+
+- `p` — switch the active profile, or edit an existing one's model/key/URL
+- `+` — add a brand-new profile from scratch
+- `-` — remove a profile from `MODEL_PROFILES`; if it was the active/cheap/
+  vision slot, that slot is cleared (cheap/vision) or reassigned (active)
+  automatically
+- `v` — dedicated vision-profile flow: point `MODEL_PROFILE_VISION` at an
+  existing profile, create a new one on the spot (suggests a free
+  OpenRouter vision model when the name is `openrouter`), or clear it back
+  to "same as active"
+
+Typing an env var name directly (e.g. `MODEL_PROFILE_CHEAP`) still works too.
 
 Optional provider packages are imported lazily — the harness runs out-of-the-box
 with only `langchain-openai` (the OpenAI-compatible path covers Z.ai, OpenAI,

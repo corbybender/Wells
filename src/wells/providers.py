@@ -48,6 +48,24 @@ _INSTALL_HINT: dict[str, str] = {
     "azure_openai": "pip install langchain-openai",
 }
 
+# Well-known providers' own standard env var name for their API key, checked
+# as a last-resort fallback for a profile named after them (e.g. a user who
+# already has OPENROUTER_API_KEY set from another tool shouldn't also have to
+# set API_KEY_openrouter just to use it as a Wells profile).
+_LEGACY_API_KEY_ENV: dict[str, str] = {
+    "zai": "ZAI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "together": "TOGETHER_API_KEY",
+    "fireworks": "FIREWORKS_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
+
 # Default provider kind inferred from a profile *name* when MODEL_PROVIDER_<N>
 # is not set. Names that are well-known OpenAI-compatible endpoints get base
 # URLs too, so a one-line ``MODEL_<N>=<model>`` is enough to use them.
@@ -114,6 +132,9 @@ def _resolve_api_key(profile_name: str) -> str:
     )
     if env_name:
         return os.environ.get(env_name, "").strip()
+    legacy = _LEGACY_API_KEY_ENV.get(profile_name)
+    if legacy:
+        return _env(legacy)
     return ""
 
 
@@ -157,10 +178,8 @@ def load_profile(name: str) -> ProviderProfile | None:
         *([legacy_url] if legacy_url else []),
         default=defaults.get("base_url", ""),
     )
-    # API key: explicit API_KEY_<name> (or indirection) -> legacy ZAI_API_KEY.
+    # API key: explicit API_KEY_<name> (or indirection) -> legacy provider var.
     api_key = _resolve_api_key(name)
-    if not api_key and is_zai:
-        api_key = _env("ZAI_API_KEY")
 
     extra_raw = _env(f"EXTRA_{name}", f"PROFILE_{name}_EXTRA")
     extra: dict[str, Any] = {}

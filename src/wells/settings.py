@@ -567,6 +567,87 @@ def _edit_provider_profile() -> dict[str, str] | None:
     return changes or None
 
 
+def _remove_provider_profile() -> dict[str, str] | None:
+    """Drop a profile from MODEL_PROFILES; clears active/cheap/vision refs that pointed to it."""
+    from wells import config
+
+    names = [n for n in config.MODEL_PROFILES.split(",") if n.strip()]
+    if not names:
+        print("  ! No profiles configured.")
+        return None
+    print("\n  Configured profiles:", ", ".join(names))
+    name = _prompt("Profile to remove (blank to cancel)").strip()
+    if not name:
+        return None
+    if name not in names:
+        print(f"  ! {name!r} is not in MODEL_PROFILES.")
+        return None
+    names.remove(name)
+    changes: dict[str, str] = {"MODEL_PROFILES": ",".join(names)}
+    if config.ACTIVE_PROFILE == name:
+        fallback = names[0] if names else "zai"
+        changes["MODEL_PROFILE"] = fallback
+        print(f"  {name!r} was the active profile — switching active to {fallback!r}.")
+    if config.CHEAP_PROFILE == name:
+        changes["MODEL_PROFILE_CHEAP"] = ""
+        print(f"  Cleared cheap profile (was {name!r}).")
+    if config.VISION_PROFILE == name:
+        changes["MODEL_PROFILE_VISION"] = ""
+        print(f"  Cleared vision profile (was {name!r}).")
+    return changes
+
+
+def _edit_vision_profile() -> dict[str, str] | None:
+    """Add / switch / clear the vision-capable provider profile (MODEL_PROFILE_VISION).
+
+    Points MODEL_PROFILE_VISION at an existing profile, creates a brand-new
+    one on the spot (e.g. a free OpenRouter vision model), or clears it back
+    to "same as active".
+    """
+    from wells import config, providers
+
+    names = [n for n in config.MODEL_PROFILES.split(",") if n.strip()]
+    cur = config.VISION_PROFILE or "(none -- falls back to active profile)"
+    print(f"\n  Available profiles: {', '.join(names)}")
+    print(f"  Current vision profile: {cur}")
+    print("  Enter an existing profile name, a NEW name to create one, or 'clear' to unset.")
+    chosen = _prompt("Vision profile", config.VISION_PROFILE)
+    if not chosen or chosen == config.VISION_PROFILE:
+        return None
+    if chosen.lower() in ("clear", "none", "-"):
+        return {"MODEL_PROFILE_VISION": ""}
+
+    changes: dict[str, str] = {}
+    if chosen not in names:
+        print(f"  Profile {chosen!r} is new -- set it up now.")
+        default_model = ""
+        if chosen == "openrouter":
+            print("  Tip: OpenRouter has free vision models, e.g.")
+            print("       qwen/qwen2.5-vl-72b-instruct:free")
+            print("  (needs API_KEY_openrouter, or reads OPENROUTER_API_KEY automatically)")
+            default_model = "qwen/qwen2.5-vl-72b-instruct:free"
+        model = _prompt("Model id for this profile", default_model)
+        if not model:
+            print("  ! A model id is required.")
+            return None
+        changes[f"MODEL_{chosen}"] = model
+        key = _prompt("API key (blank to use an existing env var, e.g. OPENROUTER_API_KEY)")
+        if key:
+            changes[f"API_KEY_{chosen}"] = key
+        url = _prompt("Base URL (blank for provider default)")
+        if url:
+            changes[f"BASE_URL_{chosen}"] = url
+        names.append(chosen)
+        changes["MODEL_PROFILES"] = ",".join(names)
+    else:
+        prof = providers.load_profile(chosen)
+        if prof is None:
+            print(f"  ! {chosen!r} is listed but not configured -- add a model id first.")
+            return None
+    changes["MODEL_PROFILE_VISION"] = chosen
+    return changes
+
+
 def _add_provider_profile() -> dict[str, str] | None:
     """Flow to add a brand-new profile from scratch."""
     print("\n  Add a new provider profile")
@@ -616,6 +697,8 @@ def _menu_actions() -> list[Action]:
     actions: list[Action] = [
         ("p", "Switch / edit provider profile", _edit_provider_profile),
         ("+", "Add a new provider profile", _add_provider_profile),
+        ("-", "Remove a provider profile", _remove_provider_profile),
+        ("v", "Add / switch / clear vision provider profile", _edit_vision_profile),
     ]
     for s in SETTINGS:
         actions.append((s.key, f"{s.label}  ({s.category})", _wrap_setting_handler(s)))
@@ -637,6 +720,8 @@ def interactive_menu(env_path: Path | None = None, *, loop: bool = True) -> bool
         print("What do you want to change?")
         print("  p) Switch / edit provider profile (fast path)")
         print("  +) Add a new provider profile")
+        print("  -) Remove a provider profile")
+        print("  v) Add / switch / clear vision provider profile")
         print("  --- or type an ENV VAR name to edit it directly ---")
         print("  s) Save & exit     q) Quit without saving     w) Write .env now")
         try:
