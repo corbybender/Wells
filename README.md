@@ -1325,6 +1325,12 @@ The launcher (`wells.bat` / `wells`) auto-installs `fastembed` and
 
 Manual install also works: `uv pip install fastembed sqlite-vec`.
 
-On first `semantic_search` call, the corpus is embedded once (a few seconds
-for a typical repo); subsequent calls hit the cached table.
+The corpus is embedded once (a few seconds for a typical repo, more on a slow
+network for the first-ever model download); subsequent calls hit the cached
+table. An explicit `semantic_search` tool call embeds synchronously on first
+use (the model asked for a result and needs it to proceed), but the passive
+repomap re-rank never blocks a run waiting on it: it kicks the embed off in a
+background thread and falls back to keyword-only ranking until it lands —
+so a cold corpus can't turn "building repo map" into a multi-second stall on
+every message.
 

@@ -150,12 +150,16 @@ def _semantic_rerank(
     if not embeddings.EMBED_AVAILABLE:
         return
 
-    # Trigger embedding of the corpus if needed (first-run cost). Errors here
-    # are non-fatal — we just skip the re-rank and fall back to heuristic only.
+    # Embedding the corpus needs a one-time local model load (fastembed
+    # downloading/initializing BAAI/bge-small-en-v1.5 — several seconds, much
+    # longer on a slow network) plus per-symbol embedding. None of that may
+    # block the user's request: kick it off in the background and, on this
+    # call, just skip the semantic blend if it isn't ready yet — the
+    # heuristic-only ranking below is fully functional without it. Once
+    # warm-up lands (typically well before the next message), later calls
+    # get the semantic boost automatically.
     try:
-        stats = embeddings.ensure_embedded(workspace)
-        if stats.get("error") and stats.get("total", 0) > 0:
-            # A real failure mid-embedding; bail on re-rank.
+        if not embeddings.ensure_embedded_async(workspace):
             return
     except Exception:
         return

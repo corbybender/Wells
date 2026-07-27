@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import struct
 import threading
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -505,6 +506,117 @@ def file_cosine(workspace: str | Path, rel_path: str, query_vec: list[float]) ->
     return max(0.0, _cosine(fv, query_vec))
 
 
+# --------------------------------------------------------------------------- #
+# Background warm-up (non-blocking corpus embedding)
+# --------------------------------------------------------------------------- #
+#
+# ensure_embedded() lazily loads a local ONNX model on first use (fastembed
+# downloads/initializes BAAI/bge-small-en-v1.5) and then embeds every
+# not-yet-embedded symbol -- several seconds at best, much longer on a slow
+# network or a big repo's first-ever embed. None of that needs to sit on the
+# critical path of a user's first query: the heuristic-only repo map ranking
+# is fully functional on its own, and the semantic boost is a bonus re-rank.
+# This runs the same idempotent ensure_embedded() in a background thread and
+# reports readiness via a per-workspace flag, so callers (repomap's semantic
+# re-rank) can skip the blend while warm-up is in flight and pick it up
+# automatically once it lands -- a classic stale-while-revalidate.
+
+_warm_state: dict[str, dict[str, Any]] = {}
+_warm_lock = threading.Lock()
+_WARM_REFRESH_SECONDS = 300  # re-embed periodically to pick up new symbols
+
+
+def _has_pending_embeddings(workspace: str | Path) -> bool:
+    """Cheap check (no model load): is there at least one un-embedded symbol?
+
+    Distinguishes "already embedded on a previous run" (persisted in
+    ``index.db``, so this call is basically free) from "real work needed"
+    (which requires the slow model load) -- only the latter should defer to
+    a background thread.
+    """
+    conn = _open_db(workspace)
+    if conn is None:
+        return False  # no index db yet -> nothing to embed either
+    try:
+        _ensure_schema(conn)
+        row = conn.execute(
+            "SELECT COUNT(*) FROM symbols s "
+            "LEFT JOIN vec_symbol_meta m ON m.symbol_id = s.id "
+            "WHERE m.symbol_id IS NULL;"
+        ).fetchone()
+        return bool(row and row[0] > 0)
+    except Exception:
+        return True  # unsure -> conservatively defer to the background path
+    finally:
+        conn.close()
+
+
+def ensure_embedded_async(workspace: str | Path) -> bool:
+    """Kick off (idempotent) background embedding for ``workspace`` if due.
+
+    Returns ``True`` when embeddings are usable right now -- either nothing
+    is pending (a cheap check, no model load) or a previous warm-up already
+    completed. Returns ``False`` only while a *new* warm-up (real work: at
+    least one symbol needs embedding, which requires the slow model load) is
+    in flight -- callers should skip the semantic blend for this call and
+    fall back to heuristic-only ranking.
+
+    A completed warm-up's readiness never flips back to ``False`` -- a
+    periodic refresh (every ``_WARM_REFRESH_SECONDS``) re-runs in the
+    background to catch newly-indexed symbols, but embeddings already
+    computed stay usable while that refresh is in flight.
+    """
+    key = str(workspace)
+    with _warm_lock:
+        st = _warm_state.get(key)
+        if st is not None and st["in_progress"]:
+            # A run (first embed or periodic refresh) is already in flight;
+            # report last known readiness rather than re-checking or piling
+            # on a second thread for the same workspace.
+            return st["ready"]
+
+    now = time.monotonic()
+    should_start = False
+    with _warm_lock:
+        st = _warm_state.setdefault(
+            key, {"ready": False, "in_progress": False, "last_start": 0.0}
+        )
+        due = now - st["last_start"] > _WARM_REFRESH_SECONDS
+        if due:
+            # Cheap check (no model load) -- only spawn a thread when there's
+            # real work; an already-embedded corpus (persisted from a prior
+            # run) is usable immediately with no thread needed at all.
+            if _has_pending_embeddings(workspace):
+                st["in_progress"] = True
+                st["last_start"] = now
+                should_start = True
+            else:
+                st["ready"] = True
+                st["last_start"] = now
+        ready = st["ready"]
+
+    if should_start:
+        def _run() -> None:
+            try:
+                ensure_embedded(workspace)
+            finally:
+                # Defensive: the entry could in principle be cleared (or
+                # never existed) between thread start and finish -- e.g. a
+                # cache reset. Recreate rather than assume presence, so this
+                # background thread can never raise into "unhandled thread
+                # exception" territory.
+                with _warm_lock:
+                    entry = _warm_state.setdefault(
+                        key, {"ready": False, "in_progress": False, "last_start": 0.0}
+                    )
+                    entry["in_progress"] = False
+                    entry["ready"] = True
+
+        threading.Thread(target=_run, daemon=True, name="wells-embed-warmup").start()
+
+    return ready
+
+
 def invalidate_file_cache(workspace: str | None = None) -> None:
     """Drop the file-aggregate cache (call after the structural index changes)."""
     with _FILE_VEC_LOCK:
@@ -520,6 +632,7 @@ __all__ = [
     "EMBED_AVAILABLE",
     "index_db_path",
     "ensure_embedded",
+    "ensure_embedded_async",
     "embed_query",
     "semantic_search",
     "file_aggregate_embedding",
