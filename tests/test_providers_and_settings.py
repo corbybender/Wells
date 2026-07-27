@@ -21,6 +21,9 @@ def _clear_profile_env(monkeypatch, keep: set[str] | None = None) -> None:
         if k.startswith(("MODEL_", "API_KEY_", "BASE_URL_", "ZAI_", "PROFILE_")):
             if k not in keep:
                 monkeypatch.delenv(k, raising=False)
+    for legacy in providers._LEGACY_API_KEY_ENV.values():
+        if legacy not in keep:
+            monkeypatch.delenv(legacy, raising=False)
     providers.clear_cache()
 
 
@@ -85,6 +88,28 @@ def test_named_profile_resolution(monkeypatch):
     assert prof.model == "anthropic/claude-sonnet-4"
     assert prof.api_key == "or-key"
     assert "openrouter.ai" in prof.base_url
+
+
+def test_openrouter_legacy_env_key_fallback(monkeypatch):
+    """OPENROUTER_API_KEY (the provider's own standard var name) should seed
+    the openrouter profile without also needing API_KEY_openrouter set."""
+    _clear_profile_env(monkeypatch)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-legacy-key")
+    monkeypatch.setenv("MODEL_openrouter", "qwen/qwen2.5-vl-72b-instruct:free")
+
+    prof = providers.load_profile("openrouter")
+    assert prof is not None
+    assert prof.api_key == "or-legacy-key"
+
+
+def test_explicit_api_key_beats_legacy_env_key(monkeypatch):
+    _clear_profile_env(monkeypatch)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-legacy-key")
+    monkeypatch.setenv("API_KEY_openrouter", "or-explicit-key")
+    monkeypatch.setenv("MODEL_openrouter", "m")
+
+    prof = providers.load_profile("openrouter")
+    assert prof.api_key == "or-explicit-key"
 
 
 def test_unconfigured_profile_returns_none(monkeypatch):
@@ -365,6 +390,81 @@ def test_apply_changes_sets_env(monkeypatch):
     monkeypatch.delenv("X_APPLY", raising=False)
     settings.apply_changes({"X_APPLY": "yes"})
     assert os.environ["X_APPLY"] == "yes"
+
+
+# ---------------------------------------------------------------------------
+# Settings: vision profile add/switch/clear + profile removal
+# ---------------------------------------------------------------------------
+
+
+def test_edit_vision_profile_creates_new_openrouter_profile(monkeypatch):
+    from wells import config
+
+    monkeypatch.setattr(config, "MODEL_PROFILES", "zai")
+    monkeypatch.setattr(config, "ACTIVE_PROFILE", "zai")
+    monkeypatch.setattr(config, "VISION_PROFILE", "")
+
+    inputs = iter([
+        "openrouter",  # vision profile name (new)
+        "",  # model id -- accept the suggested default
+        "",  # API key -- blank, rely on OPENROUTER_API_KEY
+        "",  # base URL -- blank, use provider default
+    ])
+    monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
+
+    changes = settings._edit_vision_profile()
+    assert changes is not None
+    assert changes["MODEL_PROFILE_VISION"] == "openrouter"
+    assert changes["MODEL_openrouter"] == "qwen/qwen2.5-vl-72b-instruct:free"
+    assert changes["MODEL_PROFILES"] == "zai,openrouter"
+    assert "API_KEY_openrouter" not in changes
+    assert "BASE_URL_openrouter" not in changes
+
+
+def test_edit_vision_profile_clear(monkeypatch):
+    from wells import config
+
+    monkeypatch.setattr(config, "MODEL_PROFILES", "zai,openrouter")
+    monkeypatch.setattr(config, "ACTIVE_PROFILE", "zai")
+    monkeypatch.setattr(config, "VISION_PROFILE", "openrouter")
+
+    monkeypatch.setattr("builtins.input", lambda *_: "clear")
+
+    changes = settings._edit_vision_profile()
+    assert changes == {"MODEL_PROFILE_VISION": ""}
+
+
+def test_remove_provider_profile_clears_vision_ref(monkeypatch):
+    from wells import config
+
+    monkeypatch.setattr(config, "MODEL_PROFILES", "zai,openrouter")
+    monkeypatch.setattr(config, "ACTIVE_PROFILE", "zai")
+    monkeypatch.setattr(config, "CHEAP_PROFILE", "")
+    monkeypatch.setattr(config, "VISION_PROFILE", "openrouter")
+
+    monkeypatch.setattr("builtins.input", lambda *_: "openrouter")
+
+    changes = settings._remove_provider_profile()
+    assert changes is not None
+    assert changes["MODEL_PROFILES"] == "zai"
+    assert changes["MODEL_PROFILE_VISION"] == ""
+    assert "MODEL_PROFILE" not in changes  # active profile untouched
+
+
+def test_remove_provider_profile_reassigns_active(monkeypatch):
+    from wells import config
+
+    monkeypatch.setattr(config, "MODEL_PROFILES", "zai,openrouter")
+    monkeypatch.setattr(config, "ACTIVE_PROFILE", "openrouter")
+    monkeypatch.setattr(config, "CHEAP_PROFILE", "")
+    monkeypatch.setattr(config, "VISION_PROFILE", "")
+
+    monkeypatch.setattr("builtins.input", lambda *_: "openrouter")
+
+    changes = settings._remove_provider_profile()
+    assert changes is not None
+    assert changes["MODEL_PROFILES"] == "zai"
+    assert changes["MODEL_PROFILE"] == "zai"
 
 
 def test_mask_short_and_long():
