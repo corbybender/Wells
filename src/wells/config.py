@@ -470,8 +470,19 @@ def get_llm_for_task(task_type: str, temperature: float = 0.3):
     return providers.get_chat_model(name, temperature=temperature, timeout=LLM_TIMEOUT)
 
 
+_TRANSIENT_GATEWAY_CODES = {"429", "500", "502", "503", "504"}
+
+
 def _is_transient(err: Exception) -> bool:
-    """True for errors worth retrying (timeouts, connection issues, 429, 5xx)."""
+    """True for errors worth retrying (timeouts, connection issues, 429, 5xx).
+
+    Also covers OpenRouter's gateway-level failures (e.g. an overloaded
+    free-tier backend), which come back as HTTP 200 with an embedded error
+    body -- langchain_openai raises a bare ``ValueError({'message': ...,
+    'code': 504})`` for these rather than an ``openai.*Error`` subclass, so
+    without this check a transient "Upstream idle timeout exceeded" gave up
+    after one attempt instead of using the retry/backoff loop below.
+    """
     try:
         import openai
 
@@ -487,6 +498,10 @@ def _is_transient(err: Exception) -> bool:
             return True
     except Exception:
         pass
+    if isinstance(err, ValueError) and err.args and isinstance(err.args[0], dict):
+        code = str(err.args[0].get("code", ""))
+        if code in _TRANSIENT_GATEWAY_CODES:
+            return True
     return False
 
 
