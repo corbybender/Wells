@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from wells import providers, settings
+from wells import config, providers, settings
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +390,31 @@ def test_apply_changes_sets_env(monkeypatch):
     monkeypatch.delenv("X_APPLY", raising=False)
     settings.apply_changes({"X_APPLY": "yes"})
     assert os.environ["X_APPLY"] == "yes"
+
+
+# ---------------------------------------------------------------------------
+# LLM retry classification (_is_transient)
+# ---------------------------------------------------------------------------
+
+
+def test_is_transient_true_for_openrouter_gateway_5xx():
+    """OpenRouter returns gateway failures (overloaded free-tier backend) as
+    HTTP 200 with an embedded error body -- langchain_openai surfaces that as
+    a bare ValueError, not an openai.*Error subclass. Regression test for the
+    "Upstream idle timeout exceeded" (code 504) case giving up after a
+    single attempt instead of retrying."""
+    err = ValueError({"message": "Upstream idle timeout exceeded", "code": 504})
+    assert config._is_transient(err) is True
+
+
+def test_is_transient_true_for_openrouter_gateway_string_code():
+    err = ValueError({"message": "Bad gateway", "code": "502"})
+    assert config._is_transient(err) is True
+
+
+def test_is_transient_false_for_non_gateway_valueerror():
+    assert config._is_transient(ValueError("not a dict at all")) is False
+    assert config._is_transient(ValueError({"message": "bad request", "code": 400})) is False
 
 
 # ---------------------------------------------------------------------------
