@@ -324,3 +324,80 @@ def test_index_tools_exposes_semantic_search_when_available(mocked_embeddings):
     from wells import index_tools
     names = [t.name for t in index_tools.INDEX_TOOLS]
     assert "semantic_search" in names
+
+
+# --------------------------------------------------------------------------- #
+# Background warm-up (ensure_embedded_async) -- must never block the caller
+# with the model-load/full-corpus-embed cost.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _clean_warm_state():
+    import threading as _threading
+    from wells import embeddings
+    embeddings._warm_state.clear()
+    yield
+    # Let any background warm-up thread this test started finish before
+    # clearing state out from under it (the code is defensive against this
+    # now, but joining keeps test teardown deterministic / warning-free).
+    for t in _threading.enumerate():
+        if t.name == "wells-embed-warmup":
+            t.join(timeout=2.0)
+    embeddings._warm_state.clear()
+
+
+def test_ensure_embedded_async_defers_first_real_work(indexed_workspace, mocked_embeddings):
+    """A brand-new (never-embedded) corpus has real pending work -- the first
+    call must return False immediately (not block) and finish in the
+    background rather than on the caller's thread."""
+    emb = mocked_embeddings
+    import time as _time
+
+    t0 = _time.monotonic()
+    ready = emb.ensure_embedded_async(indexed_workspace)
+    elapsed = _time.monotonic() - t0
+
+    assert ready is False
+    assert elapsed < 1.0, "must return immediately, not block on the embed"
+
+    # Background thread should complete quickly against the fake fast model.
+    for _ in range(50):
+        if emb.ensure_embedded_async(indexed_workspace):
+            break
+        _time.sleep(0.05)
+    else:
+        pytest.fail("background warm-up never completed")
+
+    # Once warm, the corpus really is embedded (not just flagged ready).
+    stats = emb.ensure_embedded(indexed_workspace)
+    assert stats["embedded"] == 0  # nothing left pending
+
+
+def test_ensure_embedded_async_ready_immediately_when_already_embedded(
+    indexed_workspace, mocked_embeddings
+):
+    """When the corpus was already embedded (e.g. a prior process persisted
+    it to index.db), there's no real work left -- ready on the first call,
+    no background thread needed."""
+    emb = mocked_embeddings
+    emb.ensure_embedded(indexed_workspace)  # synchronous pre-embed
+
+    assert emb.ensure_embedded_async(indexed_workspace) is True
+
+
+def test_repomap_semantic_rerank_skips_blend_while_warming_up(
+    indexed_workspace, mocked_embeddings
+):
+    """repomap must fall back to heuristic-only scores (no crash, no change)
+    while the background embed is still in flight for a fresh corpus."""
+    from wells import repomap
+
+    entries = [
+        (0.0, "src/math_util.py", "src/math_util.py: add, matrix_multiply"),
+        (0.0, "src/auth.py", "src/auth.py: login, check_password, Session"),
+    ]
+    repomap._semantic_rerank(entries, str(indexed_workspace), "login password")
+    # No embeddings yet (first touch) -- scores must be untouched.
+    assert entries[0][0] == 0.0
+    assert entries[1][0] == 0.0
