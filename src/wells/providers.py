@@ -350,6 +350,18 @@ def _build_chat_model(profile: ProviderProfile, *, temperature: float, timeout: 
             kwargs["base_url"] = profile.base_url
         kwargs["timeout"] = timeout
         kwargs["max_retries"] = 0  # we run our own backoff in config._invoke_with_retry
+        # openai-python stamps every request with "User-Agent: OpenAI/Python x.x.x"
+        # plus X-Stainless-* fingerprint headers. Reverse proxies / WAFs fronting a
+        # self-hosted endpoint (Cloudflare, tunnels, etc.) commonly flag that
+        # signature as bot traffic and 403 it, even though a browser-like client
+        # (curl, OpenCode, ...) hitting the exact same URL sails through. Override
+        # with a normal browser UA so we don't get blocked purely on fingerprint.
+        kwargs["default_headers"] = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        }
         # Use certifi CA bundle for SSL on Windows (httpx doesn't use system store).
         try:
             import certifi
