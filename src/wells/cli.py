@@ -11,7 +11,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from wells import chat, config, settings
 from wells.graph import build_graph
 from wells.tokens import LEDGER
-from wells.main import _print_final_summary, _print_info, _reload_module_config
+from wells.main import _print_final_summary, _print_info, _print_post_run_panel, _reload_module_config
 
 console = Console()
 
@@ -146,8 +146,17 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
     (
         "/skills",
         "Manage agent skills (SKILL.md)",
-        "Usage: /skills [list|show <name>|add <name>|edit <name>|remove <name>]. "
-        "Skills are discoverable know-how loaded on demand by the agent.",
+        "Usage: /skills [list|show <name>|add <name>|edit <name>|remove <name>"
+        "|proposals [list|accept <name>|reject <name>|show <name>]]. "
+        "Skills are discoverable know-how loaded on demand by the agent. "
+        "`proposals` reviews skills auto-authored from clean, verified runs.",
+    ),
+    (
+        "/reflections",
+        "Past failure critiques (Reflexion)",
+        "Usage: /reflections [list|clear]. Shows failure critiques the harness "
+        "captured on past runs (.wells/reflections.md) so the planner can avoid "
+        "repeating them. `clear` deletes the file.",
     ),
     (
         "/agents",
@@ -313,6 +322,8 @@ def handle_slash_command(command: str) -> bool:
         _handle_rules(arg)
     elif cmd == "/skills":
         _handle_skills(arg)
+    elif cmd == "/reflections":
+        _handle_reflections(arg)
     elif cmd == "/agents":
         _handle_agents(arg)
     elif cmd == "/memory":
@@ -1085,6 +1096,7 @@ def _run_task(text: str, agent_state: dict, app, callbacks) -> None:
 
         _REPL_STATE["last_state"] = dict(agent_state)
         _print_final_summary(agent_state)
+        _print_post_run_panel(agent_state)
 
         t = LEDGER.totals()
         total = t["input"] + t["output"]
@@ -1863,8 +1875,58 @@ def _save_undo_checkpoint() -> None:
         _REPL_STATE["undo_checkpoint"] = None
 
 
+def _handle_reflections(arg: str) -> None:
+    """Handle /reflections [list|clear] — past failure critiques (Reflexion)."""
+    from rich.table import Table
+    from wells import reflections
+
+    ws = config.WORKSPACE_ROOT
+    sub = (arg.strip().split(None, 1)[0] or "list").lower()
+
+    if not reflections.enabled():
+        console.print(
+            "[dim]Reflexion is disabled (WELLS_REFLECTIONS=0).[/dim]"
+        )
+        return
+
+    if sub == "clear":
+        if reflections.clear(ws):
+            console.print("[green]Cleared reflections.[/green]")
+        else:
+            console.print(
+                "[red]Could not clear reflections (denied by safety policy).[/red]"
+            )
+        return
+
+    items = reflections.load(ws)
+    if not items:
+        console.print(
+            "[dim]No reflections yet. Wells captures a critique automatically "
+            "when a run fails the test gate or the reviewer rejects it "
+            "(.wells/reflections.md).[/dim]"
+        )
+        return
+    table = Table(show_header=True, header_style="bold yellow", expand=False)
+    table.add_column("When", no_wrap=True)
+    table.add_column("Type", no_wrap=True)
+    table.add_column("Goal", overflow="fold")
+    table.add_column("Critique", overflow="fold")
+    for r in items:
+        table.add_row(
+            r.timestamp,
+            r.failure_type,
+            r.goal[:80],
+            r.critique[:120],
+        )
+    console.print(table)
+    console.print(
+        f"[dim]{len(items)} reflection(s) in {ws}/.wells/reflections.md. "
+        "The planner injects the top relevant ones per goal automatically.[/dim]"
+    )
+
+
 def _handle_skills(arg: str) -> None:
-    """Handle /skills [list|show <name>|add <name>|edit <name>|remove <name>]."""
+    """Handle /skills [list|show|add|edit|remove|proposals ...]."""
     from rich.panel import Panel
     from rich.table import Table
     from wells import skills as sk
@@ -1926,8 +1988,89 @@ def _handle_skills(arg: str) -> None:
         (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
         return
 
+    if sub == "proposals":
+        _handle_skill_proposals(name_arg, ws)
+        return
+
     console.print(
-        "[red]Usage: /skills [list|show <name>|add <name>|edit <name>|remove <name>][/red]"
+        "[red]Usage: /skills [list|show <name>|add <name>|edit <name>|remove <name>"
+        "|proposals [list|accept <name>|reject <name>|show <name>]][/red]"
+    )
+
+
+def _handle_skill_proposals(arg: str, ws: str) -> None:
+    """Review auto-authored skill proposals (self-improvement #2).
+
+    Proposals are staged under ``.wells/skill-proposals/`` from clean, verified
+    runs. They cost no context until accepted, which promotes them to
+    ``.wells/skills/<name>/SKILL.md`` (discoverable via ``load_skill``).
+    """
+    from rich.panel import Panel
+    from rich.table import Table
+    from wells import skill_authoring as sa
+
+    parts = arg.strip().split(None, 1)
+    sub = parts[0].lower() if parts else "list"
+    name = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "list" or not sub:
+        proposals = sa.list_proposals(ws)
+        if not proposals:
+            console.print(
+                "[dim]No skill proposals. Wells proposes skills automatically "
+                "after clean, verified runs (enable with "
+                "[bold]WELLS_AUTOSKILL=1[/bold]).[/dim]"
+            )
+            return
+        table = Table(show_header=True, header_style="bold cyan", expand=False)
+        table.add_column("Name", no_wrap=True)
+        table.add_column("Description")
+        table.add_column("Source goal", overflow="fold")
+        for p in proposals:
+            table.add_row(
+                p.name,
+                p.description or "[dim](no description)[/dim]",
+                p.source_goal[:80],
+            )
+        console.print(table)
+        console.print(
+            f"[dim]{len(proposals)} proposal(s). "
+            "Accept with [bold]/skills proposals accept <name>[/bold], "
+            "reject with [bold]/skills proposals reject <name>[/bold].[/dim]"
+        )
+        return
+
+    if sub == "show":
+        if not name:
+            console.print("[red]Usage: /skills proposals show <name>[/red]")
+            return
+        proposals = {p.name: p for p in sa.list_proposals(ws)}
+        p = proposals.get(name.lower())
+        if p is None:
+            console.print(f"[red]No proposal named {name!r}.[/red]")
+            return
+        raw = p.path.read_text(encoding="utf-8", errors="replace")
+        console.print(Panel(raw, title=f"[bold]Proposal: {p.name}[/bold]", border_style="cyan"))
+        return
+
+    if sub == "accept":
+        if not name:
+            console.print("[red]Usage: /skills proposals accept <name>[/red]")
+            return
+        ok, msg = sa.accept_proposal(name, ws)
+        (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+        return
+
+    if sub in ("reject", "rm", "delete"):
+        if not name:
+            console.print("[red]Usage: /skills proposals reject <name>[/red]")
+            return
+        ok, msg = sa.reject_proposal(name, ws)
+        (console.print(f"[green]{msg}[/green]") if ok else console.print(f"[red]{msg}[/red]"))
+        return
+
+    console.print(
+        "[red]Usage: /skills proposals [list|show <name>|accept <name>|reject <name>][/red]"
     )
 
 

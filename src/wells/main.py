@@ -113,6 +113,57 @@ def _print_final_summary(state: dict) -> None:
     print(bar)
 
 
+def _print_post_run_panel(state: dict) -> None:
+    """Surface self-improvement outcomes (proposed skills, captured reflections).
+
+    Prints a highlighted panel after a run so the user notices when Wells has
+    learned something from this run and can act on it. Visible in every surface:
+    the TUI (renders via the redirected Rich console), headless one-shot mode,
+    and plain CLI. No-op when neither a skill was proposed nor a reflection
+    captured, so clean runs with nothing learned stay quiet.
+    """
+    skill_proposed = (state.get("skill_proposed") or "").strip()
+    reflection_written = (state.get("reflection_written") or "").strip()
+    if not skill_proposed and not reflection_written:
+        return
+
+    lines: list[str] = []
+    if skill_proposed:
+        from pathlib import Path
+
+        name = Path(skill_proposed).stem
+        lines.append(
+            f"[bold cyan]New skill proposed:[/bold cyan] [white]{name}[/white]\n"
+            "[dim]Auto-authored from this verified run. Review and make it\n"
+            "permanent, or ignore to leave it as a proposal:[/dim]\n"
+            f"  [green]/skills proposals accept {name}[/green]"
+            f"   [red]/skills proposals reject {name}[/red]\n"
+            "[dim]or run [bold]/skills proposals[/bold] for the visual review.[/dim]"
+        )
+    if reflection_written:
+        lines.append(
+            "[yellow]Reflection captured:[/yellow] "
+            "[dim]a failure critique was recorded so the planner avoids the\n"
+            "same trap next time. See [bold]/reflections[/bold] to review or clear.[/dim]"
+        )
+
+    try:
+        from wells.cli import console
+
+        console.print(
+            "\n[bold]╭─ self-improvement ────────────────────────────────╮[/bold]"
+        )
+        for ln in lines:
+            console.print(ln)
+        console.print("[bold]╰───────────────────────────────────────────────────╯[/bold]")
+    except Exception:
+        # Plain-text fallback (headless with no Rich console).
+        print("\n── self-improvement ──")
+        for block in lines:
+            print(block)
+        print("─" * 22)
+
+
 def _indent(text: str, spaces: int) -> str:
     pad = " " * spaces
     return "\n".join(pad + ln for ln in text.splitlines())
@@ -368,6 +419,7 @@ def _run_goal(
         exit_code = 0 if payload["status"] == "complete" else 1
     else:
         _print_final_summary(final_state)
+        _print_post_run_panel(final_state)
         print(
             f"\n[tokens] {total:,} total "
             f"({t['input']:,} in / {t['output']:,} out) across {t['calls']} calls"

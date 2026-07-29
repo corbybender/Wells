@@ -421,6 +421,44 @@ WELLS_SEARXNG_URL: str = os.getenv("WELLS_SEARXNG_URL", "").strip()
 # hooks.yaml present.
 HOOKS_ENABLE: bool = os.getenv("WELLS_HOOKS", "1") not in ("0", "false", "no", "")
 
+# Reflexion (self-improvement #1): after a run that failed the test gate or
+# was rejected by the reviewer, the finisher writes a structured, human-readable
+# critique to <workspace>/.wells/reflections.md. The planner then retrieves the
+# top-K reflections relevant to the current goal and injects them, so the same
+# failure mode is not repeated across runs. Default on; critique synthesis is
+# deterministic (no extra LLM call) unless WELLS_REFLECTIONS_LLM=1.
+WELLS_REFLECTIONS: bool = os.getenv("WELLS_REFLECTIONS", "1") not in (
+    "0", "false", "no", "",
+)
+WELLS_REFLECTIONS_K: int = int(os.getenv("WELLS_REFLECTIONS_K", "3"))
+# Opt-in semantic (embedding) ranking of reflections. Off by default: the
+# keyword-overlap ranker is fully deterministic and free; enabling this uses
+# the local ONNX embedder (first-use model load costs a few seconds).
+WELLS_REFLECTIONS_EMBED: bool = os.getenv("WELLS_REFLECTIONS_EMBED", "0") not in (
+    "0", "false", "no", "",
+)
+# Opt-in LLM-distilled critique (one cheap-model call per captured failure).
+WELLS_REFLECTIONS_LLM: bool = os.getenv("WELLS_REFLECTIONS_LLM", "0") not in (
+    "0", "false", "no", "",
+)
+
+# Auto-skill authoring (self-improvement #2): after a clean, verified run
+# (review COMPLETE + suite green/no tests), the finisher packages the run's
+# proven procedure into a SKILL.md proposal staged under
+# <workspace>/.wells/skill-proposals/. Nothing is permanent until the user
+# accepts it via `/skills proposals accept <name>`, which promotes it to
+# <workspace>/.wells/skills/<name>/SKILL.md (discoverable from then on).
+WELLS_AUTOSKILL: bool = os.getenv("WELLS_AUTOSKILL", "1") not in (
+    "0", "false", "no", "",
+)
+# Minimum plan steps a clean run must have to be worth packaging as a skill
+# (skips trivial one-line tasks so the proposal queue stays useful).
+WELLS_AUTOSKILL_MIN_STEPS: int = int(os.getenv("WELLS_AUTOSKILL_MIN_STEPS", "2"))
+# Opt-in LLM-polished skill name + description + summary.
+WELLS_AUTOSKILL_LLM: bool = os.getenv("WELLS_AUTOSKILL_LLM", "0") not in (
+    "0", "false", "no", "",
+)
+
 
 def active_profile_name() -> str:
     """Name of the currently active provider profile."""

@@ -546,3 +546,117 @@ def test_schedule_add_screen_rejects_bad_interval(tmp_path, monkeypatch):
                 assert app.screen is screen
 
     _run(body)
+
+
+# ---------------------------------------------------------------------------
+# Proposal banner + review modal (self-improvement #2 surfaces)
+# ---------------------------------------------------------------------------
+
+
+def test_proposal_banner_shows_when_proposals_exist(tmp_path, monkeypatch):
+    """The right-panel banner highlights when a proposal is staged."""
+    from wells import config as config_mod
+    from wells.tui import ProposalBanner, WellsApp
+    from wells import skill_authoring as sa
+    from wells import skills as sk
+
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HARNESS_SAFETY", "auto")
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+    sk.clear_cache()
+    # Stage a proposal directly.
+    pdir = tmp_path / ".wells" / "skill-proposals"
+    pdir.mkdir(parents=True)
+    (pdir / "my-task.md").write_text(
+        "---\nname: my-task\ndescription: A test skill.\nsource_goal: x\n"
+        "status: proposal\n---\nBody.\n", encoding="utf-8",
+    )
+    assert sa.list_proposals(str(tmp_path))  # sanity
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(140, 40)) as pilot:
+                await pilot.pause()
+                banner = app._panel.query_one("#proposal-banner", ProposalBanner)
+                # _refresh runs on a 1s interval; the banner should carry the
+                # highlighted pseudo-class when proposals are staged.
+                assert "-has-proposals" in banner.classes
+
+    _run(body)
+
+
+def test_proposal_banner_hidden_when_no_proposals(tmp_path, monkeypatch):
+    from wells import config as config_mod
+    from wells.tui import ProposalBanner, WellsApp
+
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(140, 40)) as pilot:
+                await pilot.pause()
+                banner = app._panel.query_one("#proposal-banner", ProposalBanner)
+                assert "-has-proposals" not in banner.classes
+
+    _run(body)
+
+
+def test_proposal_review_modal_accepts(tmp_path, monkeypatch):
+    """The modal's Accept action promotes a proposal to a discoverable skill."""
+    from wells import config as config_mod
+    from wells.tui import ProposalReviewScreen, WellsApp
+    from wells import skill_authoring as sa
+    from wells import skills as sk
+
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("HARNESS_SAFETY", "auto")
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+    sk.clear_cache()
+    pdir = tmp_path / ".wells" / "skill-proposals"
+    pdir.mkdir(parents=True)
+    (pdir / "from-run.md").write_text(
+        "---\nname: from-run\ndescription: d.\nsource_goal: g\n"
+        "status: proposal\n---\nBody.\n", encoding="utf-8",
+    )
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(140, 40)) as pilot:
+                screen = ProposalReviewScreen()
+                app.push_screen(screen)
+                await pilot.pause()
+                # Select the first (only) proposal and accept.
+                screen.query_one("#proposal-list").highlighted = 0
+                screen.action_accept()
+                await pilot.pause()
+                # Proposal consumed; skill now discoverable.
+                assert sa.list_proposals(str(tmp_path)) == []
+                assert sk.skills_for(str(tmp_path)).by_name("from-run") is not None
+
+    _run(body)
+    sk.clear_cache()
+
+
+def test_banner_click_handler_opens_review_modal(tmp_path, monkeypatch):
+    """The app's on_review_requested handler pushes ProposalReviewScreen."""
+    from wells import config as config_mod
+    from wells.tui import ProposalBanner, ProposalReviewScreen, WellsApp
+
+    monkeypatch.setattr(config_mod, "WORKSPACE_ROOT", str(tmp_path))
+
+    async def body():
+        with patch.object(WellsApp, "_ensure_repo_index", lambda self: None):
+            app = WellsApp()
+            async with app.run_test(size=(140, 40)) as pilot:
+                await pilot.pause()
+                # Fire the handler directly (the banner posts this message on
+                # click; here we exercise the app's handler end-to-end).
+                app.on_review_requested(ProposalBanner.ReviewRequested())
+                await pilot.pause()
+                assert isinstance(app.screen, ProposalReviewScreen)
+
+    _run(body)

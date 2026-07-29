@@ -101,6 +101,11 @@ InfoPanel {
     overflow-y: auto;
 }
 
+InfoPanel > #info-dashboard {
+    width: 100%;
+    height: 1fr;
+}
+
 #bottom {
     height: auto;
     dock: bottom;
@@ -259,11 +264,53 @@ class StatusBar(Static):
 # Right-side info panel (F2 toggles; the bottom bar takes over when hidden)
 # ---------------------------------------------------------------------------
 
-class InfoPanel(Static):
+class ProposalBanner(Static):
+    """Clickable banner in the info panel: shown when skill proposals exist.
+
+    Clicking (or pressing Enter while focused) opens :class:`ProposalReviewScreen`
+    via a bubbled :class:`ReviewRequested` message caught by the app.
+    """
+
+    class ReviewRequested(Message):
+        pass
+
+    DEFAULT_CSS = """
+    ProposalBanner {
+        height: 0;            /* collapsed when no proposals */
+        dock: top;
+        background: $accent 30%;
+        color: $text;
+        padding: 0 1;
+        text-align: center;
+        text-style: bold;
+    }
+    ProposalBanner.-has-proposals {
+        height: 2;
+    }
+    """
+
+    def on_click(self, event) -> None:  # noqa: D401
+        self.post_message(self.ReviewRequested())
+
+
+class InfoPanel(Vertical):
     """Always-visible session dashboard: workspace, model, mode, tokens/$,
-    activity, pinned files, MCP servers, index, git, liabilities."""
+    activity, pinned files, MCP servers, index, git, liabilities.
+
+    Also hosts a :class:`ProposalBanner` at the top that highlights when the
+    finisher has staged an auto-authored skill (self-improvement #2) — click it
+    to open the visual review modal.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield ProposalBanner("", id="proposal-banner")
+        yield Static("", id="info-dashboard", markup=True)
 
     def on_mount(self) -> None:
+        self._dashboard: Static = self.query_one("#info-dashboard", Static)
+        self._banner: ProposalBanner = self.query_one(
+            "#proposal-banner", ProposalBanner
+        )
         self._slow_cache: dict = {}   # 30s-cached expensive lookups
         self._slow_at = 0.0
         self._rules_cache: tuple[float, list] = (0.0, [])  # 5s TTL (file read)
@@ -281,9 +328,28 @@ class InfoPanel(Static):
 
     def _refresh(self) -> None:
         try:
-            self.update(self._build())
+            self._dashboard.update(self._build())
         except Exception:
             pass
+        try:
+            self._refresh_banner()
+        except Exception:
+            pass
+
+    def _refresh_banner(self) -> None:
+        """Show/highlight the proposal banner when proposals are staged."""
+        from wells import skill_authoring as sa
+
+        count = len(sa.list_proposals(config.WORKSPACE_ROOT))
+        if count:
+            label = "skill proposal" if count == 1 else "skill proposals"
+            self._banner.update(
+                f"[bold]⚡ {count} {label}[/bold]\n"
+                "[dim]click to review[/dim]"
+            )
+            self._banner.add_class("-has-proposals")
+        else:
+            self._banner.remove_class("-has-proposals")
 
     # -- cached expensive lookups (index stats, git branch) -----------------
 
@@ -1350,6 +1416,162 @@ class SkillEditScreen(ModalScreen["dict | None"]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class ProposalReviewScreen(ModalScreen[None]):
+    """Review auto-authored skill proposals: view, accept, reject, edit-then-accept.
+
+    Reached from the right-panel banner click, bare ``/skills proposals``, or
+    the post-run panel. Each proposal was staged by the finisher from a clean,
+    verified run (see :mod:`wells.skill_authoring`); nothing is permanent until
+    accepted here.
+    """
+
+    CSS = """
+    ProposalReviewScreen { align: center middle; }
+    #proposal-panel {
+        width: 96; max-width: 96%; height: 80%;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #proposal-title { height: 2; text-style: bold; }
+    #proposal-list { height: 1fr; border: none; }
+    #proposal-status { height: 2; color: $text-muted; }
+    #proposal-view { display: none; height: 1fr; border: solid $accent; padding: 0 1; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", priority=True),
+        Binding("a", "accept", "Accept"),
+        Binding("r", "reject", "Reject"),
+        Binding("e", "edit", "Edit+Accept"),
+        Binding("enter", "view", "View"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="proposal-panel"):
+            yield Static(
+                "Skill Proposals  [dim](Enter: view · a: accept · "
+                "r: reject · e: edit then accept · Esc: close)[/dim]",
+                id="proposal-title", markup=True,
+            )
+            yield OptionList(id="proposal-list")
+            yield Static("", id="proposal-view", markup=True, disabled=True)
+            yield Static("", id="proposal-status", markup=True)
+
+    def on_mount(self) -> None:
+        self._populate()
+        self.query_one("#proposal-list", OptionList).focus()
+
+    def _status(self, text: str) -> None:
+        self.query_one("#proposal-status", Static).update(text)
+
+    def _populate(self) -> None:
+        from wells import skill_authoring as sa
+
+        lst = self.query_one("#proposal-list", OptionList)
+        highlighted = lst.highlighted
+        lst.clear_options()
+        proposals = sa.list_proposals(config.WORKSPACE_ROOT)
+        if not proposals:
+            lst.add_option(Option(
+                "[dim]No proposals. Wells proposes skills automatically after "
+                "clean, verified runs.[/dim]",
+                id="_hdr_empty", disabled=True,
+            ))
+        else:
+            for p in proposals:
+                lst.add_option(
+                    Option(f"{p.name}  [dim]— {p.description}[/dim]", id=p.name)
+                )
+        if highlighted is not None and lst.option_count:
+            lst.highlighted = min(highlighted, lst.option_count - 1)
+
+    def _selected(self) -> str | None:
+        lst = self.query_one("#proposal-list", OptionList)
+        if lst.highlighted is None:
+            return None
+        opt = lst.get_option_at_index(lst.highlighted)
+        name = opt.id or ""
+        return None if name.startswith("_hdr_") else name
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    def action_view(self) -> None:
+        name = self._selected()
+        if not name:
+            return
+        from pathlib import Path
+
+        path = Path(config.WORKSPACE_ROOT) / ".wells" / "skill-proposals" / f"{name}.md"
+        view = self.query_one("#proposal-view", Static)
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            self._status(f"[red]Could not read: {e}[/red]")
+            return
+        view.update(f"[bold cyan]── {name} ──[/bold cyan]\n{raw}")
+        self._status(f"[dim]{path}[/dim]")
+
+    def action_accept(self) -> None:
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select a proposal to accept.[/dim]")
+            return
+        from wells import skill_authoring as sa
+
+        ok, msg = sa.accept_proposal(name, config.WORKSPACE_ROOT)
+        self._populate()
+        (self._status(f"[green]{msg}[/green]")
+         if ok else self._status(f"[red]{msg}[/red]"))
+
+    def action_reject(self) -> None:
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select a proposal to reject.[/dim]")
+            return
+        from wells import skill_authoring as sa
+
+        ok, msg = sa.reject_proposal(name, config.WORKSPACE_ROOT)
+        self._populate()
+        (self._status(f"[green]{msg}[/green]")
+         if ok else self._status(f"[red]{msg}[/red]"))
+
+    def action_edit(self) -> None:
+        """Edit the proposal's description/body in SkillEditScreen, then accept."""
+        name = self._selected()
+        if not name:
+            self._status("[dim]Select a proposal to edit.[/dim]")
+            return
+        from wells import skill_authoring as sa
+
+        path = Path(config.WORKSPACE_ROOT) / ".wells" / "skill-proposals" / f"{name}.md"
+        if not path.is_file():
+            self._status(f"[red]No proposal named {name}[/red]")
+            return
+        proposal = sa._parse_proposal_file(path)
+        if proposal is None:
+            self._status(f"[red]Proposal {name!r} is unreadable.[/red]")
+            return
+        existing = {
+            "name": proposal.name,
+            "description": proposal.description,
+            "body": proposal.body,
+        }
+
+        def _done(result: dict | None) -> None:
+            if not result:
+                return
+            ok, msg = sa.accept_proposal(
+                name, config.WORKSPACE_ROOT,
+                description=result.get("description"),
+                body=result.get("body"),
+            )
+            self._populate()
+            (self._status(f"[green]{msg}[/green]")
+             if ok else self._status(f"[red]{msg}[/red]"))
+
+        self.app.push_screen(SkillEditScreen(existing=existing), _done)
 
 
 class SkillsScreen(ModalScreen[None]):
@@ -2562,6 +2784,11 @@ class WellsApp(App[None]):
         self._input.load_text(text)
         self._input.move_cursor(self._input.document.end)
 
+    def on_review_requested(self, event: ProposalBanner.ReviewRequested) -> None:
+        """Right-panel proposal banner click → open the review modal."""
+        event.stop()
+        self.push_screen(ProposalReviewScreen())
+
     def on_prompt_input_history_scroll(self, event: PromptInput.HistoryScroll) -> None:
         if not self._history:
             return
@@ -2747,6 +2974,13 @@ class WellsApp(App[None]):
                 # No subcommand: open the visual manager (like /config, /mcp).
                 self.push_screen(SkillsScreen())
                 return
+            if sub == "proposals":
+                # Bare /skills proposals → open the visual review modal.
+                # Sub-args (accept/reject/show/list with a name) fall through
+                # to the CLI handler, which is non-blocking and safe here.
+                if len(args) < 2:
+                    self.push_screen(ProposalReviewScreen())
+                    return
             if sub in ("add", "edit", "update") and not (len(args) >= 2):
                 # Bare /skills add or /skills edit with no name → use the modal
                 # (the CLI handler calls input() which deadlocks under Textual).
