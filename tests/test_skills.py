@@ -527,3 +527,59 @@ def test_cli_skills_show_unknown(safe_workspace: Path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "Unknown" in out or "missing" in out.lower()
 
+
+# ---------------------------------------------------------------------------
+# .wells/skills — where auto-authored skills land once promoted
+# (see wells.skill_authoring). Discovery + delete confinement.
+# ---------------------------------------------------------------------------
+
+
+def test_discovers_skills_under_wells_skills_dir(tmp_path: Path, monkeypatch):
+    """The auto-authoring promotion target is a discoverable root."""
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+    sk = tmp_path / ".wells" / "skills" / "from-run"
+    sk.mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        "---\nname: from-run\ndescription: Auto-authored.\n---\nBody.\n",
+        encoding="utf-8",
+    )
+    idx = skills.skills_for(str(tmp_path))
+    assert idx.by_name("from-run") is not None
+
+
+def test_delete_skill_under_wells_skills_dir(tmp_path: Path, monkeypatch):
+    """A promoted skill under .wells/skills is deletable from the menu."""
+    monkeypatch.setenv("HARNESS_SAFETY", "auto")
+    skills.clear_cache()
+    sk = tmp_path / ".wells" / "skills" / "promoted"
+    sk.mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        "---\nname: promoted\ndescription: d.\n---\nb.\n", encoding="utf-8"
+    )
+    ok, msg = skills.delete_skill("promoted", str(tmp_path))
+    assert ok, msg
+    assert not sk.exists()
+    skills.clear_cache()
+
+
+def test_skill_proposals_subcommand_lists(tmp_path: Path, monkeypatch, capsys):
+    """`/skills proposals` surfaces staged proposals."""
+    import wells.cli as cli_mod
+    from wells import skill_authoring as sa
+
+    monkeypatch.setenv("WELLS_BUILTIN_SKILLS", "0")
+    monkeypatch.setattr(cli_mod.config, "WORKSPACE_ROOT", str(tmp_path))
+    # Stage a proposal directly.
+    proposals_dir = tmp_path / ".wells" / "skill-proposals"
+    proposals_dir.mkdir(parents=True)
+    (proposals_dir / "my-thing.md").write_text(
+        "---\nname: my-thing\ndescription: A thing.\nsource_goal: do the thing\n"
+        "status: proposal\n---\nBody.\n",
+        encoding="utf-8",
+    )
+    assert sa.list_proposals(str(tmp_path))  # sanity
+    cli_mod._handle_skills("proposals list")
+    out = capsys.readouterr().out
+    assert "my-thing" in out
+
+

@@ -123,8 +123,10 @@ def _skill_paths(workspace: str | None = None) -> list[Path]:
     """Roots to search for ``skills/<name>/SKILL.md`` (or loose ``SKILL.md``).
 
       1. ``<workspace>/skills/`` (the conventional location)
-      2. Any extra dir in ``WELLS_SKILLS_PATHS`` (os.pathsep-separated)
-      3. The package's built-in skills (``WELLS_BUILTIN_SKILLS=0`` to disable)
+      2. ``<workspace>/.wells/skills/`` (where auto-authored skills land once
+         promoted — see :mod:`wells.skill_authoring`)
+      3. Any extra dir in ``WELLS_SKILLS_PATHS`` (os.pathsep-separated)
+      4. The package's built-in skills (``WELLS_BUILTIN_SKILLS=0`` to disable)
 
     Non-existent dirs are silently skipped. Duplicates removed.
     """
@@ -132,6 +134,7 @@ def _skill_paths(workspace: str | None = None) -> list[Path]:
     try:
         ws = safety.workspace_root(workspace)
         roots.append(ws / "skills")
+        roots.append(ws / ".wells" / "skills")
     except Exception:
         pass
     extra = os.environ.get("WELLS_SKILLS_PATHS", "").strip()
@@ -363,6 +366,26 @@ def _skills_dir(workspace: str | None = None) -> Path:
     return root / "skills"
 
 
+def _managed_skill_dirs(workspace: str | None = None) -> list[Path]:
+    """Workspace-owned skill roots a delete/move is allowed to touch.
+
+    The conventional ``skills/`` plus the auto-authoring promotion target
+    ``.wells/skills/``. Skills loaded from ``WELLS_SKILLS_PATHS`` or the
+    built-in set are outside both and cannot be mutated from the menu.
+    """
+    root = safety.workspace_root(workspace)
+    return [root / "skills", root / ".wells" / "skills"]
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """True when ``child`` is ``parent`` or somewhere underneath it."""
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
 def skill_file_path(name: str, workspace: str | None = None) -> Path | None:
     """Return the ``SKILL.md`` path for ``name``, or None if not found."""
     skill = skills_for(workspace).by_name(name)
@@ -461,17 +484,21 @@ def delete_skill(name: str, workspace: str | None = None) -> tuple[bool, str]:
     if skill is None:
         return False, f"Unknown skill {name!r}."
 
-    # Confinement: only delete skills that live under the workspace skills dir.
-    ws_skills = _skills_dir(workspace).resolve()
+    # Confinement: only delete skills that live under a workspace-owned root.
+    managed = [d.resolve() for d in _managed_skill_dirs(workspace)]
     try:
         skill_dir = skill.path.parent.resolve()
-        skill_dir.relative_to(ws_skills)
     except (ValueError, OSError):
         return (
             False,
-            f"Skill {name!r} is not under {ws_skills} — it may be loaded from "
-            "WELLS_SKILLS_PATHS and can't be deleted from here. Remove its "
-            "folder manually.",
+            f"Could not resolve the location of skill {name!r}.",
+        )
+    if not any(_is_within(skill_dir, d) for d in managed):
+        return (
+            False,
+            f"Skill {name!r} is not under a workspace skills directory — it may "
+            "be loaded from WELLS_SKILLS_PATHS and can't be deleted from here. "
+            "Remove its folder manually.",
         )
 
     detail = f"delete skill {name!r} ({skill_dir})"

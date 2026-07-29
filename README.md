@@ -60,6 +60,7 @@ global install, or want the full walkthrough of every option? →
 - [Agent capabilities](#agent-capabilities)
   - [Skills](#skills--load-on-demand-know-how) · [CodeAct](#codeact--let-it-compute) · [Browser](#browser--drive-a-real-js-rendered-session)
   - [Background agents](#background-agents--concurrent-fan-out) · [Subagent personas](#subagent-personas--custom-specialist-identities) · [Model-driven todo list](#model-driven-todo-list)
+- [Self-improvement](#self-improvement--reflexion--auto-skill-authoring) — [Reflexion](#reflexion--persistent-failure-critiques) (failure critiques) · [Auto-skill authoring](#auto-skill-authoring--package-verified-runs-into-reusable-skills) (proven-run → skill proposals)
 - [MCP — server and client](#mcp--server-and-client)
 - [Project structure](#project-structure)
 - [Configuration reference](#configuration-reference)
@@ -246,9 +247,10 @@ decided to do inside a step.
 | `/config` | Modal settings panel — all settings grouped, edit in place, saves to `.env`. Choice-constrained settings (`HARNESS_SAFETY`, `PLAN_MODE`, ...) open an arrow+Enter picker instead of typing — no way to mistype a value |
 | `/mcp` | Modal MCP server manager — add / enable / disable / test / remove servers |
 | `/rules` | Operating rules + open liabilities (`list` / `reload` / `discharge <id>` / `add` / `remove <id>`) |
-| `/skills` | Modal skills manager — list / view / add / edit / remove `SKILL.md` know-how |
+| `/skills` | Modal skills manager — list / view / add / edit / remove `SKILL.md` know-how; `proposals` reviews auto-authored skills |
 | `/agents` | Modal subagent-persona manager — list / view / add / edit / remove `PERSONA.md` custom specialist identities |
 | `/memory` | Modal global-memory manager — list / view / add / edit / remove standing preferences (`~/.wells/memory/`, every project) |
+| `/reflections` | List / clear captured failure critiques (`.wells/reflections.md`) |
 | `/schedule` | Register/list/remove unattended recurring runs (Task Scheduler / cron) |
 | `/orchestrate` | Route the next message through the full planning graph |
 | `/resume` / `/sessions` | Continue a previous session / browse history |
@@ -1099,6 +1101,128 @@ the start of every run — a todo list belongs to one task, not the whole
 session. `WELLS_TODO=0` disables it.
 
 
+## Self-improvement — Reflexion + auto-skill authoring
+
+Two closed loops turn each run's outcome into a durable asset so Wells gets
+better at *this repo* the more you use it. Both are on by default, both are
+human-readable files version-controlled with the code, and both gate any
+promotion behind your explicit approval.
+
+### Reflexion — persistent failure critiques
+
+#### The problem
+
+The reviewer and tester already emit rich, human-readable critiques when a
+run fails — but until now those critiques were *ephemeral*: they steered
+the coder's next iteration within the same run, then disappeared. The same
+failure mode could repeat verbatim on the next run, against the same repo,
+with no memory of having hit it before.
+
+#### The solution: capture, dedupe, re-inject
+
+After a run that failed the deterministic test gate or was genuinely
+rejected by the reviewer, the finisher writes a structured, timestamped
+critique to **`.wells/reflections.md`**:
+
+```markdown
+### 2026-07-29 14:02 — wire up the payment webhook
+- type: test_failure
+<!-- sig: a3f9c1e08b4d -->
+Critique: Automated test gate failed for this goal. FAILED tests/test_pay.py::test_sig - AssertionError: bad sig
+Evidence:
+FAILED tests/test_pay.py::test_sig - AssertionError: bad sig
+```
+
+Before the *next* run, the planner retrieves the **top-K reflections
+relevant to the current goal** (keyword-overlap ranking — deterministic and
+free; opt-in embedding re-rank with `WELLS_REFLECTIONS_EMBED=1`) and
+prepends them, so it starts already warned about the project's known traps:
+
+```
+PAST REFLECTIONS — failures this project hit before. Avoid repeating them:
+[1] (test_failure) Automated test gate failed... bad sig
+    goal: wire up the payment webhook
+```
+
+| Behaviour | Detail |
+|---|---|
+| **What gets captured** | Deterministic test-gate red (`tests_passed=False`) or a real reviewer rejection (`review_complete=False`). Dry/plan runs never captured. |
+| **What does *not*** | Infra failures (`review_error` — an expired API key is not a lesson about this repo) |
+| **Dedup** | Each block carries a `<!-- sig: ... -->` fingerprint (type + goal keywords + evidence head), so the *same* failure loop is recorded once, not every iteration |
+| **Compaction** | A size cap folds the oldest entries into one summary line, the same strategy `AGENTS.md` uses |
+| **Safety gate** | Honours plan/approve/dryrun like every other write |
+
+Review or clear with **`/reflections`** (`list` / `clear`). Nothing about
+reflections is hidden — it's a plain markdown file you can edit, prune, or
+commit alongside the code it describes.
+
+### Auto-skill authoring — package verified runs into reusable skills
+
+#### The problem
+
+[Skills](#skills--load-on-demand-know-how) are only ever as good as the
+procedure they encode. The most reliable procedures are the ones a run has
+*already proven* — a clean, verified execution path through this exact
+repo. Until now those paths stayed trapped in the run trace; the next
+similar task had to rediscover them from scratch.
+
+#### The solution: qualify → propose → approve
+
+| Stage | What happens |
+|---|---|
+| **1. Qualify** | After a run, the finisher confirms it was genuinely verified (reviewer `COMPLETE` + suite green or no runnable tests) and actually produced a non-trivial change. Dry-run/plan runs and infra failures never qualify. |
+| **2. Propose** | The verified plan is packaged into a `SKILL.md` **proposal** staged under `.wells/skill-proposals/`. Proposals are *not* scanned by the skills system, so they cost zero context and cannot be loaded by the agent until promoted. |
+| **3. Approve** | You review proposals and either accept or reject each one. Accepting moves the file to `.wells/skills/<name>/SKILL.md` (a discoverable root) and clears the skill cache; from the next run on, the agent can `load_skill` it like any hand-authored skill. |
+
+Name/description/body synthesis is **deterministic** (no extra LLM call) —
+derived from the planner's verified steps and the coder's change summary.
+`WELLS_AUTOSKILL_LLM=1` opts into a cheap-model-polished name and summary.
+A minimum-step threshold (`WELLS_AUTOSKILL_MIN_STEPS`, default 2) skips
+trivial one-liners so the proposal queue stays useful.
+
+### Three ways you find out a skill was proposed
+
+Wells never silently promotes anything — but it does make sure you *notice*
+a proposal exists:
+
+1. **End-of-run panel** (every surface — TUI, headless, plain CLI). A
+   highlighted `╭─ self-improvement ─╮` box appears right after the run
+   summary, naming the proposed skill and showing the exact
+   `/skills proposals accept <name>` / `reject <name>` commands. Silent
+   when nothing was learned.
+2. **Right-panel banner** (TUI). A `⚡ N skill proposals — click to review`
+   bar appears at the top of the info panel within a second of the run
+   finishing. Clicking it opens the review modal. Collapses to zero height
+   when there's nothing pending.
+3. **Review modal** (TUI). `/skills proposals` (or the banner click) opens
+   `ProposalReviewScreen`: list, view full body, **a**ccept, **r**eject,
+   or **e**dit-then-accept (tweak name/description/body before promoting).
+
+| Command | What it does |
+|---|---|
+| `/skills proposals` | Open the visual review modal (TUI), or list proposals (CLI) |
+| `/skills proposals list` | List staged proposals (name + description + source goal) |
+| `/skills proposals show <name>` | Print a proposal's full staged file |
+| `/skills proposals accept <name>` | Promote a proposal to a discoverable `.wells/skills/<name>/SKILL.md` |
+| `/skills proposals reject <name>` | Delete a staged proposal |
+| `/reflections` | List captured failure critiques (or `clear` the file) |
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `WELLS_REFLECTIONS` | `1` | Capture failure critiques to `.wells/reflections.md` and inject them into the planner (set `0` to disable) |
+| `WELLS_REFLECTIONS_K` | `3` | Top-K reflections injected per goal |
+| `WELLS_REFLECTIONS_EMBED` | `0` | Opt-in embedding re-rank (uses the local ONNX embedder; keyword ranking is the free default) |
+| `WELLS_REFLECTIONS_LLM` | `0` | Opt-in LLM-distilled critique (one cheap-model call per captured failure) |
+| `WELLS_AUTOSKILL` | `1` | Propose skills from clean, verified runs (set `0` to disable) |
+| `WELLS_AUTOSKILL_MIN_STEPS` | `2` | Minimum plan steps a clean run must have to be worth packaging |
+| `WELLS_AUTOSKILL_LLM` | `0` | Opt-in LLM-polished skill name + description + summary |
+
+Both features degrade to no-ops when disabled — a clean run with nothing
+learned produces no panel, no banner, and no proposal.
+
+
 ## MCP — server *and* client
 
 ### Server: drive Wells from other agents
@@ -1184,6 +1308,8 @@ src/wells/
 ├── logo.py            # TUI glyph lockup
 ├── principles.py      # AGENT.md injection
 ├── skills.py          # Agent skills: discoverable SKILL.md, load-on-demand
+├── skill_authoring.py # Auto-skill authoring: package verified runs into skill proposals (self-improvement #2)
+├── reflections.py     # Reflexion: persistent failure critiques → planner injection (self-improvement #1)
 ├── codeact.py         # CodeAct: sandboxed run_code tool
 ├── browser.py         # Browser tools: navigate/click/type/read/screenshot (Playwright)
 ├── sandbox.py         # sandbox mode: disposable per-workspace container (Podman/Docker) for run_command
@@ -1240,6 +1366,13 @@ specifically to avoid colliding with that package.</sup>
 | `WELLS_MASK_BATCH` | `4` | Batch-stable masking: don't re-mask until the cutoff has advanced this many rounds past the last batch (0 = mask every round, the old behavior) |
 | `WELLS_SKILLS` | `1` | Discover `skills/<name>/SKILL.md` and expose `load_skill` (on/off) |
 | `WELLS_SKILLS_PATHS` | _(blank)_ | Extra skill search dirs (path-separator list) |
+| `WELLS_REFLECTIONS` | `1` | Capture failure critiques to `.wells/reflections.md` and inject them into the planner (Reflexion) |
+| `WELLS_REFLECTIONS_K` | `3` | Top-K reflections injected per goal |
+| `WELLS_REFLECTIONS_EMBED` | `0` | Opt-in embedding re-rank of reflections (uses the local ONNX embedder) |
+| `WELLS_REFLECTIONS_LLM` | `0` | Opt-in LLM-distilled critique (one cheap-model call per captured failure) |
+| `WELLS_AUTOSKILL` | `1` | Propose skills from clean, verified runs (auto-skill authoring) |
+| `WELLS_AUTOSKILL_MIN_STEPS` | `2` | Minimum plan steps a clean run must have to be worth packaging as a skill |
+| `WELLS_AUTOSKILL_LLM` | `0` | Opt-in LLM-polished skill name + description + summary |
 | `WELLS_CODEACT` | `1` | Expose the sandboxed `run_code` tool for in-context computation |
 | `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
 | `WELLS_BG_AGENTS` | `1` | Expose `bg_start` / `bg_status` / `bg_collect` for concurrent fan-out |

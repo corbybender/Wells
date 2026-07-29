@@ -77,6 +77,12 @@ def planner(state: dict) -> dict:
         workspace,
     )
 
+    # Reflexion (self-improvement #1): surface past failure critiques relevant
+    # to this goal so the planner avoids repeating known traps. No-op when there
+    # are no reflections (or the feature is disabled).
+    from wells import reflections
+    task = reflections.inject_into_prompt(task, workspace, goal)
+
     ctx = ToolContext.from_state(state)
 
     from wells import config as _config

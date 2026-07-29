@@ -57,6 +57,34 @@ def finisher(state: dict) -> dict:
         except Exception as e:
             print(f"[finisher] memory write skipped: {e}")
 
+    # ----- 1b. Reflexion: persist a critique when this run failed ----------
+    # (self-improvement #1). Best-effort; never affects the run's outcome.
+    reflection_path = None
+    if not dry:
+        try:
+            from wells import reflections
+            reflection_path = reflections.capture_from_state(state, ctx.workspace)
+            if reflection_path:
+                print(f"[finisher] captured reflection -> {reflection_path}")
+        except Exception as e:
+            print(f"[finisher] reflection capture skipped: {e}")
+
+    # ----- 1c. Auto-skill: propose a skill when this run was clean+verified --
+    # (self-improvement #2). Staged as a proposal; nothing is permanent until
+    # the user accepts it via `/skills proposals accept <name>`.
+    proposal_path = None
+    if not dry:
+        try:
+            from wells import skill_authoring
+            proposal_path = skill_authoring.propose_from_state(state, ctx.workspace)
+            if proposal_path:
+                print(
+                    f"[finisher] proposed skill from verified run -> {proposal_path} "
+                    f"(review with `/skills proposals`)"
+                )
+        except Exception as e:
+            print(f"[finisher] skill proposal skipped: {e}")
+
     # ----- 2. Git: branch + commit + (optionally) PR -------------------------
     git_result = None
     open_pr = os.environ.get("WELLS_OPEN_PR", "0") in ("1", "true", "yes")
@@ -84,6 +112,10 @@ def finisher(state: dict) -> dict:
     out: dict = {"finalized": True}
     if memory_path:
         out["memory_written"] = str(memory_path)
+    if reflection_path:
+        out["reflection_written"] = str(reflection_path)
+    if proposal_path:
+        out["skill_proposed"] = str(proposal_path)
     if git_result is not None:
         out["git_summary"] = git_result.summary()
         if git_result.pr_url:
