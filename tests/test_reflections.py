@@ -250,3 +250,29 @@ def test_clear_removes_file(tmp_path: Path):
 
 def test_clear_when_absent_is_noop(tmp_path: Path):
     assert reflections.clear(str(tmp_path)) is True
+
+
+# ---------------------------------------------------------------------------
+# CLI handler (/reflections) — empty-arg safety
+# ---------------------------------------------------------------------------
+
+
+def test_cli_reflections_bare_arg_does_not_crash_when_empty(tmp_path: Path, monkeypatch, capsys):
+    """Regression: `/reflections` with no subcommand used to IndexError on an
+    empty workspace because `"".split()[0]` raises. It must instead show the
+    'No reflections yet' message."""
+    import wells.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.config, "WORKSPACE_ROOT", str(tmp_path))
+    cli_mod._handle_reflections("")  # bare /reflections
+    out = capsys.readouterr().out
+    assert "No reflections" in out
+
+
+def test_cli_reflections_list_when_empty(tmp_path: Path, monkeypatch, capsys):
+    import wells.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod.config, "WORKSPACE_ROOT", str(tmp_path))
+    cli_mod._handle_reflections("list")
+    out = capsys.readouterr().out
+    assert "No reflections" in out
