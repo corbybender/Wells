@@ -61,6 +61,12 @@ _DEFAULT_IMAGE = "python:3.12-slim"
 # workspace (resolved string path) -> running container id.
 _containers: dict[str, str] = {}
 
+# runtime name -> (reachable, probed_at). Short-lived cache so the probe
+# (which actually runs a throwaway container to catch a broken OCI runtime)
+# isn't repeated on every sandbox-mode command.
+_probe_cache: dict[str, tuple[bool, float]] = {}
+_PROBE_TTL = 60.0
+
 
 def _runtime_bin() -> str | None:
     """Resolve which container CLI to use: ``WELLS_SANDBOX_RUNTIME``, or
@@ -88,13 +94,58 @@ def enabled() -> bool:
 
 
 def runtime_available() -> bool:
-    """True if a container CLI is installed AND actually reachable right now."""
+    """True if a container CLI is installed AND can actually run a container.
+
+    This goes beyond a metadata query (``<runtime> info``): a broken OCI
+    runtime (e.g. an incompatible ``crun`` version) returns 0 from ``info``
+    but fails the moment a container is started with a cryptic
+    ``crun: unknown version specified``. To catch that, the probe runs a
+    throwaway container from the configured image — but only if that image
+    is already local (avoids blocking the probe on a slow pull; if the
+    image is absent we fall back to the ``info`` check and let
+    :func:`ensure_container` surface the real error at first use).
+
+    The result is cached for a short window so production sandbox-mode use
+    doesn't pay the probe cost on every command, and the test skip-guard
+    pays it once per session.
+    """
     runtime = _runtime_bin()
     if runtime is None:
         return False
+    now = time.monotonic()
+    cached = _probe_cache.get(runtime)
+    if cached and now - cached[1] < _PROBE_TTL:
+        return cached[0]
+    result = _probe_runtime(runtime)
+    _probe_cache[runtime] = (result, now)
+    return result
+
+
+def _probe_runtime(runtime: str) -> bool:
+    """Live probe: is ``runtime``'s daemon up *and* able to run a container?"""
     try:
         r = subprocess.run([runtime, "info"], capture_output=True, timeout=5)
-        return r.returncode == 0
+        if r.returncode != 0:
+            return False
+    except Exception:
+        return False
+    # `info` succeeding doesn't prove containers actually run — a broken OCI
+    # runtime (crun) passes info but fails every `run`. Probe with a real
+    # throwaway container, but only if the image is already local so we
+    # don't block on a pull during a reachability check.
+    image = _image()
+    try:
+        present = subprocess.run(
+            [runtime, "image", "inspect", image],
+            capture_output=True, timeout=10,
+        )
+        if present.returncode != 0:
+            return True  # image absent: info passed; let ensure_container pull+run
+        run = subprocess.run(
+            [runtime, "run", "--rm", image, "true"],
+            capture_output=True, timeout=20,
+        )
+        return run.returncode == 0
     except Exception:
         return False
 
