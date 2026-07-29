@@ -506,6 +506,43 @@ def _prompt(label: str, default: str = "") -> str:
     return raw or default
 
 
+def _sanitize_profile_name(raw: str) -> str:
+    """Turn free-text input into a name safe to splice into env-var keys.
+
+    Profile names become the suffix of MODEL_<name>, API_KEY_<name>,
+    BASE_URL_<name>, etc. python-dotenv (and most .env tooling) only
+    accepts [A-Za-z0-9_] in a key; a space or symbol silently fails to
+    parse, so the derived vars never load and the profile falls through
+    to defaults with no visible error at add-time. Collapse anything
+    else to underscore up front so that can't happen.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", raw.strip()).strip("_")
+    if safe and safe[0].isdigit():
+        safe = f"p_{safe}"
+    return safe
+
+
+def _clean_profile_name(raw: str) -> str | None:
+    """Sanitize a user-entered profile name, warning if it had to change.
+
+    Returns None (with a printed error) if nothing usable survives.
+    """
+    name = raw.strip()
+    if not name:
+        return None
+    safe = _sanitize_profile_name(name)
+    if not safe:
+        print(f"  ! {raw!r} has no usable characters for a profile name.")
+        return None
+    if safe != name:
+        print(
+            "  ! Profile names become env-var keys (MODEL_<name>, API_KEY_<name>, ...) "
+            "and can't contain spaces or symbols."
+        )
+        print(f"    Using {safe!r} instead of {name!r}.")
+    return safe
+
+
 def _edit_setting(s: Setting) -> str | None:
     """Prompt for a new value for ``s``; return the new value or None to cancel."""
     cur = current_value(s)
@@ -538,8 +575,14 @@ def _edit_provider_profile() -> dict[str, str] | None:
     names = [n for n in config.MODEL_PROFILES.split(",") if n.strip()]
     print("\n  Available profiles:", ", ".join(names))
     print(f"  Active profile: {config.ACTIVE_PROFILE}")
-    chosen = _prompt("Switch active profile to (blank to keep)", config.ACTIVE_PROFILE)
+    chosen_raw = _prompt("Switch active profile to (blank to keep)", config.ACTIVE_PROFILE)
     changes: dict[str, str] = {}
+    chosen = chosen_raw
+    if chosen_raw and chosen_raw != config.ACTIVE_PROFILE and chosen_raw not in names:
+        cleaned = _clean_profile_name(chosen_raw)
+        if cleaned is None:
+            return None
+        chosen = cleaned
     if chosen and chosen != config.ACTIVE_PROFILE:
         if chosen not in names:
             add = _prompt(
@@ -611,14 +654,19 @@ def _edit_vision_profile() -> dict[str, str] | None:
     print(f"\n  Available profiles: {', '.join(names)}")
     print(f"  Current vision profile: {cur}")
     print("  Enter an existing profile name, a NEW name to create one, or 'clear' to unset.")
-    chosen = _prompt("Vision profile", config.VISION_PROFILE)
-    if not chosen or chosen == config.VISION_PROFILE:
+    chosen_raw = _prompt("Vision profile", config.VISION_PROFILE)
+    if not chosen_raw or chosen_raw == config.VISION_PROFILE:
         return None
-    if chosen.lower() in ("clear", "none", "-"):
+    if chosen_raw.lower() in ("clear", "none", "-"):
         return {"MODEL_PROFILE_VISION": ""}
 
     changes: dict[str, str] = {}
-    if chosen not in names:
+    chosen = chosen_raw
+    if chosen_raw not in names:
+        cleaned = _clean_profile_name(chosen_raw)
+        if cleaned is None:
+            return None
+        chosen = cleaned
         print(f"  Profile {chosen!r} is new -- set it up now.")
         default_model = ""
         if chosen == "openrouter":
@@ -652,7 +700,7 @@ def _add_provider_profile() -> dict[str, str] | None:
     """Flow to add a brand-new profile from scratch."""
     print("\n  Add a new provider profile")
     print("  Common names: zai, openai, openrouter, anthropic, ollama, local, ...")
-    name = _prompt("Profile name").strip()
+    name = _clean_profile_name(_prompt("Profile name"))
     if not name:
         return None
     model = _prompt("Model id")
