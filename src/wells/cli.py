@@ -1881,7 +1881,8 @@ def _handle_reflections(arg: str) -> None:
     from wells import reflections
 
     ws = config.WORKSPACE_ROOT
-    sub = (arg.strip().split(None, 1)[0] or "list").lower()
+    parts = arg.strip().split(None, 1)
+    sub = (parts[0].lower() if parts else "list")
 
     if not reflections.enabled():
         console.print(
