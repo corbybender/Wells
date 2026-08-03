@@ -201,6 +201,15 @@ HARNESS_SAFETY: str = os.getenv("HARNESS_SAFETY", "auto").strip().lower() or "au
 # Max tool-call steps in a single executor run (0 = no limit).
 MAX_TOOL_STEPS: int = int(os.getenv("MAX_TOOL_STEPS", "0"))
 
+# Fallback step cap applied only when MAX_TOOL_STEPS is unset (0) AND the
+# run is against a local/tunneled Ollama profile. Small models have weak
+# task-completion judgment and can rewrite the same file indefinitely with
+# no forward progress (cosmetic churn, never converging) — a real step cap
+# fails that fast and cheap instead of burning the run until an unrelated
+# infra timeout (e.g. a Cloudflare Tunnel's gateway timeout) kills it.
+# Cloud/hosted profiles are left uncapped by default (0 above still wins).
+LOCAL_MODEL_MAX_STEPS: int = int(os.getenv("LOCAL_MODEL_MAX_STEPS", "15"))
+
 # How many times the executor will coach a stalled model (produced text but
 # zero tool calls, before it has taken any real action this run) back onto
 # the tool-calling protocol before giving up and treating it as a genuine

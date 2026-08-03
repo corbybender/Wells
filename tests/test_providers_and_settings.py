@@ -177,6 +177,36 @@ def test_looks_like_local_ollama_false_for_cloud_profile():
     assert providers._looks_like_local_ollama(prof) is False
 
 
+def test_looks_like_local_ollama_false_for_tunneled_by_default(monkeypatch):
+    """Ollama reverse-proxied behind a custom domain (Cloudflare Tunnel,
+    ngrok, ...) has no :11434 anywhere in the URL despite being the same
+    server — without the explicit opt-in it must not be misdetected."""
+    monkeypatch.delenv("LOCAL_OLLAMA_x", raising=False)
+    prof = providers.ProviderProfile(
+        name="x", kind="openai", model="m",
+        base_url="https://qwen.example.com/v1",
+    )
+    assert providers._looks_like_local_ollama(prof) is False
+
+
+def test_looks_like_local_ollama_true_when_explicitly_flagged(monkeypatch):
+    monkeypatch.setenv("LOCAL_OLLAMA_x", "1")
+    prof = providers.ProviderProfile(
+        name="x", kind="openai", model="m",
+        base_url="https://qwen.example.com/v1",
+    )
+    assert providers._looks_like_local_ollama(prof) is True
+
+
+def test_looks_like_local_ollama_flag_false_value_does_not_count(monkeypatch):
+    monkeypatch.setenv("LOCAL_OLLAMA_x", "0")
+    prof = providers.ProviderProfile(
+        name="x", kind="openai", model="m",
+        base_url="https://qwen.example.com/v1",
+    )
+    assert providers._looks_like_local_ollama(prof) is False
+
+
 def test_warm_ollama_context_hits_native_api_not_openai_compat(monkeypatch):
     """The whole point: Ollama's OpenAI-compatible endpoint silently ignores
     an equivalent field (confirmed live against a real Ollama instance), so

@@ -230,17 +230,24 @@ _OLLAMA_WARMED: set[tuple[str, str]] = set()
 
 
 def _looks_like_local_ollama(profile: ProviderProfile) -> bool:
-    """Heuristic: is this profile actually talking to a local Ollama server?
+    """Heuristic: is this profile actually talking to an Ollama server?
 
-    True for the native ``ollama`` provider kind, and for ``openai``-kind
+    True for the native ``ollama`` provider kind, for ``openai``-kind
     profiles whose base_url points at Ollama's default port — the common
     case, since most Wells local-model profiles use Ollama's OpenAI-
     compatible shim (``http://127.0.0.1:11434/v1``) rather than the native
-    langchain-ollama integration.
+    langchain-ollama integration — and for profiles explicitly flagged via
+    ``LOCAL_OLLAMA_<name>``. The port check alone misses Ollama reverse-
+    proxied behind a custom domain (Cloudflare Tunnel, ngrok, ...), which
+    has no ``:11434`` anywhere in the URL despite being the same server;
+    the explicit flag lets those profiles opt in instead of silently
+    losing structured-output/grammar mode and the small-model step cap.
     """
     if profile.kind == "ollama":
         return True
-    return ":11434" in (profile.base_url or "")
+    if ":11434" in (profile.base_url or ""):
+        return True
+    return _env(f"LOCAL_OLLAMA_{profile.name}") not in ("", "0", "false", "False")
 
 
 def warm_ollama_context(
