@@ -1413,6 +1413,11 @@ def _run_executor_impl(
     compact_prompt = bool(
         model_label and config.providers._looks_like_local_ollama(model_label)
     )
+    # An explicit max_steps arg or MAX_TOOL_STEPS env always wins. Otherwise,
+    # a local/tunneled Ollama profile gets a real cap instead of running
+    # unbounded — see LOCAL_MODEL_MAX_STEPS.
+    if cap <= 0 and compact_prompt:
+        cap = config.LOCAL_MODEL_MAX_STEPS
     # Same signal drives the context-trim ceiling: a small-context local
     # model gets config.SMALL_BUDGET instead of the generic 24000-token
     # default, so the safety-drop pipeline actually matches what it can hold.
