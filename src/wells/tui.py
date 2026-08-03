@@ -37,6 +37,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Resize
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -293,6 +294,52 @@ class StatusBar(Static):
             f"[cyan]{tokens_s}[/cyan]{elapsed_s}  "
             f"{mode}{route_s}{pin_s}{queue_s}{liab_s}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Output log — reflows on resize
+# ---------------------------------------------------------------------------
+
+class WellsRichLog(RichLog):
+    """RichLog that re-wraps its whole transcript when its width changes.
+
+    RichLog only wraps content at write time and caches the result as
+    fixed-width Strips — it never re-flows already-written lines on
+    resize. That's invisible for a static log, but Wells' output area
+    changes width whenever a side panel (F2/F3) opens or closes, or the
+    terminal itself resizes, and old text was staying wrapped to
+    whatever width it happened to be written at — getting clipped
+    instead of reflowed. Debounced (a live terminal drag-resize fires
+    many Resize events) and skipped on the very first layout, since
+    that's just RichLog flushing its writes deferred until size was
+    known — already correct, nothing to redo.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_reflow_width = 0
+        self._reflow_timer: Any = None
+
+    def on_resize(self, event: Resize) -> None:
+        was_known = self._size_known
+        super().on_resize(event)
+        width = event.size.width
+        if not was_known:
+            self._last_reflow_width = width
+            return
+        if width and width != self._last_reflow_width:
+            self._last_reflow_width = width
+            if self._reflow_timer is not None:
+                self._reflow_timer.stop()
+            self._reflow_timer = self.set_timer(0.1, self._reflow)
+
+    def _reflow(self) -> None:
+        transcript = getattr(self.app, "_transcript", None)
+        if not transcript:
+            return
+        self.clear()
+        for item in transcript:
+            self.write(item)
 
 
 # ---------------------------------------------------------------------------
@@ -2713,7 +2760,7 @@ class WellsApp(App[None]):
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
             with Vertical(id="log-col"):
-                yield RichLog(
+                yield WellsRichLog(
                     id="output",
                     markup=True,
                     highlight=True,
@@ -2746,7 +2793,7 @@ class WellsApp(App[None]):
         from wells.cli import _REPL_STATE
         _startup_mark("on_mount: safety/cli imports done")
 
-        self._log: RichLog = self.query_one("#output", RichLog)
+        self._log: WellsRichLog = self.query_one("#output", WellsRichLog)
         self._live: Static = self.query_one("#live", Static)
         self._input: PromptInput = self.query_one("#input", PromptInput)
         self._cmdlist: OptionList = self.query_one("#command-list", OptionList)
