@@ -38,7 +38,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, OptionList, RichLog, Static, TextArea
+from textual.widgets import (
+    Button,
+    DirectoryTree,
+    Input,
+    OptionList,
+    RichLog,
+    Static,
+    TextArea,
+)
 from textual.widgets._option_list import Option
 
 from wells import chat, config
@@ -102,6 +110,25 @@ InfoPanel {
 }
 
 InfoPanel > #info-dashboard {
+    width: 100%;
+    height: 1fr;
+}
+
+FileTreePanel {
+    width: 34;
+    height: 100%;
+    border-left: solid $accent 40%;
+    background: $surface-darken-1;
+    overflow-y: auto;
+}
+
+FileTreePanel > #file-panel-title {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+FileTreePanel > #file-tree {
     width: 100%;
     height: 1fr;
 }
@@ -547,8 +574,21 @@ class InfoPanel(Vertical):
             pass
 
         L.append(rule)
-        L.append("[dim]F2: hide (full-width select/copy) · F4: paste image[/dim]")
+        L.append("[dim]F2: hide · F3: file tree · F4: paste image[/dim]")
         return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# Right-side file tree panel (F3 toggles; independent of the info panel —
+# either, both, or neither may be visible at once)
+# ---------------------------------------------------------------------------
+
+class FileTreePanel(Vertical):
+    """Browsable directory tree of the workspace, docked to the far right."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("[bold]Files[/bold]", id="file-panel-title")
+        yield DirectoryTree(config.WORKSPACE_ROOT, id="file-tree")
 
 
 # ---------------------------------------------------------------------------
@@ -2454,15 +2494,17 @@ class WellsApp(App[None]):
         Binding("escape", "cancel_task", "Cancel task"),
         Binding("ctrl+l", "clear_log", "Clear output"),
         Binding("f2", "toggle_panel", "Info panel", priority=True),
+        Binding("f3", "toggle_file_panel", "File tree", priority=True),
         # Scroll bindings — priority=True so they fire even when Input has focus.
         # Mouse capture is enabled (mouse=True) so the scroll wheel works in the
         # output panel. Hold Shift while selecting to use the terminal's native
         # copy-paste instead of Textual's mouse capture — but terminal selection
-        # is row-based across the WHOLE terminal width, so with the info panel
-        # visible a drag inside the log also grabs whatever sits on the same
-        # rows in the panel. F2 hides the panel, letting #log-col expand to
-        # fill the full width (verified: no other widget occupies those rows
-        # once InfoPanel.display=False), so a drag-select only touches the log.
+        # is row-based across the WHOLE terminal width, so with either side
+        # panel visible a drag inside the log also grabs whatever sits on the
+        # same rows in that panel. F2/F3 hide their panel, letting #log-col
+        # expand to reclaim that width (verified: no other widget occupies
+        # those rows once display=False), so a drag-select only touches the
+        # log once both panels are hidden.
         Binding("pageup",    "scroll_up",     "Scroll up",      show=False, priority=True),
         Binding("pagedown",  "scroll_down",   "Scroll down",    show=False, priority=True),
         Binding("ctrl+home", "scroll_top",    "Scroll to top",  show=False, priority=True),
@@ -2528,6 +2570,7 @@ class WellsApp(App[None]):
                     )
                     yield StatusBar()
             yield InfoPanel(id="info-panel")
+            yield FileTreePanel(id="file-panel")
 
     # ------------------------------------------------------------------
     # Startup
@@ -2545,8 +2588,12 @@ class WellsApp(App[None]):
         self._input: PromptInput = self.query_one("#input", PromptInput)
         self._cmdlist: OptionList = self.query_one("#command-list", OptionList)
         self._panel: InfoPanel = self.query_one("#info-panel", InfoPanel)
+        self._file_panel: FileTreePanel = self.query_one(
+            "#file-panel", FileTreePanel
+        )
         self._statusbar: StatusBar = self.query_one(StatusBar)
         self._apply_panel_visibility(self._load_panel_pref())
+        self._apply_file_panel_visibility(self._load_file_panel_pref())
 
         # Initialize shared REPL state.
         _REPL_STATE["memory"] = chat.ConversationMemory()
@@ -2696,7 +2743,8 @@ class WellsApp(App[None]):
             "Use [bold]/orchestrate[/bold] for complex multi-component work. "
             "Type [bold]/[/bold] for all commands. "
             "[dim]Shift+Enter: newline · ↑/↓: history · Esc: cancel run · "
-            "F2: hide panel to select/copy text · F4: paste clipboard image[/dim]\n"
+            "F2: hide panel to select/copy text · F3: file tree · "
+            "F4: paste clipboard image[/dim]\n"
         )
 
     def _ensure_repo_index(self) -> None:
@@ -3678,23 +3726,30 @@ class WellsApp(App[None]):
     def action_clear_log(self) -> None:
         self._log.clear()
 
-    # -- info panel ----------------------------------------------------------
+    # -- side panels (info / file tree — independently togglable) -----------
 
-    def _load_panel_pref(self) -> bool:
+    def _load_ui_prefs(self) -> dict:
         try:
-            return bool(json.loads(_UI_PREFS_FILE.read_text(encoding="utf-8"))
-                        .get("info_panel", True))
+            return json.loads(_UI_PREFS_FILE.read_text(encoding="utf-8"))
         except Exception:
-            return True
+            return {}
 
-    def _save_panel_pref(self, visible: bool) -> None:
+    def _save_ui_pref(self, key: str, value: bool) -> None:
+        # Read-modify-write so one pref's save never clobbers the other's —
+        # both info_panel and file_panel live in the same small JSON file.
         try:
             _UI_PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _UI_PREFS_FILE.write_text(
-                json.dumps({"info_panel": visible}), encoding="utf-8"
-            )
+            prefs = self._load_ui_prefs()
+            prefs[key] = value
+            _UI_PREFS_FILE.write_text(json.dumps(prefs), encoding="utf-8")
         except Exception:
             pass
+
+    def _load_panel_pref(self) -> bool:
+        return bool(self._load_ui_prefs().get("info_panel", True))
+
+    def _save_panel_pref(self, visible: bool) -> None:
+        self._save_ui_pref("info_panel", visible)
 
     def _apply_panel_visibility(self, visible: bool) -> None:
         # The panel and the compact bottom bar carry the same info — show
@@ -3706,6 +3761,20 @@ class WellsApp(App[None]):
         visible = not self._panel.display
         self._apply_panel_visibility(visible)
         self._save_panel_pref(visible)
+
+    def _load_file_panel_pref(self) -> bool:
+        return bool(self._load_ui_prefs().get("file_panel", False))
+
+    def _save_file_panel_pref(self, visible: bool) -> None:
+        self._save_ui_pref("file_panel", visible)
+
+    def _apply_file_panel_visibility(self, visible: bool) -> None:
+        self._file_panel.display = visible
+
+    def action_toggle_file_panel(self) -> None:
+        visible = not self._file_panel.display
+        self._apply_file_panel_visibility(visible)
+        self._save_file_panel_pref(visible)
 
     def action_scroll_up(self) -> None:
         self._log.scroll_page_up(animate=False)
