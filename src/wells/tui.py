@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import shutil
 import sys
 import threading
 import time as _time
@@ -131,6 +132,12 @@ FileTreePanel > #file-panel-title {
 FileTreePanel > #file-tree {
     width: 100%;
     height: 1fr;
+}
+
+FileTreePanel > #file-panel-hint {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
 }
 
 #bottom {
@@ -583,12 +590,168 @@ class InfoPanel(Vertical):
 # either, both, or neither may be visible at once)
 # ---------------------------------------------------------------------------
 
+class ConfirmScreen(ModalScreen[bool]):
+    """Generic yes/no confirmation modal. y/Enter confirms, n/Esc cancels."""
+
+    CSS = """
+    ConfirmScreen { align: center middle; }
+    #confirm-panel {
+        width: 60; height: auto;
+        border: thick $error; background: $surface; padding: 1 2;
+    }
+    #confirm-panel Static { height: auto; }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("n", "cancel", "No", priority=True),
+        Binding("y", "confirm", "Yes", priority=True),
+        Binding("enter", "confirm", "Yes", priority=True),
+    ]
+
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-panel"):
+            yield Static(f"[bold]{self._message}[/bold]", markup=True)
+            yield Static("[dim]y / Enter: confirm  ·  n / Esc: cancel[/dim]", markup=True)
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+class NewFileScreen(ModalScreen["str | None"]):
+    """Prompt for a name; the file (or folder, if the name ends in /) is
+    created inside ``target_dir`` by the caller once this dismisses."""
+
+    CSS = """
+    NewFileScreen { align: center middle; }
+    #newfile-panel {
+        width: 60; height: auto;
+        border: thick $accent; background: $surface; padding: 1 2;
+    }
+    #newfile-panel Static { height: auto; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def __init__(self, target_dir: Path) -> None:
+        super().__init__()
+        self._target_dir = target_dir
+
+    def compose(self) -> ComposeResult:
+        from rich.markup import escape
+        with Vertical(id="newfile-panel"):
+            yield Static(
+                f"[bold]New file[/bold] in [dim]{escape(str(self._target_dir))}[/dim]",
+                markup=True,
+            )
+            yield Static("[dim]end the name with / to create a folder instead[/dim]", markup=True)
+            yield Input(id="newfile-name", placeholder="filename.ext")
+
+    def on_mount(self) -> None:
+        self.query_one("#newfile-name", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class WellsDirectoryTree(DirectoryTree):
+    """DirectoryTree with new-file (n) and delete (d/Delete) bindings —
+    the keyboard-driven equivalent of "right click → new/delete" that
+    terminal mouse support can't reliably offer across emulators/SSH."""
+
+    BINDINGS = [
+        Binding("n", "new_file", "New file", show=False),
+        Binding("d", "delete_entry", "Delete", show=False),
+        Binding("delete", "delete_entry", "Delete", show=False),
+    ]
+
+    def action_new_file(self) -> None:
+        node = self.cursor_node
+        if node is not None and node.data is not None and node.data.path.is_dir():
+            target_dir, target_node = node.data.path, node
+        elif node is not None and node.data is not None and node.parent is not None:
+            target_dir, target_node = node.data.path.parent, node.parent
+        else:
+            target_dir, target_node = Path(self.path), self.root
+
+        def _on_named(name: str | None) -> None:
+            if not name:
+                return
+            new_path = target_dir / name.rstrip("/\\")
+            is_dir = name.endswith(("/", "\\"))
+            if new_path.exists():
+                self.app.notify(f"'{name}' already exists", severity="error")
+                return
+            try:
+                if is_dir:
+                    new_path.mkdir(parents=True)
+                else:
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
+                    new_path.touch()
+            except Exception as e:
+                self.app.notify(f"Could not create '{name}': {e}", severity="error")
+                return
+            self.reload_node(target_node)
+            self.app.notify(f"Created {new_path.name}")
+
+        self.app.push_screen(NewFileScreen(target_dir), _on_named)
+
+    def action_delete_entry(self) -> None:
+        node = self.cursor_node
+        if node is None or node.data is None:
+            return
+        path = node.data.path
+        try:
+            is_workspace_root = path.resolve() == Path(config.WORKSPACE_ROOT).resolve()
+        except Exception:
+            is_workspace_root = False
+        if is_workspace_root:
+            self.app.notify("Can't delete the workspace root", severity="error")
+            return
+        kind = "folder" if path.is_dir() else "file"
+        parent = node.parent
+
+        def _on_confirmed(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except Exception as e:
+                self.app.notify(f"Could not delete '{path.name}': {e}", severity="error")
+                return
+            if parent is not None:
+                self.reload_node(parent)
+            else:
+                self.reload()
+            self.app.notify(f"Deleted {path.name}")
+
+        from rich.markup import escape
+        self.app.push_screen(
+            ConfirmScreen(f"Delete {kind} '{escape(path.name)}'?"), _on_confirmed
+        )
+
+
 class FileTreePanel(Vertical):
     """Browsable directory tree of the workspace, docked to the far right."""
 
     def compose(self) -> ComposeResult:
         yield Static("[bold]Files[/bold]", id="file-panel-title")
-        yield DirectoryTree(config.WORKSPACE_ROOT, id="file-tree")
+        yield WellsDirectoryTree(config.WORKSPACE_ROOT, id="file-tree")
+        yield Static("[dim]n: new · d/Del: delete[/dim]", id="file-panel-hint", markup=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2591,6 +2754,9 @@ class WellsApp(App[None]):
         self._file_panel: FileTreePanel = self.query_one(
             "#file-panel", FileTreePanel
         )
+        self._file_tree: WellsDirectoryTree = self.query_one(
+            "#file-tree", WellsDirectoryTree
+        )
         self._statusbar: StatusBar = self.query_one(StatusBar)
         self._apply_panel_visibility(self._load_panel_pref())
         self._apply_file_panel_visibility(self._load_file_panel_pref())
@@ -3208,8 +3374,18 @@ class WellsApp(App[None]):
                 if isinstance(cli_mod.console, _TUIConsole):
                     cli_mod.console = orig_console
 
+        # /working-dir (or anything else that repoints WORKSPACE_ROOT) must
+        # be reflected in the file tree — cheap to check unconditionally
+        # rather than special-casing which command changed it.
+        self.call_from_thread(self._sync_file_tree_root)
+
         if not keep_running:
             self.call_from_thread(self.exit)
+
+    def _sync_file_tree_root(self) -> None:
+        root = config.WORKSPACE_ROOT
+        if str(self._file_tree.path) != root:
+            self._file_tree.path = root
 
     @work(thread=True)
     def _run_mcp_command(self, arg: str) -> None:
