@@ -109,6 +109,7 @@ InfoPanel > #info-dashboard {
 #bottom {
     height: auto;
     dock: bottom;
+    margin-top: 1;
 }
 
 #command-list {
@@ -2516,15 +2517,17 @@ class WellsApp(App[None]):
                 # Live streaming region: in-progress model output lands here
                 # character-by-character, then commits to the log line-by-line.
                 yield Static(id="live")
+                # Docked inside log-col (not Screen) so both stop at the info
+                # panel's left edge instead of stretching under it full-width.
+                yield OptionList(id="command-list")
+                with Vertical(id="bottom"):
+                    yield PromptInput(
+                        id="input",
+                        placeholder="Ask a question or give a task… (/ commands, Shift+Enter newline)",
+                        show_line_numbers=False,
+                    )
+                    yield StatusBar()
             yield InfoPanel(id="info-panel")
-        yield OptionList(id="command-list")
-        with Vertical(id="bottom"):
-            yield PromptInput(
-                id="input",
-                placeholder="Ask a question or give a task… (/ commands, Shift+Enter newline)",
-                show_line_numbers=False,
-            )
-            yield StatusBar()
 
     # ------------------------------------------------------------------
     # Startup
