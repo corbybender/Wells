@@ -124,6 +124,7 @@ def _run_harness(
     *,
     profile: str = "",
     timeout: float = _RUN_TIMEOUT,
+    extra_env: dict[str, str] | None = None,
 ) -> dict:
     """One headless Wells run in a child process; returns the JSON payload.
 
@@ -151,6 +152,8 @@ def _run_harness(
     env["PYTHONIOENCODING"] = "utf-8"
     if profile:
         env["MODEL_PROFILE"] = profile
+    if extra_env:
+        env.update(extra_env)
     argv = [
         "--workspace",
         worktree,
@@ -260,6 +263,7 @@ def _execute_task(
     profile: str,
     worktree_root: Path,
     timeout: float,
+    extra_env: dict[str, str] | None = None,
 ) -> TaskResult:
     """Worktree at base → run harness → score oracle → always clean up."""
     wt = str(worktree_root / f"{task.task_id}-s{seed}")
@@ -271,9 +275,13 @@ def _execute_task(
     try:
         t0 = time.time()
         try:
-            payload = _run_harness(
-                wt, task.problem_statement, profile=profile, timeout=timeout
-            )
+            # extra_env only passed through when set: keeps this call
+            # compatible with test stubs that monkeypatch _run_harness with
+            # a narrower signature (profile/timeout only, no extra_env).
+            harness_kwargs = {"profile": profile, "timeout": timeout}
+            if extra_env:
+                harness_kwargs["extra_env"] = extra_env
+            payload = _run_harness(wt, task.problem_statement, **harness_kwargs)
             result.harness_status = payload.get("status", "error")
             tokens = payload.get("tokens") or {}
             result.tokens_total = int(tokens.get("total") or 0)
@@ -401,6 +409,7 @@ def run_bench(
     timeout: float = _RUN_TIMEOUT,
     task_filter: str = "",
     bench_home: Path | None = None,
+    extra_env: dict[str, str] | None = None,
     log=print,
 ) -> BenchRun:
     """Run one bench over a split and persist the results.
@@ -409,6 +418,12 @@ def run_bench(
     given prefix (task ids are long; prefixes are how people type them) —
     the split is still the declared source of truth, so a filtered result
     never masquerades as a full-split number.
+
+    ``extra_env`` is passed through to each task's harness subprocess
+    (e.g. ``{"WELLS_PRINCIPLES": "/path/to/candidate/AGENT.md"}`` for
+    evolve's mutation gating) — never mutates this process's own
+    ``os.environ``, so concurrent/sequential bench runs in one process
+    (baseline pass then candidate pass) can't leak into each other.
     """
     tasks = list_tasks(workspace, split)
     if not tasks:
@@ -459,6 +474,7 @@ def run_bench(
                     profile=profile,
                     worktree_root=worktree_root,
                     timeout=timeout,
+                    extra_env=extra_env,
                 )
                 run.tasks.append(row)
                 log(

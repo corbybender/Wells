@@ -31,6 +31,12 @@ Usage:
     wells bench list --split val
     wells bench run --split val --profile zai
     wells bench results
+
+    # SEACS evolve: propose a candidate AGENT.md, gate it against a bench
+    # split + the trace-replay corpus, promote or reject
+    wells evolve propose --file candidate.md "tighten the disk-budget rule"
+    wells evolve gate <mutation_id> --split val
+    wells evolve promote <mutation_id>
 """
 
 from __future__ import annotations
@@ -762,6 +768,13 @@ def _print_usage() -> None:
         "  bench list             list corpus tasks (--split train|val|blind|all)\n"
         "  bench run              run the harness over a split, oracle-score the result\n"
         "  bench results [ID]     show recorded bench run(s)\n"
+        '  evolve propose --file PATH "R"   candidate AGENT.md from a file (free)\n'
+        '  evolve propose --auto "R"        candidate drafted by the harness (costs tokens)\n'
+        "  evolve gate ID          bench baseline vs. candidate + replay, recommend\n"
+        "  evolve list             list mutations\n"
+        "  evolve show ID          show one mutation's gate result\n"
+        "  evolve promote ID       write the candidate to AGENT.md\n"
+        "  evolve reject ID        mark a mutation rejected\n"
         '  schedule add N I "G"  register goal G to run every interval I via\n'
         "                         Task Scheduler/cron (wells needn't be running)\n"
         "  schedule list          list registered schedules\n"
@@ -1021,6 +1034,121 @@ def _run_bench_cmd(args: list[str]) -> None:
         return
 
     print(f"Unknown bench subcommand: {sub!r}")
+    sys.exit(2)
+
+
+def _run_evolve_cmd(args: list[str]) -> None:
+    """wells evolve propose|gate|promote|reject|list|show -- SEACS Phase 2:
+    mutate the harness's AGENT.md, gate it against a bench split + replay,
+    promote or reject. See src/wells/evolve/mutate.py for the design.
+    """
+    from wells.evolve import mutate
+
+    if not args:
+        print(
+            'usage: wells evolve propose --file PATH "<rationale>"\n'
+            '       wells evolve propose --auto "<rationale>"        '
+            "(opt-in — spends real tokens)\n"
+            "       wells evolve gate <mutation_id> [--split val] [--profile NAME]\n"
+            "                          [--seeds N] [--timeout SECONDS] [--task ID]\n"
+            "       wells evolve list\n"
+            "       wells evolve show <mutation_id>\n"
+            "       wells evolve promote <mutation_id> [--force]\n"
+            "       wells evolve reject <mutation_id>"
+        )
+        sys.exit(2)
+    sub = args[0]
+    rest = args[1:]
+    workspace = config.WORKSPACE_ROOT
+
+    if sub == "propose":
+        candidate_file, rest = _pop_flag_value("--file", rest)
+        auto = "--auto" in rest
+        rest = [a for a in rest if a != "--auto"]
+        rationale = " ".join(rest).strip()
+        if not rationale:
+            print('ERROR: wells evolve propose --file PATH|--auto "<rationale>"')
+            sys.exit(2)
+        try:
+            manifest = mutate.propose_mutation(
+                workspace, rationale, candidate_file=candidate_file or "", auto=auto
+            )
+        except (ValueError, RuntimeError) as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        print(f"proposed {manifest.mutation_id}  candidate={manifest.candidate_path}")
+        print(f"  wells evolve gate {manifest.mutation_id}")
+        return
+
+    if sub == "gate":
+        if len(rest) < 1:
+            print("usage: wells evolve gate <mutation_id> [--split val] ...")
+            sys.exit(2)
+        mutation_id, rest = rest[0], rest[1:]
+        split, rest = _pop_flag_value("--split", rest)
+        profile, rest = _pop_flag_value("--profile", rest)
+        task_filter, rest = _pop_flag_value("--task", rest)
+        seeds_s, rest = _pop_flag_value("--seeds", rest)
+        timeout_s, rest = _pop_flag_value("--timeout", rest)
+        kwargs: dict = {
+            "split": split or "val",
+            "profile": profile or "",
+            "task_filter": task_filter or "",
+        }
+        if seeds_s:
+            kwargs["seeds"] = int(seeds_s)
+        if timeout_s:
+            kwargs["timeout"] = float(timeout_s)
+        try:
+            manifest = mutate.gate_mutation(mutation_id, workspace, **kwargs)
+        except RuntimeError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        print(f"\n  recommendation : {manifest.recommendation}")
+        return
+
+    if sub == "list":
+        manifests = mutate.list_manifests()
+        if not manifests:
+            print("No mutations recorded.")
+            return
+        for m in manifests:
+            print(
+                f"  {m.mutation_id}  [{m.status}]  rec={m.recommendation or '-'}  "
+                f"{m.rationale[:50]!r}"
+            )
+        return
+
+    if sub == "show":
+        if len(rest) < 1:
+            print("usage: wells evolve show <mutation_id>")
+            sys.exit(2)
+        manifest = mutate.load_manifest(rest[0])
+        if manifest is None:
+            print(f"No such mutation: {rest[0]}")
+            sys.exit(2)
+        print(json.dumps(manifest.to_json(), indent=2, default=str))
+        return
+
+    if sub == "promote":
+        if len(rest) < 1:
+            print("usage: wells evolve promote <mutation_id> [--force]")
+            sys.exit(2)
+        mutation_id = rest[0]
+        force = "--force" in rest
+        ok, msg = mutate.promote_mutation(mutation_id, workspace, force=force)
+        print(msg)
+        sys.exit(0 if ok else 1)
+
+    if sub == "reject":
+        if len(rest) < 1:
+            print("usage: wells evolve reject <mutation_id>")
+            sys.exit(2)
+        ok, msg = mutate.reject_mutation(rest[0], workspace)
+        print(msg)
+        sys.exit(0 if ok else 1)
+
+    print(f"Unknown evolve subcommand: {sub!r}")
     sys.exit(2)
 
 
@@ -1368,6 +1496,9 @@ def main() -> None:
         return
     if remaining and remaining[0] == "bench":
         _run_bench_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "evolve":
+        _run_evolve_cmd(remaining[1:])
         return
     if remaining and remaining[0] == "schedule":
         _run_schedule_cmd(remaining[1:])
