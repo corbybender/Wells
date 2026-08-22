@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
 
 
 def _configure_ca_bundle() -> None:
@@ -600,6 +599,8 @@ def ask_llm(prompt: str, temperature: float = 0.3) -> str:
     accounts for tokens. This is kept for ad-hoc / external use.
     """
     try:
+        from langchain_core.messages import HumanMessage
+
         resp = _invoke_with_retry(get_llm(temperature), [HumanMessage(content=prompt)])
         return (resp.content or "").strip()
     except Exception as err:
