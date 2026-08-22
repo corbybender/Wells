@@ -31,13 +31,20 @@ RECENTLY MADE CHANGES (coder summary):
 {changes}
 {ground_truth}
 STEPS:
-1. Inspect the repo layout (list_dir / read_file on the test config) to confirm
-   the correct test command, unless one is obvious.
-2. Run the test suite (run_tests, or run_command with the specific command).
+1. Call run_tests FIRST, with no arguments. It auto-detects the right command
+   from the repo's own config (pyproject.toml/package.json/Cargo.toml/go.mod)
+   — do not spend a round inspecting the repo layout before this call, that
+   is redundant with what the tool already does.
+2. Only if that command was clearly wrong for this repo (wrong language, wrong
+   framework — not just "no tests found", which is itself a valid, complete
+   answer) should you investigate further and retry with an explicit command
+   via run_command.
 3. If tests fail, read the failing test + the relevant source to characterize the
    failure precisely. Do NOT fix anything — that is the coder's job.
-4. Reply with a concise report: PASS/FAIL, the command run, a one-line summary,
-   and (if failing) the specific failing assertions with file:line references.
+4. Reply with a concise report: PASS/FAIL/NO TESTS FOUND, the command run, a
+   one-line summary, and (if failing) the specific failing assertions with
+   file:line references. "No tests found" is a complete, final answer — do not
+   re-investigate to double-check an empty result.
 """
 
 _GROUND_TRUTH_TEMPLATE = """
