@@ -24,6 +24,13 @@ Usage:
     wells schedule add nightly-lint every1h "run the linter and fix any issues"
     wells schedule list
     wells schedule remove nightly-lint
+
+    # SEACS bench: mine a git history into an oracle-scored task corpus, then
+    # measure the harness against it (see src/wells/evolve/ for the design)
+    wells bench mine --workspace <repo>
+    wells bench list --split val
+    wells bench run --split val --profile zai
+    wells bench results
 """
 
 from __future__ import annotations
@@ -751,6 +758,10 @@ def _print_usage() -> None:
         "  fleet show ID          show one fleet's member results\n"
         "  fleet pick ID I        merge member I's branch, clean up the rest\n"
         "  fleet drop ID          abandon a fleet, clean up all worktrees\n"
+        "  bench mine             mine this repo's git history into a scored task corpus\n"
+        "  bench list             list corpus tasks (--split train|val|blind|all)\n"
+        "  bench run              run the harness over a split, oracle-score the result\n"
+        "  bench results [ID]     show recorded bench run(s)\n"
         '  schedule add N I "G"  register goal G to run every interval I via\n'
         "                         Task Scheduler/cron (wells needn't be running)\n"
         "  schedule list          list registered schedules\n"
@@ -876,6 +887,140 @@ def _run_fleet_cmd(args: list[str]) -> None:
         sys.exit(0 if ok else 1)
 
     print(f"Unknown fleet subcommand: {sub!r}")
+    sys.exit(2)
+
+
+def _pop_flag_value(flag: str, items: list[str]) -> tuple[str | None, list[str]]:
+    """Extract ``flag VALUE`` or ``flag=VALUE`` from *items*, return (value, rest)."""
+    out: list[str] = []
+    val: str | None = None
+    i = 0
+    while i < len(items):
+        a = items[i]
+        if a == flag:
+            i += 1
+            if i < len(items):
+                val = items[i]
+        elif a.startswith(flag + "="):
+            val = a.split("=", 1)[1]
+        else:
+            out.append(a)
+        i += 1
+    return val, out
+
+
+def _run_bench_cmd(args: list[str]) -> None:
+    """wells bench mine|list|run|results -- SEACS task-corpus mining and
+    oracle-scored bench runs over the evolve subsystem (src/wells/evolve/).
+    """
+    from wells.evolve import corpus, runner
+
+    if not args:
+        print(
+            "usage: wells bench mine [--workspace REPO] [--max N] [--skip-validation]\n"
+            "       wells bench list [--split train|val|blind|all]\n"
+            "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
+            "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
+            "       wells bench results [ID]"
+        )
+        sys.exit(2)
+    sub = args[0]
+    rest = args[1:]
+    workspace = config.WORKSPACE_ROOT
+
+    if sub == "mine":
+        repo_root, rest = _pop_flag_value("--workspace", rest)
+        repo_root = repo_root or workspace
+        max_tasks_s, rest = _pop_flag_value("--max", rest)
+        max_tasks = int(max_tasks_s) if max_tasks_s else 50
+        skip_validation = "--skip-validation" in rest
+        try:
+            tasks, stats = corpus.mine_corpus(
+                repo_root,
+                workspace,
+                max_tasks=max_tasks,
+                skip_validation=skip_validation,
+            )
+        except RuntimeError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        print(
+            f"mined {stats['admitted']} task(s) "
+            f"({stats['candidates']} candidate(s) seen, {stats['rejected']} rejected, "
+            f"{stats['skipped_existing']} already in corpus)"
+        )
+        for t in tasks:
+            first_line = t.problem_statement.splitlines()[0][:70]
+            print(f"  {t.task_id}  [{t.split}]  {first_line!r}")
+        return
+
+    if sub == "list":
+        split, rest = _pop_flag_value("--split", rest)
+        split = split or "all"
+        tasks = corpus.list_tasks(workspace, split)
+        if not tasks:
+            print(f"No tasks in corpus (split={split!r}).")
+            return
+        for t in tasks:
+            first_line = t.problem_statement.splitlines()[0][:60]
+            print(f"  {t.task_id}  [{t.split}]  {t.status}  {first_line!r}")
+        print(f"\n{len(tasks)} task(s), split={split!r}")
+        return
+
+    if sub == "run":
+        split, rest = _pop_flag_value("--split", rest)
+        split = split or "val"
+        profile, rest = _pop_flag_value("--profile", rest)
+        task_filter, rest = _pop_flag_value("--task", rest)
+        seeds_s, rest = _pop_flag_value("--seeds", rest)
+        timeout_s, rest = _pop_flag_value("--timeout", rest)
+        limit_s, rest = _pop_flag_value("--limit", rest)
+        kwargs: dict = {"profile": profile or "", "task_filter": task_filter or ""}
+        if seeds_s:
+            kwargs["seeds"] = int(seeds_s)
+        if timeout_s:
+            kwargs["timeout"] = float(timeout_s)
+        if limit_s:
+            kwargs["limit"] = int(limit_s)
+        try:
+            run = runner.run_bench(workspace, split, **kwargs)
+        except RuntimeError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+        s = run.summary
+        print(
+            f"\n  pass@1        : {s['pass_at_1']:.1%}  "
+            f"(Wilson 95% LB {s['pass_at_1_wilson_lb']:.1%})\n"
+            f"  resolved      : {s['resolved']}/{s['total_runs']} runs across "
+            f"{s['tasks']} task(s)\n"
+            f"  avg tokens    : {s['avg_tokens']}\n"
+            f"  avg duration  : {s['avg_duration_seconds']}s\n"
+        )
+        print(f"  results saved : {runner.results_dir(workspace) / (run.bench_id + '.json')}")
+        return
+
+    if sub == "results":
+        paths = runner.list_results(workspace)
+        if rest:
+            paths = [p for p in paths if rest[0] in p.stem]
+            if not paths:
+                print(f"No bench results matching {rest[0]!r}.")
+                sys.exit(2)
+        elif not paths:
+            print("No bench results recorded.")
+            return
+        for p in paths:
+            run = runner.BenchRun.load(p)
+            s = run.summary
+            print(
+                f"  {run.bench_id}  split={run.split}  profile={run.profile}  "
+                f"pass@1={s.get('pass_at_1', 0):.1%} "
+                f"(Wilson LB {s.get('pass_at_1_wilson_lb', 0):.1%})  "
+                f"{s.get('resolved', 0)}/{s.get('total_runs', 0)}"
+            )
+        return
+
+    print(f"Unknown bench subcommand: {sub!r}")
     sys.exit(2)
 
 
@@ -1220,6 +1365,9 @@ def main() -> None:
         return
     if remaining and remaining[0] == "fleet":
         _run_fleet_cmd(remaining[1:])
+        return
+    if remaining and remaining[0] == "bench":
+        _run_bench_cmd(remaining[1:])
         return
     if remaining and remaining[0] == "schedule":
         _run_schedule_cmd(remaining[1:])
