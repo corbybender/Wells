@@ -1,0 +1,68 @@
+{
+  "bench_id": "20260822-101857-25a1d0",
+  "split": "train",
+  "profile": "zai",
+  "created_at": "2026-08-22 10:18:57",
+  "tasks": [
+    {
+      "task_id": "T-11e9879fdf-feat-opt-in-semantic-self-heal-v",
+      "seed": 1,
+      "resolved": false,
+      "harness_status": "timeout",
+      "tokens_total": 0,
+      "cost_usd": null,
+      "duration_seconds": 1200.3,
+      "error": "",
+      "fail_to_pass_results": {
+        "tests/test_quality.py::test_fuzzy_locate_unique": true,
+        "tests/test_quality.py::test_fuzzy_locate_ambiguous": true,
+        "tests/test_quality.py::test_reindent_shifts_block": true,
+        "tests/test_quality.py::test_edit_file_fuzzy_fallback": true,
+        "tests/test_quality.py::test_edit_file_exact_still_works": true,
+        "tests/test_quality.py::test_edit_file_not_found_reports": true,
+        "tests/test_quality.py::test_write_file_emits_diff": true,
+        "tests/test_quality.py::test_quick_check_python_syntax_error": true,
+        "tests/test_quality.py::test_quick_check_python_ok": true,
+        "tests/test_quality.py::test_quick_check_json": true,
+        "tests/test_quality.py::test_quick_check_unknown_ext_ignored": true,
+        "tests/test_quality.py::test_semantic_check_missing_file_returns_none": false,
+        "tests/test_quality.py::test_semantic_check_unknown_ext_returns_none": false,
+        "tests/test_quality.py::test_semantic_check_no_toolchain_available_returns_none": false,
+        "tests/test_quality.py::test_semantic_python_prefers_pyright_and_parses_json": false,
+        "tests/test_quality.py::test_semantic_python_pyright_no_errors_returns_none": false,
+        "tests/test_quality.py::test_semantic_python_falls_back_to_mypy_when_no_pyright": false,
+        "tests/test_quality.py::test_semantic_python_real_mypy_catches_type_error": false,
+        "tests/test_quality.py::test_semantic_typescript_no_tsconfig_checks_file_standalone": false,
+        "tests/test_quality.py::test_semantic_typescript_project_mode_filters_to_changed_file": false,
+        "tests/test_quality.py::test_semantic_typescript_real_tsc_catches_type_error": false,
+        "tests/test_quality.py::test_semantic_rust_filters_to_changed_file": false,
+        "tests/test_quality.py::test_semantic_go_filters_to_changed_file": false,
+        "tests/test_quality.py::test_semantic_check_never_raises_on_timeout": false,
+        "tests/test_quality.py::test_trim_semantic_caps_line_count": false,
+        "tests/test_quality.py::test_trim_semantic_blank_report_returns_none": false,
+        "tests/test_quality.py::test_repo_map_lists_source_files": true,
+        "tests/test_quality.py::test_repo_map_empty_workspace": true,
+        "tests/test_quality.py::test_snapshot_and_restore_roundtrip": true,
+        "tests/test_quality.py::test_snapshot_non_git_returns_empty": true,
+        "tests/test_quality.py::test_restore_bad_sha_fails_cleanly": true,
+        "tests/test_quality.py::test_stream_invoke_aggregates_and_flags": true,
+        "tests/test_quality.py::test_stream_invoke_falls_back_on_error": true,
+        "tests/test_quality.py::test_run_executor_streams_final_answer": true
+      }
+    }
+  ],
+  "summary": {
+    "total_runs": 1,
+    "tasks": 1,
+    "resolved": 0,
+    "pass_at_1": 0.0,
+    "pass_at_1_wilson_lb": 0.0,
+    "any_seed_resolved": 0,
+    "avg_duration_seconds": 1200.3,
+    "avg_tokens": 0,
+    "total_cost_usd": null,
+    "harness_statuses": {
+      "timeout": 1
+    }
+  }
+}

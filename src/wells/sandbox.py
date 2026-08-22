@@ -131,7 +131,7 @@ def ensure_container(workspace: str) -> str:
     cmd = [
         runtime, "run", "-d", "--rm",
         "--name", name,
-        "-v", f"{workspace}:/workspace",
+        "-v", f"{workspace}:/workspace:Z",
         "-w", "/workspace",
         _image(),
         "sleep", "infinity",
@@ -185,6 +185,7 @@ def run_shell(command: str, workspace: str, timeout: float) -> subprocess.Comple
     args = [_runtime_bin(), "exec", cid, "sh", "-c", command]
     proc = subprocess.Popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True,
     )
     return _popen_poll_loop(proc, command, timeout)
 
@@ -200,13 +201,19 @@ def run_python_stdin(code: str, workspace: str, timeout: float) -> subprocess.Co
     args = [_runtime_bin(), "exec", "-i", cid, "python3", "-"]
     proc = subprocess.Popen(
         args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
+        text=True, start_new_session=True,
     )
     try:
         proc.stdin.write(code)
         proc.stdin.close()
     except Exception:
         pass
+    finally:
+        # Already closed above — clearing the handle stops Popen.communicate()'s
+        # internal stdin.flush() (called unconditionally on a truthy self.stdin)
+        # from raising ValueError on the closed file, which would otherwise be
+        # treated as a real failure by _popen_poll_loop and kill the process.
+        proc.stdin = None
     return _popen_poll_loop(proc, "run_code", timeout)
 
 
