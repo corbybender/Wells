@@ -60,7 +60,7 @@ global install, or want the full walkthrough of every option? →
 - [Agent capabilities](#agent-capabilities)
   - [Skills](#skills--load-on-demand-know-how) · [CodeAct](#codeact--let-it-compute) · [Browser](#browser--drive-a-real-js-rendered-session)
   - [Background agents](#background-agents--concurrent-fan-out) · [Subagent personas](#subagent-personas--custom-specialist-identities) · [Model-driven todo list](#model-driven-todo-list)
-- [Self-improvement](#self-improvement--reflexion--auto-skill-authoring) — [Reflexion](#reflexion--persistent-failure-critiques) (failure critiques) · [Auto-skill authoring](#auto-skill-authoring--package-verified-runs-into-reusable-skills) (proven-run → skill proposals)
+- [Self-improvement](#self-improvement--reflexion-auto-skill-authoring--seacs-evolution) — [Reflexion](#reflexion--persistent-failure-critiques) (failure critiques) · [Auto-skill authoring](#auto-skill-authoring--package-verified-runs-into-reusable-skills) (proven-run → skill proposals) · [SEACS bench + evolve](#seacs--oracle-scored-bench--agentmd-evolution) (mine a task corpus, gate AGENT.md mutations against it)
 - [MCP — server and client](#mcp--server-and-client)
 - [Project structure](#project-structure)
 - [Configuration reference](#configuration-reference)
@@ -1101,12 +1101,13 @@ the start of every run — a todo list belongs to one task, not the whole
 session. `WELLS_TODO=0` disables it.
 
 
-## Self-improvement — Reflexion + auto-skill authoring
+## Self-improvement — Reflexion, auto-skill authoring & SEACS evolution
 
-Two closed loops turn each run's outcome into a durable asset so Wells gets
-better at *this repo* the more you use it. Both are on by default, both are
-human-readable files version-controlled with the code, and both gate any
-promotion behind your explicit approval.
+Three closed loops turn each run's outcome into a durable asset so Wells
+gets better at *this repo* — and, with SEACS, at *being Wells* — the more
+you use it. All three are human-readable/inspectable, version-controlled
+alongside the code, and gate any promotion behind explicit approval (yours,
+or an oracle-scored benchmark's).
 
 ### Reflexion — persistent failure critiques
 
@@ -1222,6 +1223,82 @@ a proposal exists:
 Both features degrade to no-ops when disabled — a clean run with nothing
 learned produces no panel, no banner, and no proposal.
 
+### SEACS — oracle-scored bench + AGENT.md evolution
+
+#### The problem
+
+Reflexion and auto-skill authoring both improve Wells *within* a repo, one
+run at a time — but nothing measures whether a change to the harness
+itself (its behavioral principles, its tools, its skills) actually makes
+it *better at coding in general*, versus just "different." A prompt tweak
+that reads well can still be a net regression, and there's no way to know
+without an honest, repeatable measurement.
+
+#### The solution: mine a task corpus, score it with an oracle, gate every change
+
+**`wells bench`** turns a repo's own git history into a small
+[SWE-bench](https://www.swebench.com/)-style benchmark: it walks
+non-merge commits that touch tests and source together, extracts the
+pytest node IDs the fix commit added, and **dual-validates** each
+candidate in a throwaway worktree — the target tests must genuinely fail
+at the base commit and pass at the fix commit, no LLM judgment involved.
+Only tasks that clear that bar are admitted, split deterministically
+60/20/20 into train/val/blind (a stable hash of the task id, so the same
+task always lands in the same split).
+
+```bash
+wells bench mine --workspace <repo> [--max N] [--skip-validation]
+wells bench list [--split train|val|blind|all]
+wells bench run --split val --profile zai [--task ID] [--seeds N] [--timeout SECONDS]
+wells bench results [ID]
+```
+
+Running a split checks out each task's `base_commit` in an isolated
+worktree, runs a **full headless harness attempt** against the bare
+problem statement, then scores it with the task's own oracle — the
+model's own COMPLETE/INCOMPLETE claim is never trusted, only the test
+exit code. Results are Wilson-bounded (95% lower bound on pass@1), so two
+harness configurations are compared on the conservative estimate, not the
+noisy point estimate.
+
+**`wells evolve`** is the first thing that *acts* on that number: it
+proposes a candidate replacement for the harness's own constitution
+(`AGENT.md`), gates it against a baseline using `wells bench run`, and
+promotes or rejects it.
+
+```bash
+wells evolve propose --file candidate.md "tighten the disk-budget rule"
+wells evolve propose --auto "address recent bench failures"   # opt-in — spends real tokens
+wells evolve gate <mutation_id> --split val [--profile zai]
+wells evolve list
+wells evolve show <mutation_id>
+wells evolve promote <mutation_id>   # writes the candidate to AGENT.md
+wells evolve reject <mutation_id>
+```
+
+`gate` runs two full bench passes over the split — one pinned to the
+*current* principles, one pinned to the *candidate* (via the `AGENT.md`
+override chain's top-precedence `$WELLS_PRINCIPLES` env var, so it's the
+only variable that changes between passes) — plus a free sanity pass over
+the recorded trace corpus (`wells replay`'s scripted-model regression
+check — see `traces.py` in [Project structure](#project-structure) — no
+LLM calls). A candidate is recommended for promotion only when its Wilson
+lower bound is at least as good as the baseline's. Nothing auto-promotes:
+`promote` is always a separate, explicit step, and it never commits on
+your behalf — the written `AGENT.md` is a normal tracked file for you to
+review.
+
+| Command | What it does |
+|---|---|
+| `wells bench mine` | Mine a repo's history into a dual-validated, oracle-scored task corpus |
+| `wells bench run` | Execute a split, score it against the oracle, save Wilson-bounded results |
+| `wells evolve propose` | Stage a candidate `AGENT.md` — from a file (free) or `--auto` (one real harness run) |
+| `wells evolve gate` | Baseline-vs-candidate bench passes + replay, produce a promote/reject recommendation |
+| `wells evolve promote` / `reject` | Write the candidate to `AGENT.md`, or mark it rejected |
+
+Everything persists under `~/.wells/bench/` (per-workspace corpus + results
+under `<workspace>/.wells/bench/`) and `~/.wells/evolve/mutations/` — plain
+JSON, inspectable and diffable like any other run artifact.
 
 ## MCP — server *and* client
 
@@ -1319,6 +1396,13 @@ src/wells/
 ├── user_memory.py     # Global user memory: ~/.wells/memory/, cross-project standing preferences
 ├── schedule.py        # wells schedule: unattended recurring runs (Task Scheduler / cron)
 ├── todo.py            # update_todos tool: model-declared task breakdown for the info panel
+├── traces.py          # run-trace recording + wells replay (scripted-model regression check)
+├── fleet.py           # wells fleet: N parallel worktree attempts at the same task
+├── evolve/            # SEACS: bench + evolution engine (self-improvement #3)
+│   ├── schema.py      #   TaskSpec + Oracle — one historical fix + its deterministic test oracle
+│   ├── corpus.py      #   git-history mining, dual validation, train/val/blind split assignment
+│   ├── runner.py      #   isolated worktree bench execution, oracle scoring, Wilson-bounded metrics
+│   └── mutate.py      #   propose/gate/promote/reject AGENT.md mutations against a bench split
 └── agents/            # planner / architect / coder / tester / reviewer
 wells-index/           # Rust structural indexer (tree-sitter + SQLite)
 .github/workflows/     # ci.yml (pytest) + release-index.yml (PyPI wheels)
@@ -1409,7 +1493,7 @@ profile.
 ## Tests & CI
 
 ```bash
-uv run pytest -q          # 700+ tests (a handful more if the optional
+uv run pytest -q          # 1000+ tests (a handful more if the optional
                            # `browser` extra + Chromium are installed)
 ```
 
@@ -1418,7 +1502,9 @@ the executor loop (mocked model — no API credits needed), cancellation and
 budget stops, graph routing (complexity skip, test-gate fail-fast), fuzzy
 edits, self-heal checkers, repo-map ranking, git snapshot/undo, pricing, MCP
 client CRUD, background-agent worktree lifecycle (create/merge/conflict/reap),
-and the settings persistence. GitHub Actions runs it on every
+the settings persistence, and SEACS bench/evolve (corpus dual-validation on
+real git repos, oracle scoring, Wilson bounds, mutation propose/gate/promote —
+all stubbed, no LLM calls in CI). GitHub Actions runs it on every
 push/PR (`ci.yml`); `release-index.yml` builds and publishes `wells-index`
 wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
 
