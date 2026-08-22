@@ -1,0 +1,45 @@
+{
+  "task_id": "T-6a53a532be-perf-repomap-background-the-embe",
+  "repo_root": "/home/corbybender/Projects/seacs",
+  "base_commit": "c3c2cd0d337bafd0b3c8496e32ba5167e3d34a46",
+  "problem_statement": "perf(repomap): background the embedding warm-up instead of blocking startup\n\nUser-reported: \"building repo map... 11s...20s\" on the very first message\nof every session. Traced it to repomap._semantic_rerank calling\nembeddings.ensure_embedded() inline -- which lazily loads a local ONNX\nmodel (fastembed's BAAI/bge-small-en-v1.5) on first use and embeds the\nwhole symbol corpus, a cost that's network-dependent (model\ndownload/init) and has nothing to do with the actual repo map build.\n\nembeddings.ensure_embedded_async() now does a cheap SQL check (no model\nload) for whether any symbols are actually un-embedded:\n- nothing pending (already embedded from a prior run, persisted in\n  index.db) -> ready immediately, no thread spawned\n- real work pending -> kicks it off in a background daemon thread and\n  returns not-ready, so THIS call falls back to heuristic-only ranking\n  (fully functional on its own) instead of blocking\n- a periodic refresh (5 min) re-checks for newly-indexed symbols without\n  ever un-readying an already-warm corpus (stale-while-revalidate)\n\nCaught and fixed a real bug via the test run itself: the background\nthread's cleanup assumed its _warm_state entry still existed, raising an\nunhandled KeyError in the thread if it was cleared mid-run; made it\ndefensive (recreate rather than assume).\n\nOnly the passive repomap injection (runs on every message) is affected;\nan explicit semantic_search tool call still embeds synchronously on first\nuse, since the model asked for that result and needs it to proceed.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_embeddings.py::test_symbol_text_includes_kind_name_and_path",
+      "tests/test_embeddings.py::test_symbol_text_normalises_separators",
+      "tests/test_embeddings.py::test_serialize_roundtrip",
+      "tests/test_embeddings.py::test_cosine_basic",
+      "tests/test_embeddings.py::test_cosine_zero_vector_is_safe",
+      "tests/test_embeddings.py::test_index_db_path",
+      "tests/test_embeddings.py::test_fallback_semantic_search_returns_empty",
+      "tests/test_embeddings.py::test_fallback_embed_query_returns_none",
+      "tests/test_embeddings.py::test_index_tools_always_exposes_semantic_search",
+      "tests/test_embeddings.py::test_fallback_repomap_still_builds",
+      "tests/test_embeddings.py::test_ensure_embedded_populates_vec_table",
+      "tests/test_embeddings.py::test_semantic_search_finds_relevant_symbol",
+      "tests/test_embeddings.py::test_semantic_search_empty_query_returns_empty",
+      "tests/test_embeddings.py::test_semantic_search_respects_limit",
+      "tests/test_embeddings.py::test_semantic_search_auto_embeds_on_first_call",
+      "tests/test_embeddings.py::test_file_aggregate_embedding_is_cached",
+      "tests/test_embeddings.py::test_file_aggregate_handles_native_separators",
+      "tests/test_embeddings.py::test_invalidate_file_cache_drops_entries",
+      "tests/test_embeddings.py::test_file_cosine_returns_zero_for_unknown_file",
+      "tests/test_embeddings.py::test_repomap_semantic_rerank_reorders",
+      "tests/test_embeddings.py::test_index_tools_exposes_semantic_search_when_available",
+      "tests/test_embeddings.py::test_ensure_embedded_async_defers_first_real_work",
+      "tests/test_embeddings.py::test_ensure_embedded_async_ready_immediately_when_already_embedded",
+      "tests/test_embeddings.py::test_repomap_semantic_rerank_skips_blend_while_warming_up"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_embeddings.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "6a53a532beccc26ffc55813e8e32035754877f56",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-22 09:28:45"
+}

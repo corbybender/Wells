@@ -1,0 +1,43 @@
+{
+  "task_id": "T-41f04dc072-fix-cli-reflections-with-no-subc",
+  "repo_root": "/home/corbybender/Projects/seacs",
+  "base_commit": "9832a27a72128dbd30bc79d187c7a09bcd1ea75d",
+  "problem_statement": "fix(cli): /reflections with no subcommand crashed on an empty workspace\n\nraises IndexError before the  fallback\ncan apply, so bare  on a repo with no captured reflections\nerrored with 'list index out of range' instead of the 'No reflections yet'\nmessage. Fixed by checking the split result length first; added regression\ntests for the bare-arg and list-on-empty paths.",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_reflections.py::test_capture_on_test_failure",
+      "tests/test_reflections.py::test_capture_on_review_rejection",
+      "tests/test_reflections.py::test_infra_failure_not_captured",
+      "tests/test_reflections.py::test_clean_run_not_captured",
+      "tests/test_reflections.py::test_dry_run_not_captured",
+      "tests/test_reflections.py::test_disabled_not_captured",
+      "tests/test_reflections.py::test_dryrun_safety_gate_blocks_write",
+      "tests/test_reflections.py::test_duplicate_failure_recorded_once",
+      "tests/test_reflections.py::test_distinct_failures_both_recorded",
+      "tests/test_reflections.py::test_load_returns_empty_when_absent",
+      "tests/test_reflections.py::test_load_parses_fields",
+      "tests/test_reflections.py::test_retrieve_ranks_relevant_reflection_first",
+      "tests/test_reflections.py::test_retrieve_drops_irrelevant",
+      "tests/test_reflections.py::test_retrieve_respects_k",
+      "tests/test_reflections.py::test_inject_into_prompt_prepends_block",
+      "tests/test_reflections.py::test_inject_noop_when_empty",
+      "tests/test_reflections.py::test_inject_noop_when_disabled",
+      "tests/test_reflections.py::test_compaction_keeps_file_under_cap",
+      "tests/test_reflections.py::test_clear_removes_file",
+      "tests/test_reflections.py::test_clear_when_absent_is_noop",
+      "tests/test_reflections.py::test_cli_reflections_bare_arg_does_not_crash_when_empty",
+      "tests/test_reflections.py::test_cli_reflections_list_when_empty"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_reflections.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "41f04dc07217f7d01f77b880a467f87f6def7487",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-22 09:27:33"
+}

@@ -1,0 +1,80 @@
+{
+  "bench_id": "20260822-113405-36ffcd",
+  "split": "train",
+  "profile": "zai",
+  "created_at": "2026-08-22 11:34:05",
+  "tasks": [
+    {
+      "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
+      "seed": 1,
+      "resolved": false,
+      "harness_status": "timeout",
+      "tokens_total": 0,
+      "cost_usd": null,
+      "duration_seconds": 3600.3,
+      "error": "",
+      "fail_to_pass_results": {
+        "tests/test_sandbox.py::test_sandbox_is_a_valid_policy": true,
+        "tests/test_sandbox.py::test_unknown_policy_falls_back_to_auto": true,
+        "tests/test_sandbox.py::test_gate_allows_sandbox_like_auto": true,
+        "tests/test_sandbox.py::test_gate_sandbox_not_affected_by_missing_approver": true,
+        "tests/test_sandbox.py::test_run_command_sandbox_without_runtime_fails_clean": true,
+        "tests/test_sandbox.py::test_run_command_sandbox_respects_plan_mode": true,
+        "tests/test_sandbox.py::test_run_command_auto_mode_never_touches_sandbox": true,
+        "tests/test_sandbox.py::test_enabled_false_without_any_runtime_cli": true,
+        "tests/test_sandbox.py::test_runtime_bin_prefers_podman": true,
+        "tests/test_sandbox.py::test_runtime_bin_falls_back_to_docker": true,
+        "tests/test_sandbox.py::test_runtime_bin_respects_pin": true,
+        "tests/test_sandbox.py::test_runtime_available_caches_result": false,
+        "tests/test_sandbox.py::test_runtime_available_detects_broken_oci_runtime": true,
+        "tests/test_sandbox.py::test_runtime_available_falls_back_when_image_absent": true,
+        "tests/test_sandbox.py::test_run_shell_in_container_sees_bind_mounted_workspace": true,
+        "tests/test_sandbox.py::test_run_shell_in_container_is_isolated_from_host_env": true,
+        "tests/test_sandbox.py::test_container_reused_across_calls": true
+      }
+    },
+    {
+      "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
+      "seed": 2,
+      "resolved": false,
+      "harness_status": "timeout",
+      "tokens_total": 0,
+      "cost_usd": null,
+      "duration_seconds": 3600.2,
+      "error": "",
+      "fail_to_pass_results": {
+        "tests/test_sandbox.py::test_sandbox_is_a_valid_policy": true,
+        "tests/test_sandbox.py::test_unknown_policy_falls_back_to_auto": true,
+        "tests/test_sandbox.py::test_gate_allows_sandbox_like_auto": true,
+        "tests/test_sandbox.py::test_gate_sandbox_not_affected_by_missing_approver": true,
+        "tests/test_sandbox.py::test_run_command_sandbox_without_runtime_fails_clean": true,
+        "tests/test_sandbox.py::test_run_command_sandbox_respects_plan_mode": true,
+        "tests/test_sandbox.py::test_run_command_auto_mode_never_touches_sandbox": true,
+        "tests/test_sandbox.py::test_enabled_false_without_any_runtime_cli": true,
+        "tests/test_sandbox.py::test_runtime_bin_prefers_podman": true,
+        "tests/test_sandbox.py::test_runtime_bin_falls_back_to_docker": true,
+        "tests/test_sandbox.py::test_runtime_bin_respects_pin": true,
+        "tests/test_sandbox.py::test_runtime_available_caches_result": false,
+        "tests/test_sandbox.py::test_runtime_available_detects_broken_oci_runtime": true,
+        "tests/test_sandbox.py::test_runtime_available_falls_back_when_image_absent": true,
+        "tests/test_sandbox.py::test_run_shell_in_container_sees_bind_mounted_workspace": true,
+        "tests/test_sandbox.py::test_run_shell_in_container_is_isolated_from_host_env": true,
+        "tests/test_sandbox.py::test_container_reused_across_calls": true
+      }
+    }
+  ],
+  "summary": {
+    "total_runs": 2,
+    "tasks": 1,
+    "resolved": 0,
+    "pass_at_1": 0.0,
+    "pass_at_1_wilson_lb": 0.0,
+    "any_seed_resolved": 0,
+    "avg_duration_seconds": 3600.2,
+    "avg_tokens": 0,
+    "total_cost_usd": null,
+    "harness_statuses": {
+      "timeout": 2
+    }
+  }
+}

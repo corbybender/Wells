@@ -1,0 +1,81 @@
+{
+  "updated_at": "2026-08-22 09:32:21",
+  "total": 10,
+  "splits": {
+    "train": 7,
+    "val": 0,
+    "blind": 3
+  },
+  "tasks": [
+    {
+      "task_id": "T-11e9879fdf-feat-opt-in-semantic-self-heal-v",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "11e9879fdf5fc85b7e0ed0b8b1170778af8f756e",
+      "subject": "feat: opt-in semantic self-heal via real type-checkers"
+    },
+    {
+      "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "24da16076eb3be558bde9050c3cc995872d787b5",
+      "subject": "fix(sandbox): probe must actually run a container, not just query info"
+    },
+    {
+      "task_id": "T-41f04dc072-fix-cli-reflections-with-no-subc",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "41f04dc07217f7d01f77b880a467f87f6def7487",
+      "subject": "fix(cli): /reflections with no subcommand crashed on an empty workspace"
+    },
+    {
+      "task_id": "T-67e44b6ee2-feat-providers-full-add-remove-u",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "67e44b6ee21ddcac96752b229c81ffbc3049e6a5",
+      "subject": "feat(providers): full add/remove/update for the vision model profile"
+    },
+    {
+      "task_id": "T-6a53a532be-perf-repomap-background-the-embe",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "6a53a532beccc26ffc55813e8e32035754877f56",
+      "subject": "perf(repomap): background the embedding warm-up instead of blocking startup"
+    },
+    {
+      "task_id": "T-9399613aef-feat-self-improvement-reflexion-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "9399613aef7164a7225a27788ac6f9300b617f08",
+      "subject": "feat: self-improvement — Reflexion + auto-skill authoring"
+    },
+    {
+      "task_id": "T-b1dd722aba-fix-vision-forward-pasted-images",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "b1dd722abab6aee432435ccf5f10a362f7ebfff9",
+      "subject": "fix(vision): forward pasted images on the auto route; fix dead free-tier slug"
+    },
+    {
+      "task_id": "T-c3c2cd0d33-fix-llm-retry-openrouter-gateway",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "c3c2cd0d337bafd0b3c8496e32ba5167e3d34a46",
+      "subject": "fix(llm): retry OpenRouter gateway 5xx errors instead of giving up in 1 try"
+    },
+    {
+      "task_id": "T-c5f9a9f591-feat-run-completion-notification",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "c5f9a9f591d57346ab367956560ae46693c27c45",
+      "subject": "feat: run-completion notifications + cross-run daily spend cap"
+    },
+    {
+      "task_id": "T-f1bcbcb6fd-fix-providers-detect-tunneled-ol",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "f1bcbcb6fd5ef25e9607e12c43a65e1fec5fbe5e",
+      "subject": "fix(providers): detect tunneled Ollama profiles; cap local-model steps"
+    }
+  ]
+}
