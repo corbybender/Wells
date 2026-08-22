@@ -2009,6 +2009,8 @@ def _run_executor_impl(
                 "not able",
                 "no module",
                 "not found",
+                "no tests",
+                "0 tests",
                 "denied",
             )
             _acked_failure = any(w in (llm_text or "").lower() for w in _ack_words)
