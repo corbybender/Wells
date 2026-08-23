@@ -1217,73 +1217,158 @@ def _short_path(path: str) -> str:
     return ("…" + p[-55:]) if len(p) > 58 else p
 
 
-def _activity_line(name: str, args: dict, ok: bool, simulated: bool = False) -> str:
-    """Format one tool call as a compact human-readable line."""
-    check = (
-        "[dim](plan)[/dim]"
-        if simulated
-        else ("[green]✓[/green]" if ok else "[red]✗[/red]")
-    )
+# Human-facing tool name, Claude-Code/Codex-CLI style ("Grep", "Bash", "Read"
+# rather than the raw tool identifier the model calls).
+_TOOL_LABEL: dict[str, str] = {
+    "read_file": "Read", "view_file": "Read", "cat": "Read",
+    "list_dir": "List", "ls": "List",
+    "glob": "Glob",
+    "grep": "Grep", "search": "Grep", "ripgrep": "Grep",
+    "find_symbol": "Find", "find_callers": "Callers", "search_symbols": "Search",
+    "write_file": "Write", "create_file": "Write",
+    "edit_file": "Edit", "patch_file": "Edit",
+    "str_replace_editor": "Edit", "str_replace": "Edit",
+    "delete_file": "Delete", "remove_file": "Delete",
+    "run_command": "Bash", "shell": "Bash", "bash": "Bash",
+    "run_tests": "Test",
+    "run_code": "Code",
+    "load_skill": "Skill",
+    "bg_start": "Background", "bg_status": "Background", "bg_collect": "Background",
+}
 
-    # Read-category tools
-    if name == "read_file":
-        desc = f"[dim]read    [/dim] {_short_path(args.get('path', '?'))}"
-    elif name in ("list_dir", "glob"):
-        tgt = args.get("path") or args.get("pattern") or "."
-        desc = f"[dim]list    [/dim] {_short_path(tgt)}"
-    elif name == "grep":
+_PATH_ARG_TOOLS = {
+    "read_file", "view_file", "cat", "write_file", "create_file",
+    "edit_file", "patch_file", "str_replace_editor", "str_replace",
+    "delete_file", "remove_file",
+}
+
+
+def _tool_headline(name: str, args: dict) -> str:
+    """``Verb(target)`` — what the model is trying to do, in plain words.
+
+    Mirrors the "Read(file.py)" / "Bash(npm test)" convention Claude Code and
+    Codex CLI use: the tool name reads as a verb, the parens hold the one
+    piece of context a human actually needs to follow along.
+    """
+    label = _TOOL_LABEL.get(name, name)
+    if name in _PATH_ARG_TOOLS:
+        target = _short_path(
+            args.get("path") or args.get("file_path") or args.get("filename") or "?"
+        )
+    elif name in ("list_dir", "ls"):
+        target = _short_path(args.get("path") or ".")
+    elif name == "glob":
+        target = str(args.get("pattern") or "")
+    elif name in ("grep", "search", "ripgrep"):
         pat = str(args.get("pattern") or args.get("query") or "")[:45]
-        desc = f"[dim]grep    [/dim] {pat!r}"
+        path = args.get("path")
+        where = f" in {_short_path(path)}" if path and path != "." else ""
+        target = f'"{pat}"{where}'
     elif name in ("find_symbol", "find_callers", "search_symbols"):
-        sym = str(args.get("name") or args.get("symbol") or args.get("query") or "")[
-            :45
-        ]
-        label = {
-            "find_symbol": "find",
-            "find_callers": "callers",
-            "search_symbols": "search",
-        }.get(name, name)
-        desc = f"[dim]{label:<8}[/dim] {sym}"
-
-    # Write-category tools
-    elif name in ("write_file", "create_file"):
-        desc = f"[yellow]write   [/yellow] {_short_path(args.get('path', '?'))}"
-    elif name in ("edit_file", "patch_file", "str_replace_editor", "str_replace"):
-        desc = f"[yellow]edit    [/yellow] {_short_path(args.get('path', '?'))}"
-    elif name in ("delete_file", "remove_file"):
-        desc = f"[yellow]delete  [/yellow] {_short_path(args.get('path', '?'))}"
-
-    # Execution tools
+        target = str(args.get("name") or args.get("symbol") or args.get("query") or "")[:45]
     elif name in ("run_command", "shell", "bash"):
-        cmd = str(args.get("command") or args.get("cmd") or "")
-        cmd = _strip_env_prefix(cmd)  # remove $env:VAR='...'; boilerplate
-        if len(cmd) > 70:
-            cmd = cmd[:67] + "…"
-        desc = f"[cyan]run     [/cyan] {cmd}"
+        cmd = _strip_env_prefix(str(args.get("command") or args.get("cmd") or ""))
+        target = cmd[:70] + ("…" if len(cmd) > 70 else "")
     elif name == "run_tests":
-        cmd = str(args.get("command") or "auto-detect")[:60]
-        desc = f"[cyan]test    [/cyan] {cmd}"
-
-    # CodeAct + skills + background agents
+        target = str(args.get("command") or "auto-detect")[:60]
     elif name == "run_code":
         first_line = str(args.get("code", "")).splitlines()[0:1]
-        preview = (first_line[0] if first_line else "")[:60]
-        desc = f"[cyan]code    [/cyan] {preview}"
+        target = (first_line[0] if first_line else "")[:60]
     elif name == "load_skill":
-        desc = f"[dim]skill   [/dim] {args.get('name', '?')}"
+        target = str(args.get("name", "?"))
     elif name in ("bg_start", "bg_status", "bg_collect"):
-        label = {"bg_start": "bg▶", "bg_status": "bg?", "bg_collect": "bg◀"}.get(
-            name, "bg"
-        )
-        role = args.get("role") or (args.get("id") or "")
-        desc = f"[magenta]{label:<8}[/magenta] {role}"
-
-    # Fallback
+        target = str(args.get("role") or args.get("id") or "")
     else:
-        first = str(next(iter(args.values()), ""))[:50] if args else ""
-        desc = f"[dim]{name:<8}[/dim] {first}"
+        target = str(next(iter(args.values()), ""))[:50] if args else ""
+    return f"{label}({target})" if target else f"{label}()"
 
-    return f"  {check} {desc}"
+
+def _outcome_summary(name: str, result: "tools.ToolResult") -> str:
+    """One short human sentence describing what a *successful* call produced.
+
+    This is the piece plain pass/fail icons never carried: not just "it
+    worked" but "here's what you got" — the same thing a person watching over
+    your shoulder would say out loud: "read 312 lines", "6 matches", "tests
+    passed". Falls back to the first output line for tools with no typed
+    summary below.
+    """
+    text = result.output or ""
+    lines = [l for l in text.splitlines() if l.strip()]
+    n = len(lines)
+    if name in ("read_file", "view_file", "cat"):
+        return f"{n} line{'s' if n != 1 else ''}"
+    if name in ("list_dir", "ls"):
+        return "empty" if text.strip() == "(empty directory)" else f"{n} entr{'y' if n == 1 else 'ies'}"
+    if name == "glob":
+        return "no matches" if text.strip() == "(no matches)" else f"{n} file{'s' if n != 1 else ''}"
+    if name in ("grep", "search", "ripgrep"):
+        if text.strip() in ("", "(no matches)"):
+            return "no matches"
+        files = {l.split(":", 1)[0] for l in lines if ":" in l}
+        extra = f" in {len(files)} file{'s' if len(files) != 1 else ''}" if len(files) > 1 else ""
+        return f"{n} match{'es' if n != 1 else ''}{extra}"
+    if name in (
+        "write_file", "create_file",
+        "edit_file", "patch_file", "str_replace_editor", "str_replace",
+        "delete_file", "remove_file",
+    ):
+        # These handlers already return a precise human confirmation
+        # ("Wrote 812 chars to foo.py", "Edited foo.py (replace 1
+        # occurrence)") — showing anything else would just be a worse
+        # paraphrase of what the tool itself already said.
+        return lines[0][:100] if lines else "done"
+    if name in ("run_command", "shell", "bash", "run_code"):
+        return lines[0][:90] if lines else "no output"
+    if name == "run_tests":
+        for line in lines:
+            if any(k in line.lower() for k in ("passed", "failed", "error")):
+                return line[:100]
+        return lines[0][:100] if lines else "complete"
+    if name in ("find_symbol", "find_callers", "search_symbols"):
+        return f"{n} result{'s' if n != 1 else ''}" if text.strip() else "no results"
+    return lines[0][:90] if lines else "ok"
+
+
+def _activity_line(name: str, args: dict, result: "tools.ToolResult", error: str = "") -> str:
+    """Render one tool call as a two-line block: what was tried, what happened.
+
+    Deliberately mirrors Claude Code / Codex CLI's transcript style — a
+    headline naming the action, an indented "⎿" line underneath carrying the
+    actual outcome — rather than a single terse ``✗ grep 'model'`` that shows
+    an icon without ever saying what came of it. A human reading the log
+    should be able to follow the run without cross-referencing anything else.
+    """
+    return f"  {_start_icon(result)} {_tool_headline(name, args)}\n     {_outcome_tail(name, result, error)}"
+
+
+def _start_icon(result: "tools.ToolResult") -> str:
+    return (
+        "[dim]○[/dim]"
+        if result.simulated
+        else ("[green]✓[/green]" if result.ok else "[red]✗[/red]")
+    )
+
+
+def _outcome_tail(name: str, result: "tools.ToolResult", error: str = "") -> str:
+    """The indented ``⎿`` outcome line alone (no headline)."""
+    if result.simulated:
+        return "[dim]⎿  planned — not executed (plan mode)[/dim]"
+    if not result.ok:
+        return f"[red]⎿  {(error or 'failed')[:100]}[/red]"
+    return f"[dim]⎿  {_outcome_summary(name, result)}[/dim]"
+
+
+def _tool_start_line(name: str, args: dict) -> str:
+    """Pre-announce a tool call the instant it's about to run.
+
+    Printed *before* dispatch — before the result is known — so a slow call
+    (a shell command, a test run) shows up in the transcript right away
+    instead of leaving the screen blank until it finishes. The neutral
+    ``⏺`` bullet (rather than ✓/✗, which aren't knowable yet) matches how
+    Claude Code and Codex CLI announce an in-flight action; the outcome
+    lands moments later as its own indented ``⎿`` line once dispatch returns.
+    """
+    return f"  [cyan]⏺[/cyan] {_tool_headline(name, args)}"
 
 
 # ---------------------------------------------------------------------------
@@ -1816,9 +1901,11 @@ def _run_executor_impl(
                 preview += "…"
             _ui("llm_text", f"\n[dim italic]{preview}[/dim italic]")
         elif calls and not llm_text:
-            # No narrative text — at least show the round number so the user
-            # knows progress is being made.
-            _ui("round", f"\n[dim]Round {rounds}  (step {steps + 1}/{cap_s})[/dim]")
+            # No narrative text from the model — the step counter below is
+            # the only progress signal the user gets this turn, so show it
+            # as a plain fraction of the step budget rather than internal
+            # "round" bookkeeping the model's own turn count means nothing.
+            _ui("round", f"\n[dim]step {steps + 1}/{cap_s}[/dim]")
 
         if not calls:
             # A guard-aborted reply with no parseable call is repetition
@@ -2280,6 +2367,7 @@ def _run_executor_impl(
                         f"data.]",
                         "",
                     )
+            _pre_announced = False
             if result is None:
                 call_ctx = ctx
                 if decision is not None and decision.auto_approve and ctx.safety == "approve":
@@ -2290,6 +2378,11 @@ def _run_executor_impl(
                     from dataclasses import replace as _replace_ctx
 
                     call_ctx = _replace_ctx(ctx, safety="auto")
+                # Announce before dispatch, not after — a slow call (a shell
+                # command, a test run) would otherwise leave the transcript
+                # blank for however long it takes to come back.
+                _ui("tool_start", _tool_start_line(name, args), name=name)
+                _pre_announced = True
                 result = tools.dispatch(name, args, call_ctx)
             if name in _readonly_names:
                 if not _dedupe_hit and result.ok and not result.simulated:
@@ -2551,10 +2644,9 @@ def _run_executor_impl(
             # ── Stuck-loop detection ───────────────────────────────────────
             # Inject a note into obs_text when the same command fails 3+ times
             # so the model knows to stop retrying and report the blocker.
+            _err_reason = ""
             if not result.ok and not result.simulated:
-                err = _first_error_line(result.output or result.error or "")
-                if err:
-                    _ui("warn", f"    [dim red]↳ {err}[/dim red]")
+                _err_reason = _first_error_line(result.output or result.error or "")
 
                 if name in ("run_command", "shell", "bash"):
                     raw_cmd = str(args.get("command") or args.get("cmd") or "")
@@ -2575,7 +2667,11 @@ def _run_executor_impl(
 
             _ui(
                 "tool_line",
-                _activity_line(name, args, result.ok, result.simulated),
+                (
+                    f"     {_outcome_tail(name, result, _err_reason)}"
+                    if _pre_announced
+                    else _activity_line(name, args, result, error=_err_reason)
+                ),
                 name=name,
                 ok=result.ok,
                 simulated=result.simulated,

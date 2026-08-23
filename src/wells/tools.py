@@ -1167,14 +1167,35 @@ def langchain_tool_schemas(tools: list[ToolDef] | None = None) -> list[dict]:
     ]
 
 
+def _drop_blank_optional_args(tool: ToolDef, args: dict) -> dict:
+    """Strip empty-string values for optional (defaulted) params.
+
+    Weak/local models frequently fill every schema field, including optional
+    ones they have nothing to say for, with ``""`` rather than omitting the
+    key. Passed straight through, that empty string overrides the handler's
+    own default (e.g. ``path=""`` instead of the intended ``path="."``) and
+    trips validation that a bare omission would have sailed past — turning a
+    no-op into a hard, repeatable failure the model can't reason its way out
+    of. Only touches params the schema marks optional via a ``default``.
+    """
+    props = tool.input_schema.get("properties", {})
+    required = set(tool.input_schema.get("required", []))
+    return {
+        k: v
+        for k, v in args.items()
+        if not (v == "" and k not in required and "default" in props.get(k, {}))
+    }
+
+
 def dispatch(name: str, args: dict, ctx: ToolContext) -> ToolResult:
     """Look up ``name`` and run it with ``args`` under ``ctx``."""
     _ensure_optional_registered()
     tool = _TOOLS_BY_NAME.get(name)
     if tool is None:
         return ToolResult(False, "", f"Unknown tool: {name}")
+    args = _drop_blank_optional_args(tool, args or {})
     try:
-        return tool.handler(ctx, **(args or {}))
+        return tool.handler(ctx, **args)
     except TypeError as e:
         return ToolResult(False, "", f"Bad arguments for {name}: {e}")
     except Exception as e:
