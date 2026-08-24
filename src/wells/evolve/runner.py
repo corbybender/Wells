@@ -36,7 +36,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from wells._gitutils import git
+from wells._gitutils import git, is_git_repo
 from wells.evolve.corpus import list_tasks, resolve_command_argv
 from wells.evolve.schema import TaskSpec
 
@@ -256,7 +256,6 @@ def _score_oracle(worktree: str, task: TaskSpec) -> tuple[bool, dict[str, bool],
 
 
 def _execute_task(
-    repo_root: str,
     task: TaskSpec,
     seed: int,
     *,
@@ -265,7 +264,14 @@ def _execute_task(
     timeout: float,
     extra_env: dict[str, str] | None = None,
 ) -> TaskResult:
-    """Worktree at base → run harness → score oracle → always clean up."""
+    """Worktree at base → run harness → score oracle → always clean up.
+
+    Uses ``task.repo_root`` (not a caller-supplied repo path) — a corpus
+    can span multiple repos (each task carries its own origin), so the
+    worktree must be created against the specific repo this task was
+    mined from, never a shared/assumed one.
+    """
+    repo_root = task.repo_root
     wt = str(worktree_root / f"{task.task_id}-s{seed}")
     result = TaskResult(task_id=task.task_id, seed=seed, resolved=False)
     ok, out = git(repo_root, "worktree", "add", "--detach", wt, task.base_commit)
@@ -444,15 +450,26 @@ def run_bench(
     worktree_root = bench_home / "runs" / bench_id
     worktree_root.mkdir(parents=True, exist_ok=True)
 
-    # All tasks in one bench come from one repo-root (corpora are per-repo today);
-    # guard against a hand-merged corpus spanning repos before starting work.
-    repo_roots = {t.repo_root for t in tasks if t.repo_root}
-    if len(repo_roots) != 1:
+    # A corpus can span multiple repos (e.g. mined from several external
+    # projects) — each task carries its own repo_root and is executed
+    # against it directly (see _execute_task). Only requirement: every
+    # task must actually have one, and it must resolve to a real repo on
+    # this machine (mined tasks from repos that were only ever local
+    # clones — like the requests/click mining today — need those clones
+    # present to gate against).
+    missing = [t.task_id for t in tasks if not t.repo_root]
+    if missing:
         raise RuntimeError(
-            f"Expected exactly one repo_root across the split's tasks, found {len(repo_roots)} "
-            "— a bench runs one repository's corpus."
+            f"{len(missing)} task(s) in split {split!r} have no repo_root: "
+            f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
         )
-    repo_root = next(iter(repo_roots))
+    repo_roots = sorted({t.repo_root for t in tasks})
+    absent = [r for r in repo_roots if not is_git_repo(r)]
+    if absent:
+        raise RuntimeError(
+            f"repo_root(s) not found as a git repo on this machine: {absent} "
+            "— clone them (or restore the clone path) before gating this split."
+        )
 
     run = BenchRun(
         bench_id=bench_id,
@@ -468,7 +485,6 @@ def run_bench(
             for seed in range(1, seeds + 1):
                 log(f"[bench {bench_id}] ({i}/{len(tasks)} s{seed}) {task.task_id} ...")
                 row = _execute_task(
-                    repo_root,
                     task,
                     seed,
                     profile=profile,
@@ -484,7 +500,8 @@ def run_bench(
                     + (f" err={row.error[:80]}" if row.error else "")
                 )
     finally:
-        git(repo_root, "worktree", "prune")
+        for r in repo_roots:
+            git(r, "worktree", "prune")
         shutil.rmtree(worktree_root, ignore_errors=True)
 
     run.summary = summarize(run.tasks)
