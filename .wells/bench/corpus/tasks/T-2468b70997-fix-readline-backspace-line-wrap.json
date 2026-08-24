@@ -1,0 +1,51 @@
+{
+  "task_id": "T-2468b70997-fix-readline-backspace-line-wrap",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "ddede2147c9370ab8275f81db4826b6895d2e7dc",
+  "problem_statement": "Fix readline backspace/line-wrapping on linux (#2969)\n\nCo-authored-by: Kevin Deldycke <kevin@deldycke.com>",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_utils.py::test_unset_sentinel",
+      "tests/test_utils.py::test_echo",
+      "tests/test_utils.py::test_echo_custom_file",
+      "tests/test_utils.py::test_echo_no_streams",
+      "tests/test_utils.py::test_styling",
+      "tests/test_utils.py::test_unstyle_other_ansi",
+      "tests/test_utils.py::test_filename_formatting",
+      "tests/test_utils.py::test_prompts",
+      "tests/test_utils.py::test_confirm_repeat",
+      "tests/test_utils.py::test_prompts_abort",
+      "tests/test_utils.py::test_full_prompt_passed_to_readline",
+      "tests/test_utils.py::test_prompts_eof",
+      "tests/test_utils.py::test_echo_via_pager",
+      "tests/test_utils.py::test_echo_color_flag",
+      "tests/test_utils.py::test_prompt_cast_default",
+      "tests/test_utils.py::test_echo_writing_to_standard_error",
+      "tests/test_utils.py::test_echo_with_capsys",
+      "tests/test_utils.py::test_open_file",
+      "tests/test_utils.py::test_open_file_pathlib_dash",
+      "tests/test_utils.py::test_open_file_ignore_errors_stdin",
+      "tests/test_utils.py::test_open_file_respects_ignore",
+      "tests/test_utils.py::test_open_file_ignore_invalid_utf8",
+      "tests/test_utils.py::test_open_file_ignore_no_encoding",
+      "tests/test_utils.py::test_open_file_atomic_permissions_existing_file",
+      "tests/test_utils.py::test_open_file_atomic_permissions_new_file",
+      "tests/test_utils.py::test_iter_keepopenfile",
+      "tests/test_utils.py::test_iter_lazyfile",
+      "tests/test_utils.py::test_detect_program_name",
+      "tests/test_utils.py::test_expand_args",
+      "tests/test_utils.py::test_make_default_short_help"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_utils.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "2468b70997a6ec27ced4b4867954c90da3f92075",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:52"
+}

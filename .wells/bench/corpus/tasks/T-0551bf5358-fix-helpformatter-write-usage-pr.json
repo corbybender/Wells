@@ -1,0 +1,44 @@
+{
+  "task_id": "T-0551bf5358-fix-helpformatter-write-usage-pr",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "7c99ebe23b931f27562d926814423cce85fd9766",
+  "problem_statement": "Fix `HelpFormatter.write_usage` producing spurious characters\n\nCloses #3360",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_formatting.py::test_basic_functionality",
+      "tests/test_formatting.py::test_wrapping_long_options_strings",
+      "tests/test_formatting.py::test_wrapping_long_command_name",
+      "tests/test_formatting.py::test_formatting_empty_help_lines",
+      "tests/test_formatting.py::test_formatting_usage_error",
+      "tests/test_formatting.py::test_formatting_usage_error_metavar_missing_arg",
+      "tests/test_formatting.py::test_formatting_usage_error_metavar_bad_arg",
+      "tests/test_formatting.py::test_formatting_usage_error_nested",
+      "tests/test_formatting.py::test_formatting_usage_error_no_help",
+      "tests/test_formatting.py::test_formatting_usage_custom_help",
+      "tests/test_formatting.py::test_formatting_usage_error_help_hint",
+      "tests/test_formatting.py::test_formatting_custom_type_metavar",
+      "tests/test_formatting.py::test_truncating_docstring",
+      "tests/test_formatting.py::test_truncating_docstring_no_help",
+      "tests/test_formatting.py::test_removing_multiline_marker",
+      "tests/test_formatting.py::test_global_show_default",
+      "tests/test_formatting.py::test_formatting_with_options_metavar_empty",
+      "tests/test_formatting.py::test_help_formatter_write_text",
+      "tests/test_formatting.py::test_wrap_text_visible_width",
+      "tests/test_formatting.py::test_write_usage_styled_prefix_keeps_options_on_one_line",
+      "tests/test_formatting.py::test_help_formatter_write_usage",
+      "tests/test_formatting.py::test_help_formatter_write_usage_without_args_styled_prefix",
+      "tests/test_formatting.py::test_command_write_usage_no_args"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_formatting.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "0551bf53588ae87f462d336f24f853a156fefe3a",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:41"
+}

@@ -1,0 +1,39 @@
+{
+  "task_id": "T-1241abaed4-use-non-shadowed-help-option-nam",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "f1f191ecd2c790b161187c78e7c88440e9524e5c",
+  "problem_statement": "Use non-shadowed help option name in error hint\n\nFix #2790.\n\nCo-authored-by: Mr-Neutr0n <64578610+Mr-Neutr0n@users.noreply.github.com>",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_formatting.py::test_basic_functionality",
+      "tests/test_formatting.py::test_wrapping_long_options_strings",
+      "tests/test_formatting.py::test_wrapping_long_command_name",
+      "tests/test_formatting.py::test_formatting_empty_help_lines",
+      "tests/test_formatting.py::test_formatting_usage_error",
+      "tests/test_formatting.py::test_formatting_usage_error_metavar_missing_arg",
+      "tests/test_formatting.py::test_formatting_usage_error_metavar_bad_arg",
+      "tests/test_formatting.py::test_formatting_usage_error_nested",
+      "tests/test_formatting.py::test_formatting_usage_error_no_help",
+      "tests/test_formatting.py::test_formatting_usage_custom_help",
+      "tests/test_formatting.py::test_formatting_usage_error_help_hint",
+      "tests/test_formatting.py::test_formatting_custom_type_metavar",
+      "tests/test_formatting.py::test_truncating_docstring",
+      "tests/test_formatting.py::test_truncating_docstring_no_help",
+      "tests/test_formatting.py::test_removing_multiline_marker",
+      "tests/test_formatting.py::test_global_show_default",
+      "tests/test_formatting.py::test_formatting_with_options_metavar_empty",
+      "tests/test_formatting.py::test_help_formatter_write_text"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_formatting.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "1241abaed4e441582a21f4bf90c8482de02b92df",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:56"
+}

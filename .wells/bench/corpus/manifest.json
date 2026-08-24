@@ -1,12 +1,61 @@
 {
-  "updated_at": "2026-08-24 08:53:46",
-  "total": 14,
+  "updated_at": "2026-08-24 11:14:57",
+  "total": 58,
   "splits": {
-    "train": 9,
-    "val": 2,
-    "blind": 3
+    "train": 36,
+    "val": 11,
+    "blind": 11
   },
   "tasks": [
+    {
+      "task_id": "T-047adef258-preserve-declaration-order-of-he",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "047adef258fc25566163ffc3efd14effc0ef7352",
+      "subject": "Preserve declaration order of help option names"
+    },
+    {
+      "task_id": "T-051725fa7e-add-tests-to-deprecations-better",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "051725fa7e0c69effc9107066d8791c5b99242c3",
+      "subject": "Add tests to deprecations. Better deprecate streams."
+    },
+    {
+      "task_id": "T-051bb0f30b-do-not-let-the-gc-close-a-borrow",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "051bb0f30b545cf7426deef819811815297c2798",
+      "subject": "Do not let the GC close a borrowed `stdout`"
+    },
+    {
+      "task_id": "T-0551bf5358-fix-helpformatter-write-usage-pr",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "0551bf53588ae87f462d336f24f853a156fefe3a",
+      "subject": "Fix `HelpFormatter.write_usage` producing spurious characters"
+    },
+    {
+      "task_id": "T-07c909f23f-validate-style-color-arguments-f",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "07c909f23f0f83b5ca137c167b9a134d66201f67",
+      "subject": "Validate style() color arguments, fix explicit black color argument"
+    },
+    {
+      "task_id": "T-0baa8db077-document-ctx-params-bypass-with-",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "0baa8db07736fc7ad3d3eed97d4c73b0059c63e1",
+      "subject": "Document ctx.params bypass with test and doc"
+    },
+    {
+      "task_id": "T-0f71fe771c-fix-dual-option-arbitration-to-r",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "0f71fe771ceefd5715b3b375c9b2e3a701c0648e",
+      "subject": "Fix dual-option arbitration to respect explicit defaults"
+    },
     {
       "task_id": "T-11e9879fdf-feat-opt-in-semantic-self-heal-v",
       "split": "train",
@@ -15,11 +64,81 @@
       "subject": "feat: opt-in semantic self-heal via real type-checkers"
     },
     {
+      "task_id": "T-1241abaed4-use-non-shadowed-help-option-nam",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "1241abaed4e441582a21f4bf90c8482de02b92df",
+      "subject": "Use non-shadowed help option name in error hint"
+    },
+    {
+      "task_id": "T-19fd4d6e18-fix-ensure-fish-completion-handl",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "19fd4d6e18bc9fce451f92f422696b11169faa57",
+      "subject": "Fix: Ensure fish completion handles multiline help strings correctly (#3126)"
+    },
+    {
+      "task_id": "T-1aa2d53d63-redesigned-tests-and-get-pager-f",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "1aa2d53d63ff68bf14b35931177aac9270e39713",
+      "subject": "Redesigned tests and get_pager_file branching to be more clear and not set color"
+    },
+    {
+      "task_id": "T-1f9cd54f68-close-the-pager-temp-file-before",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "1f9cd54f686eb343cec714230ad825ce972739ab",
+      "subject": "Close the pager temp file before unlinking it"
+    },
+    {
+      "task_id": "T-2468b70997-fix-readline-backspace-line-wrap",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "2468b70997a6ec27ced4b4867954c90da3f92075",
+      "subject": "Fix readline backspace/line-wrapping on linux (#2969)"
+    },
+    {
       "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
       "split": "train",
       "status": "verified",
       "source_commit": "24da16076eb3be558bde9050c3cc995872d787b5",
       "subject": "fix(sandbox): probe must actually run a container, not just query info"
+    },
+    {
+      "task_id": "T-27b3ee2633-add-built-in-powershell-shell-co",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "27b3ee2633f80aeb04d6e15c2fb3c91542efa32b",
+      "subject": "Add built-in PowerShell shell completion support"
+    },
+    {
+      "task_id": "T-30749b45c5-don-t-parameterize-tests-using-n",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "30749b45c50f4811a3487fc9d11da2b7afc6007f",
+      "subject": "Don't parameterize tests using non-Collection iterables"
+    },
+    {
+      "task_id": "T-3495fba163-warn-when-an-argument-name-colli",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "3495fba163dd61dea837cd557095df6c21515ac8",
+      "subject": "Warn when an argument name collide with other parameters"
+    },
+    {
+      "task_id": "T-399919f740-support-incremental-output-in-th",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "399919f740bfd26cb30d544877fafd03cfcd9091",
+      "subject": "Support incremental output in the pager"
+    },
+    {
+      "task_id": "T-3a3e0350b6-split-string-values-from-default",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "3a3e0350b6a2ea3e799440d48e779acabcf44de9",
+      "subject": "Split string values from `default_map` for multi-value parameters"
     },
     {
       "task_id": "T-41f04dc072-fix-cli-reflections-with-no-subc",
@@ -43,11 +162,39 @@
       "subject": "Trim excess leading path separators"
     },
     {
+      "task_id": "T-61bdc2ae81-implement-a-regex-based-solution",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "61bdc2ae81f6d0dc19bd247504544659245df056",
+      "subject": "Implement a regex-based solution to hide hidden input"
+    },
+    {
+      "task_id": "T-6404f345e5-fix-prepare-body-stream-detectio",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "6404f345e562d962abe6700a1c357ec1e7e18232",
+      "subject": "Fix `prepare_body` stream detection for `__getattr__`-based file wrappers (#7433"
+    },
+    {
+      "task_id": "T-665736bc85-mark-commands-as-optional-in-the",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "665736bc85a19a7a2357c071394b4a545617faa3",
+      "subject": "Mark commands as optional in the synopsis"
+    },
+    {
       "task_id": "T-67e44b6ee2-feat-providers-full-add-remove-u",
       "split": "blind",
       "status": "verified",
       "source_commit": "67e44b6ee21ddcac96752b229c81ffbc3049e6a5",
       "subject": "feat(providers): full add/remove/update for the vision model profile"
+    },
+    {
+      "task_id": "T-684b3f5b51-add-help-parameter-to-arguments",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "684b3f5b5150761ec1c930bef300eb6169f483d8",
+      "subject": "Add help parameter to arguments"
     },
     {
       "task_id": "T-6a53a532be-perf-repomap-background-the-embe",
@@ -57,11 +204,102 @@
       "subject": "perf(repomap): background the embedding warm-up instead of blocking startup"
     },
     {
+      "task_id": "T-6f205ff422-fix-encode-files-detection-for-g",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "6f205ff422bccd5e4c4fc0b64c5f3e7df5181db6",
+      "subject": "Fix `_encode_files` detection for `__getattr__`-based file wrappers (#7502)"
+    },
+    {
+      "task_id": "T-6f66281a1d-add-hasattr-checks-for-remaining",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "6f66281a1d6326b1b9c4ac09ca30de0fc4e6ef43",
+      "subject": "Add hasattr checks for remaining protocol isinstance checks (#7505)"
+    },
+    {
+      "task_id": "T-6f85d26dcd-do-not-trigger-a-byteswarning-un",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "6f85d26dcd50c1745e81040ed4f2b61f8bf293cf",
+      "subject": "Do not trigger a `BytesWarning` under `python -bb`"
+    },
+    {
+      "task_id": "T-71f2bafa54-strip-all-ansi-sequences",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "71f2bafa541e7f798834e74076786ff4281ac83e",
+      "subject": "Strip all ANSI sequences"
+    },
+    {
+      "task_id": "T-7d05a59b9d-fix-get-parameter-source-during-",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "7d05a59b9d46a415d85937630d1d812cf477f60a",
+      "subject": "Fix get_parameter_source() during type conversion and eager callbacks"
+    },
+    {
+      "task_id": "T-7eb57cff7c-fix-pager-test-race-by-raising-b",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "7eb57cff7cd292fbd526eaf861c8f945ddeb07a3",
+      "subject": "Fix pager test race by raising before yield"
+    },
+    {
+      "task_id": "T-82f377c547-fix-deprecated-label-formatting",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "82f377c547e1867d073f02bb8f476214d07e245b",
+      "subject": "Fix deprecated label formatting"
+    },
+    {
+      "task_id": "T-831c8f0948-add-nosuchcommand-exception-with",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "831c8f0948af519e45b90801d7430ff25451f972",
+      "subject": "Add NoSuchCommand exception with suggestions for misspelled commands (#3228)"
+    },
+    {
       "task_id": "T-9399613aef-feat-self-improvement-reflexion-",
       "split": "train",
       "status": "verified",
       "source_commit": "9399613aef7164a7225a27788ac6f9300b617f08",
       "subject": "feat: self-improvement — Reflexion + auto-skill authoring"
+    },
+    {
+      "task_id": "T-93ba0075f4-strip-ansi-from-confirm-and-prom",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "93ba0075f4881b858b61f89a753c7c10e330027e",
+      "subject": "Strip ANSI from `confirm()` and `prompt()` when the stream don't support them"
+    },
+    {
+      "task_id": "T-9f9b149ea3-add-custom-version-option-freeze",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "9f9b149ea30287b4977b800a024ee68144b8c869",
+      "subject": "Add `@custom_version_option`, freeze `@version_option`"
+    },
+    {
+      "task_id": "T-a09c1c655e-fix-show-custom-error-message-in",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "a09c1c655eef3d43181eb46036b66cf058d72df4",
+      "subject": "fix: show custom error message in prompt with hide_input=True"
+    },
+    {
+      "task_id": "T-a2ac5839f2-open-the-pager-temp-file-in-text",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "a2ac5839f29f61cf7f3f229c67b97d07988e479b",
+      "subject": "Open the pager temp file in text mode"
+    },
+    {
+      "task_id": "T-a3321c9ca1-implement-unix-line-endings-for-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "a3321c9ca14ddb951f04ac981f275b0de2f46208",
+      "subject": "Implement Unix line endings for shell completion output to ensure compatibility "
     },
     {
       "task_id": "T-a4f9a5999b-port-bpo-39057-to-requests-7427",
@@ -71,11 +309,46 @@
       "subject": "Port bpo-39057 to Requests (#7427)"
     },
     {
+      "task_id": "T-a6256bfb59-forwards-all-user-s-parameters-s",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "a6256bfb5971d5e58585fe7b6c656134e1ade5a4",
+      "subject": "Forwards all user's parameters set in `PAGER`"
+    },
+    {
+      "task_id": "T-ad39d749be-add-capture-parameter-to-clirunn",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ad39d749be85af02bf191636062eef51323ad5ab",
+      "subject": "Add `capture` parameter to `CliRunner` and revert default-mode `fileno` exposure"
+    },
+    {
       "task_id": "T-b1dd722aba-fix-vision-forward-pasted-images",
       "split": "blind",
       "status": "verified",
       "source_commit": "b1dd722abab6aee432435ccf5f10a362f7ebfff9",
       "subject": "fix(vision): forward pasted images on the auto route; fix dead free-tier slug"
+    },
+    {
+      "task_id": "T-bc32a92cd2-refactor-pager-stream-handling-d",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "bc32a92cd2ae77afb2352f79ebdf00997f35d333",
+      "subject": "Refactor pager stream handling; drop text/binary branching"
+    },
+    {
+      "task_id": "T-becbde5cf4-pager-doesn-t-close-std-streams",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "becbde5cf416441627f779e8dd34e57738ee1c1f",
+      "subject": "pager doesn't close std streams"
+    },
+    {
+      "task_id": "T-c2ed41490b-deprecate-isolated-filesystem-an",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "c2ed41490baa08002714ab79afa4a41f2d67c02c",
+      "subject": "Deprecate `isolated_filesystem` and document its limits"
     },
     {
       "task_id": "T-c3c2cd0d33-fix-llm-retry-openrouter-gateway",
@@ -92,11 +365,46 @@
       "subject": "feat: run-completion notifications + cross-run daily spend cap"
     },
     {
+      "task_id": "T-d946074a8f-rewrite-wrap-chunks-in-textwrapp",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "d946074a8fd4bd743dcde12e08e1561f062a2a68",
+      "subject": "Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware"
+    },
+    {
+      "task_id": "T-ddf20d0673-add-changelog-entry-fix-admoniti",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ddf20d0673788ebe8ec28b6031a24a36cba92115",
+      "subject": "Add changelog entry, fix admonition and add test"
+    },
+    {
+      "task_id": "T-ef439eb779-prevent-response-self-reference-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ef439eb779c1eba7cbdeeeb302b11e1e061b4b7d",
+      "subject": "Prevent Response self-reference in redirect history (#7328)"
+    },
+    {
       "task_id": "T-f1bcbcb6fd-fix-providers-detect-tunneled-ol",
       "split": "train",
       "status": "verified",
       "source_commit": "f1bcbcb6fd5ef25e9607e12c43a65e1fec5fbe5e",
       "subject": "fix(providers): detect tunneled Ollama profiles; cap local-model steps"
+    },
+    {
+      "task_id": "T-f316d5cb3a-land-the-progress-bar-on-its-fin",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "f316d5cb3aa89b57c14aee54da6ac9062ac5bec4",
+      "subject": "Land the progress bar on its final position"
+    },
+    {
+      "task_id": "T-fc6c7c47ed-funcparamtype-should-use-valueer",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1",
+      "subject": "`FuncParamType` should use `ValueError` message in `self.fail()` (#3211)"
     },
     {
       "task_id": "T-fd628095d7-preserve-leading-slashes-in-requ",

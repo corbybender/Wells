@@ -1,0 +1,24 @@
+{
+  "task_id": "T-07c909f23f-validate-style-color-arguments-f",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "7925a3410d7098c28cfca3b2baa6c852666bbd14",
+  "problem_statement": "Validate style() color arguments, fix explicit black color argument",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_utils/test_style.py::test_styling",
+      "tests/test_utils/test_style.py::test_styling_invalid_color",
+      "tests/test_utils/test_style.py::test_unstyle_other_ansi"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_utils/test_style.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "07c909f23f0f83b5ca137c167b9a134d66201f67",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:14"
+}
