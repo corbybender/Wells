@@ -297,7 +297,6 @@ def test_execute_task_scores_success_and_failure(
         run_mod, "_run_harness", _fake_harness_fixing(str(repo_with_fix))
     )
     good = run_mod._execute_task(
-        str(repo_with_fix),
         task,
         1,
         profile="",
@@ -326,7 +325,6 @@ def test_execute_task_scores_success_and_failure(
         },
     )
     bad = run_mod._execute_task(
-        str(repo_with_fix),
         task,
         1,
         profile="",
@@ -378,6 +376,67 @@ def test_run_bench_rejects_unknown_split(repo_with_fix: Path, tmp_path: Path):
     ws.mkdir()
     with pytest.raises(RuntimeError, match="No 'nope' tasks"):
         evolve.run_bench(str(ws), "nope", bench_home=tmp_path, log=lambda *a, **k: None)
+
+
+def test_run_bench_supports_a_split_spanning_multiple_repos(
+    repo_with_fix: Path, tmp_path: Path, monkeypatch
+):
+    """A corpus can be mined from several external repos — a split must be
+    able to mix tasks whose repo_root differs, executing each against its
+    own repo rather than requiring (or assuming) one shared repo_root."""
+    # Second, independent repo with its own single mineable fix.
+    r2 = tmp_path / "repo2"
+    r2.mkdir()
+    _git(r2, "init", "-q")
+    _git(r2, "config", "user.email", "t@example.com")
+    _git(r2, "config", "user.name", "t")
+    (r2 / "mul.py").write_text(
+        "def mul(a, b):\n    return a + b  # bug\n", encoding="utf-8"
+    )
+    _commit(r2, "initial multiplier")
+    (r2 / "mul.py").write_text("def mul(a, b):\n    return a * b\n", encoding="utf-8")
+    (r2 / "test_mul.py").write_text(
+        "from mul import mul\n\n\ndef test_mul():\n    assert mul(2, 3) == 6\n",
+        encoding="utf-8",
+    )
+    _commit(r2, "fix mul() to multiply instead of add")
+
+    ws = tmp_path / "ws_multi"
+    ws.mkdir()
+    admitted1, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench1", log=lambda *a, **k: None,
+    )
+    admitted2, _ = evolve.mine_corpus(
+        str(r2), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench2", log=lambda *a, **k: None,
+    )
+    assert len(admitted1) == 1 and len(admitted2) == 1
+
+    # Force both into the same split regardless of their natural hash —
+    # the scenario under test is "one split, two repos", not split luck.
+    tasks_dir = corp.tasks_dir(str(ws))
+    for t in (admitted1[0], admitted2[0]):
+        t.split = "val"
+        t.save(tasks_dir)
+
+    def fake_run_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        # Apply whichever fix this worktree's repo needs, by checking which
+        # source file is present.
+        calc = Path(worktree) / "calc.py"
+        mul = Path(worktree) / "mul.py"
+        if calc.exists():
+            calc.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        if mul.exists():
+            mul.write_text("def mul(a, b):\n    return a * b\n", encoding="utf-8")
+        return {"status": "complete", "tokens": {"total": 10}}
+
+    monkeypatch.setattr(run_mod, "_run_harness", fake_run_harness)
+    run = evolve.run_bench(
+        str(ws), "val", bench_home=tmp_path / "bench_run", log=lambda *a, **k: None
+    )
+    assert run.summary["tasks"] == 2
+    assert run.summary["resolved"] == 2
 
 
 # ---------------------------------------------------------------------------
