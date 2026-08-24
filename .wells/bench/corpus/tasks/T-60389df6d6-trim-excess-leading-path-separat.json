@@ -1,0 +1,22 @@
+{
+  "task_id": "T-60389df6d6-trim-excess-leading-path-separat",
+  "repo_root": "/home/corbybender/Projects/mining/requests",
+  "base_commit": "7a13c041dbef42f9f3feb14110f02626f6892e9a",
+  "problem_statement": "Trim excess leading path separators\n\nA URL with excess leading / (path-separator)s would cause urllib3 to\nattempt to reparse the request-uri as a full URI with a host and port.\nThis bypasses that logic in ConnectionPool.urlopen by replacing these\nleading /s with just a single /.\n\nCloses #6643",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_adapters.py::test_request_url_trims_leading_path_separators"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_adapters.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "60389df6d69ce833164696dcf36cbb43336d3426",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 08:52:47"
+}

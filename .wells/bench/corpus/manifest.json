@@ -1,9 +1,9 @@
 {
-  "updated_at": "2026-08-22 09:32:21",
-  "total": 10,
+  "updated_at": "2026-08-24 08:53:46",
+  "total": 14,
   "splits": {
-    "train": 7,
-    "val": 0,
+    "train": 9,
+    "val": 2,
     "blind": 3
   },
   "tasks": [
@@ -29,6 +29,20 @@
       "subject": "fix(cli): /reflections with no subcommand crashed on an empty workspace"
     },
     {
+      "task_id": "T-47914226c2-fix-empty-netrc-entry-usage-7205",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "47914226c2968802f2cdee3f6f0f6e06e4472f64",
+      "subject": "Fix empty netrc entry usage (#7205)"
+    },
+    {
+      "task_id": "T-60389df6d6-trim-excess-leading-path-separat",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "60389df6d69ce833164696dcf36cbb43336d3426",
+      "subject": "Trim excess leading path separators"
+    },
+    {
       "task_id": "T-67e44b6ee2-feat-providers-full-add-remove-u",
       "split": "blind",
       "status": "verified",
@@ -48,6 +62,13 @@
       "status": "verified",
       "source_commit": "9399613aef7164a7225a27788ac6f9300b617f08",
       "subject": "feat: self-improvement — Reflexion + auto-skill authoring"
+    },
+    {
+      "task_id": "T-a4f9a5999b-port-bpo-39057-to-requests-7427",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "a4f9a5999bdb9bf2d6e7c8aa973b28cacb17134f",
+      "subject": "Port bpo-39057 to Requests (#7427)"
     },
     {
       "task_id": "T-b1dd722aba-fix-vision-forward-pasted-images",
@@ -76,6 +97,13 @@
       "status": "verified",
       "source_commit": "f1bcbcb6fd5ef25e9607e12c43a65e1fec5fbe5e",
       "subject": "fix(providers): detect tunneled Ollama profiles; cap local-model steps"
+    },
+    {
+      "task_id": "T-fd628095d7-preserve-leading-slashes-in-requ",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "fd628095d7b9ddbf3e987d8a4bf0e6062768916f",
+      "subject": "Preserve leading slashes in request path_url (#7315)"
     }
   ]
 }

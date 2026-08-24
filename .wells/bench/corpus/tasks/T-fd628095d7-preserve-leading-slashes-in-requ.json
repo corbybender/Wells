@@ -1,0 +1,22 @@
+{
+  "task_id": "T-fd628095d7-preserve-leading-slashes-in-requ",
+  "repo_root": "/home/corbybender/Projects/mining/requests",
+  "base_commit": "e8d2c015eecda8273612dd4562425e00cd164ba5",
+  "problem_statement": "Preserve leading slashes in request path_url (#7315)\n\n---------\n\nCo-authored-by: Nate Prewitt <nate.prewitt@gmail.com>",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_adapters.py::test_request_url_handles_leading_path_separators"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_adapters.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "fd628095d7b9ddbf3e987d8a4bf0e6062768916f",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 08:48:30"
+}

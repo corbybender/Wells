@@ -79,7 +79,7 @@ fbfbd4d  fix(executor): recognize "no tests found" as an acknowledged outcome
 10 total corpus tasks, deterministic 60/20/20 hash split landed 0 in
 val. `wells evolve gate` (default `--split val`) will error immediately
 with the exact remediation message. Options, in order of likely payoff:
-- Mine more repos: `wells bench mine --workspace <repo>`. Tried `cog`
+- Mine more repos: `wells bench mine --repo <repo>`. Tried `cog`
   (`/home/corbybender/Projects/cog`, 62 commits) today — only 1 mineable
   candidate found, and it failed pytest collection in the throwaway
   worktree (likely needs the repo installed, not just checked out).
@@ -154,7 +154,7 @@ applied — ask the user or apply it before trusting this number again.
 ## 6. Quick reference
 
 ```bash
-wells bench mine --workspace <repo> [--max N] [--skip-validation]
+wells bench mine --repo <repo> [--max N] [--skip-validation]
 wells bench list [--split train|val|blind|all]
 wells bench run --split val --profile zai [--task ID] [--seeds N] [--timeout SECONDS]
 wells bench results [ID]
