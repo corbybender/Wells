@@ -1,0 +1,38 @@
+{
+  "task_id": "T-0baa8db077-document-ctx-params-bypass-with-",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "7d05a59b9d46a415d85937630d1d812cf477f60a",
+  "problem_statement": "Document ctx.params bypass with test and doc",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_defaults.py::test_basic_defaults",
+      "tests/test_defaults.py::test_multiple_defaults",
+      "tests/test_defaults.py::test_nargs_plus_multiple",
+      "tests/test_defaults.py::test_multiple_flag_default",
+      "tests/test_defaults.py::test_flag_default_map",
+      "tests/test_defaults.py::test_shared_param_prefers_first_default",
+      "tests/test_defaults.py::test_lookup_default_returns_hides_sentinel",
+      "tests/test_defaults.py::test_lookup_default_callable_in_default_map",
+      "tests/test_defaults.py::test_default_map_source",
+      "tests/test_defaults.py::test_parameter_source_during_paramtype_convert",
+      "tests/test_defaults.py::test_parameter_source_during_eager_callback",
+      "tests/test_defaults.py::test_flask_debug_env_not_stomped_by_default_flag",
+      "tests/test_defaults.py::test_parameter_source_on_parse_result_bypass",
+      "tests/test_defaults.py::test_lookup_default_override_respected",
+      "tests/test_defaults.py::test_default_map_with_callable_flag_value",
+      "tests/test_defaults.py::test_default_map_nargs",
+      "tests/test_defaults.py::test_unset_in_default_map"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_defaults.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "0baa8db07736fc7ad3d3eed97d4c73b0059c63e1",
+  "split": "blind",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:36"
+}

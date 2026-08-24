@@ -1,0 +1,41 @@
+{
+  "task_id": "T-d946074a8f-rewrite-wrap-chunks-in-textwrapp",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1",
+  "problem_statement": "Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_formatting.py::test_basic_functionality",
+      "tests/test_formatting.py::test_wrapping_long_options_strings",
+      "tests/test_formatting.py::test_wrapping_long_command_name",
+      "tests/test_formatting.py::test_formatting_empty_help_lines",
+      "tests/test_formatting.py::test_formatting_usage_error",
+      "tests/test_formatting.py::test_formatting_usage_error_metavar_missing_arg",
+      "tests/test_formatting.py::test_formatting_usage_error_metavar_bad_arg",
+      "tests/test_formatting.py::test_formatting_usage_error_nested",
+      "tests/test_formatting.py::test_formatting_usage_error_no_help",
+      "tests/test_formatting.py::test_formatting_usage_custom_help",
+      "tests/test_formatting.py::test_formatting_usage_error_help_hint",
+      "tests/test_formatting.py::test_formatting_custom_type_metavar",
+      "tests/test_formatting.py::test_truncating_docstring",
+      "tests/test_formatting.py::test_truncating_docstring_no_help",
+      "tests/test_formatting.py::test_removing_multiline_marker",
+      "tests/test_formatting.py::test_global_show_default",
+      "tests/test_formatting.py::test_formatting_with_options_metavar_empty",
+      "tests/test_formatting.py::test_help_formatter_write_text",
+      "tests/test_formatting.py::test_wrap_text_visible_width",
+      "tests/test_formatting.py::test_write_usage_styled_prefix_keeps_options_on_one_line"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_formatting.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "d946074a8fd4bd743dcde12e08e1561f062a2a68",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:46"
+}
