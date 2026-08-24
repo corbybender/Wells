@@ -1247,7 +1247,7 @@ Only tasks that clear that bar are admitted, split deterministically
 task always lands in the same split).
 
 ```bash
-wells bench mine --workspace <repo> [--max N] [--skip-validation]
+wells bench mine --repo <repo> [--max N] [--skip-validation]
 wells bench list [--split train|val|blind|all]
 wells bench run --split val --profile zai [--task ID] [--seeds N] [--timeout SECONDS]
 wells bench results [ID]

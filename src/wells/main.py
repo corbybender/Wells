@@ -27,7 +27,7 @@ Usage:
 
     # SEACS bench: mine a git history into an oracle-scored task corpus, then
     # measure the harness against it (see src/wells/evolve/ for the design)
-    wells bench mine --workspace <repo>
+    wells bench mine --repo <repo>
     wells bench list --split val
     wells bench run --split val --profile zai
     wells bench results
@@ -930,7 +930,8 @@ def _run_bench_cmd(args: list[str]) -> None:
 
     if not args:
         print(
-            "usage: wells bench mine [--workspace REPO] [--max N] [--skip-validation]\n"
+            "usage: wells bench mine [--repo PATH] [--max N] [--max-commits N]\n"
+            "                         [--env-setup \"CMD\"] [--skip-validation]\n"
             "       wells bench list [--split train|val|blind|all]\n"
             "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
             "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
@@ -942,18 +943,28 @@ def _run_bench_cmd(args: list[str]) -> None:
     workspace = config.WORKSPACE_ROOT
 
     if sub == "mine":
-        repo_root, rest = _pop_flag_value("--workspace", rest)
+        # NOTE: intentionally --repo, not --workspace — main()'s Pass-1
+        # global-flag stripper consumes -w/--workspace before subcommand
+        # dispatch ever sees it (it becomes WORKSPACE_ROOT itself), so a
+        # subcommand-local flag of that exact name is silently unreachable.
+        repo_root, rest = _pop_flag_value("--repo", rest)
         repo_root = repo_root or workspace
         max_tasks_s, rest = _pop_flag_value("--max", rest)
         max_tasks = int(max_tasks_s) if max_tasks_s else 50
+        max_commits_s, rest = _pop_flag_value("--max-commits", rest)
+        env_setup_s, rest = _pop_flag_value("--env-setup", rest)
         skip_validation = "--skip-validation" in rest
+        mine_kwargs: dict = {"max_tasks": max_tasks, "skip_validation": skip_validation}
+        if max_commits_s:
+            mine_kwargs["max_commits"] = int(max_commits_s)
+        if env_setup_s:
+            # One shell command, run in the throwaway worktree before dual-
+            # validating each candidate (e.g. "pip install -e ." — needed
+            # whenever the repo's own test suite requires it installed,
+            # not just checked out).
+            mine_kwargs["env_setup"] = [env_setup_s]
         try:
-            tasks, stats = corpus.mine_corpus(
-                repo_root,
-                workspace,
-                max_tasks=max_tasks,
-                skip_validation=skip_validation,
-            )
+            tasks, stats = corpus.mine_corpus(repo_root, workspace, **mine_kwargs)
         except RuntimeError as e:
             print(f"ERROR: {e}")
             sys.exit(1)
@@ -1160,7 +1171,7 @@ def _run_schedule_cmd(args: list[str]) -> None:
 
     if not args:
         print(
-            "usage: wells schedule add <name> <interval> [--workspace <path>] \"<goal>\"\n"
+            "usage: wells schedule add <name> <interval> [--for <path>] \"<goal>\"\n"
             "       wells schedule list\n"
             "       wells schedule remove <name>\n"
             "\n"
@@ -1173,14 +1184,19 @@ def _run_schedule_cmd(args: list[str]) -> None:
     if sub == "add":
         rest = args[1:]
         if len(rest) < 3:
-            print('usage: wells schedule add <name> <interval> [--workspace <path>] "<goal>"')
+            print('usage: wells schedule add <name> <interval> [--for <path>] "<goal>"')
             sys.exit(2)
         name, interval = rest[0], rest[1]
         rest = rest[2:]
         workspace = config.WORKSPACE_ROOT
-        if rest and rest[0] == "--workspace":
+        # NOTE: intentionally --for, not --workspace — main()'s Pass-1
+        # global-flag stripper consumes -w/--workspace before subcommand
+        # dispatch ever sees it, so a subcommand-local flag of that exact
+        # name is silently unreachable (see the identical bug/fix note on
+        # `bench mine`'s --repo).
+        if rest and rest[0] == "--for":
             if len(rest) < 2:
-                print("ERROR: --workspace requires a path.")
+                print("ERROR: --for requires a path.")
                 sys.exit(2)
             workspace = rest[1]
             rest = rest[2:]
