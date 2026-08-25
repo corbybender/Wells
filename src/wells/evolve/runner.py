@@ -125,6 +125,7 @@ def _run_harness(
     profile: str = "",
     timeout: float = _RUN_TIMEOUT,
     extra_env: dict[str, str] | None = None,
+    on_tick=None,
 ) -> dict:
     """One headless Wells run in a child process; returns the JSON payload.
 
@@ -176,18 +177,35 @@ def _run_harness(
         # on Windows, where _kill_tree uses taskkill /T instead.
         start_new_session=(sys.platform != "win32"),
     )
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc.pid)
+    # Poll instead of a single blocking communicate(): a single task can
+    # legitimately run up to `timeout` (currently up to 1200-1800s), which
+    # would starve the caller of any chance to touch a heartbeat file in
+    # between — an external monitor (mas-monitor.service) would then see a
+    # stale heartbeat and alert on a run that is not actually dead. Calling
+    # communicate() again after a TimeoutExpired is the documented-safe way
+    # to keep waiting (it does not restart reading or kill anything) — same
+    # pattern as sandbox.py's _popen_poll_loop.
+    t0 = time.time()
+    while True:
         try:
-            out, err = proc.communicate(timeout=30)  # bounded drain
+            out, err = proc.communicate(timeout=20)
+            break
         except subprocess.TimeoutExpired:
-            out, err = "", ""
-        return {
-            "status": "timeout",
-            "error": f"harness run exceeded {timeout}s and was tree-killed",
-        }
+            if time.time() - t0 >= timeout:
+                _kill_tree(proc.pid)
+                try:
+                    out, err = proc.communicate(timeout=30)  # bounded drain
+                except subprocess.TimeoutExpired:
+                    out, err = "", ""
+                return {
+                    "status": "timeout",
+                    "error": f"harness run exceeded {timeout}s and was tree-killed",
+                }
+            if on_tick:
+                try:
+                    on_tick()
+                except Exception:
+                    pass  # heartbeat/checkpoint failures must never abort the run
 
     for line in reversed((out or "").splitlines()):
         line = line.strip()
@@ -263,6 +281,7 @@ def _execute_task(
     worktree_root: Path,
     timeout: float,
     extra_env: dict[str, str] | None = None,
+    on_tick=None,
 ) -> TaskResult:
     """Worktree at base → run harness → score oracle → always clean up.
 
@@ -274,6 +293,13 @@ def _execute_task(
     repo_root = task.repo_root
     wt = str(worktree_root / f"{task.task_id}-s{seed}")
     result = TaskResult(task_id=task.task_id, seed=seed, resolved=False)
+    # Defensive: on a resumed run, the task that was in-flight when a prior
+    # attempt died has no recorded row (so resume retries it) but may still
+    # have a half-created worktree at this exact path from that attempt —
+    # `git worktree add` refuses to reuse an existing directory. Clear it.
+    if Path(wt).exists():
+        git(repo_root, "worktree", "remove", "--force", wt)
+        shutil.rmtree(wt, ignore_errors=True)
     ok, out = git(repo_root, "worktree", "add", "--detach", wt, task.base_commit)
     if not ok:
         result.error = f"worktree add failed: {out[:200]}"
@@ -287,6 +313,8 @@ def _execute_task(
             harness_kwargs = {"profile": profile, "timeout": timeout}
             if extra_env:
                 harness_kwargs["extra_env"] = extra_env
+            if on_tick:
+                harness_kwargs["on_tick"] = on_tick
             payload = _run_harness(wt, task.problem_statement, **harness_kwargs)
             result.harness_status = payload.get("status", "error")
             tokens = payload.get("tokens") or {}
@@ -405,6 +433,35 @@ def _count_statuses(rows: list[TaskResult]) -> dict[str, int]:
     return out
 
 
+class _HeartbeatWriter:
+    """Minimal, dependency-free heartbeat file writer.
+
+    Deliberately not the mas_heartbeat.py module used by MAS-RON's training
+    scripts — that lives outside this repo (a sibling script in the wider
+    Projects/ workspace), and Wells is meant to be a standalone, clonable
+    project with no dependency on machine-specific tooling from an
+    unrelated project. Same minimal contract though (a JSON file with a
+    numeric ``timestamp`` field), so the existing MAS monitor daemon
+    (which only ever reads that one field) can watch it unmodified.
+    """
+
+    def __init__(self, path: str | Path, job: str):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.job = job
+
+    def write(self, *, status: str, **fields) -> None:
+        import os as _os
+
+        data = {"job": self.job, "pid": _os.getpid(), "timestamp": int(time.time()), "status": status, **fields}
+        tmp = self.path.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            tmp.replace(self.path)  # atomic on POSIX and Windows alike
+        except Exception:
+            pass  # heartbeat failures must never abort or corrupt the actual run
+
+
 def run_bench(
     workspace: str,
     split: str = "val",
@@ -416,6 +473,9 @@ def run_bench(
     task_filter: str = "",
     bench_home: Path | None = None,
     extra_env: dict[str, str] | None = None,
+    bench_id: str | None = None,
+    resume: bool = False,
+    heartbeat_path: str | Path | None = None,
     log=print,
 ) -> BenchRun:
     """Run one bench over a split and persist the results.
@@ -430,6 +490,18 @@ def run_bench(
     evolve's mutation gating) — never mutates this process's own
     ``os.environ``, so concurrent/sequential bench runs in one process
     (baseline pass then candidate pass) can't leak into each other.
+
+    **Fault tolerance.** The result file is rewritten after *every single
+    task* (not once at the end) — a process that dies mid-run (killed
+    session, crash, reboot) loses at most the one task in flight, never
+    the whole run. To actually resume after a death: pass the same
+    ``bench_id`` back in with ``resume=True`` — already-recorded
+    (task_id, seed) pairs are skipped, and the run picks up exactly where
+    it stopped. ``heartbeat_path``, if given, gets a small JSON file
+    (``{"timestamp": <unix epoch>, "status": ..., ...}``) rewritten
+    roughly every 20s (even mid-task, via _run_harness's poll loop) — an
+    external monitor watching that file's age is how a caller finds out
+    the run died *without* having to babysit it.
     """
     tasks = list_tasks(workspace, split)
     if not tasks:
@@ -445,7 +517,7 @@ def run_bench(
     if seeds < 1:
         seeds = 1
 
-    bench_id = new_bench_id()
+    bench_id = bench_id or new_bench_id()
     bench_home = bench_home or (Path.home() / ".wells" / "bench")
     worktree_root = bench_home / "runs" / bench_id
     worktree_root.mkdir(parents=True, exist_ok=True)
@@ -471,19 +543,46 @@ def run_bench(
             "— clone them (or restore the clone path) before gating this split."
         )
 
-    run = BenchRun(
-        bench_id=bench_id,
-        split=split,
-        profile=profile or "(active)",
-        created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
-    )
+    result_path = results_dir(workspace) / f"{bench_id}.json"
+    done_pairs: set[tuple[str, int]] = set()
+    if resume and result_path.is_file():
+        run = BenchRun.load(result_path)
+        done_pairs = {(r.task_id, r.seed) for r in run.tasks}
+        log(f"[bench {bench_id}] resuming — {len(done_pairs)} task/seed pair(s) already recorded")
+    else:
+        run = BenchRun(
+            bench_id=bench_id,
+            split=split,
+            profile=profile or "(active)",
+            created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+
+    hb = _HeartbeatWriter(heartbeat_path, job=f"bench-{bench_id}") if heartbeat_path else None
+    total_pairs = len(tasks) * seeds
+    if hb:
+        hb.write(status="starting", split=split, done=len(done_pairs), total=total_pairs)
+
     log(
-        f"[bench {bench_id}] {len(tasks)} task(s) x {seeds} seed(s) on split={split!r}, profile={run.profile}"
+        f"[bench {bench_id}] {len(tasks)} task(s) x {seeds} seed(s) on split={split!r}, profile={run.profile or '(active)'}"
     )
     try:
         for i, task in enumerate(tasks, 1):
             for seed in range(1, seeds + 1):
+                if (task.task_id, seed) in done_pairs:
+                    continue
                 log(f"[bench {bench_id}] ({i}/{len(tasks)} s{seed}) {task.task_id} ...")
+                if hb:
+                    hb.write(
+                        status="running", split=split, task=task.task_id, seed=seed,
+                        done=len(run.tasks), total=total_pairs,
+                    )
+
+                def _tick(_task=task, _seed=seed):
+                    hb.write(
+                        status="running", split=split, task=_task.task_id, seed=_seed,
+                        done=len(run.tasks), total=total_pairs,
+                    )
+
                 row = _execute_task(
                     task,
                     seed,
@@ -491,14 +590,25 @@ def run_bench(
                     worktree_root=worktree_root,
                     timeout=timeout,
                     extra_env=extra_env,
+                    on_tick=_tick if hb else None,
                 )
                 run.tasks.append(row)
+                # Checkpoint after every task, not once at the end — a killed
+                # process (session death, crash, reboot) loses at most this
+                # one in-flight task, never the whole run. See run_bench's
+                # docstring "Fault tolerance" section.
+                run.summary = summarize(run.tasks)
+                run.save(workspace)
                 log(
                     f"[bench {bench_id}] -> resolved={row.resolved} "
                     f"status={row.harness_status} tokens={row.tokens_total:,} "
                     f"{row.duration_seconds}s"
                     + (f" err={row.error[:80]}" if row.error else "")
                 )
+    except BaseException as e:
+        if hb:
+            hb.write(status="crashed", split=split, error=str(e)[:300], done=len(run.tasks), total=total_pairs)
+        raise
     finally:
         for r in repo_roots:
             git(r, "worktree", "prune")
@@ -506,6 +616,8 @@ def run_bench(
 
     run.summary = summarize(run.tasks)
     run.save(workspace)
+    if hb:
+        hb.write(status="complete", split=split, done=len(run.tasks), total=total_pairs)
     log(
         f"[bench {bench_id}] pass@1={run.summary['pass_at_1']:.1%} "
         f"(Wilson LB {run.summary['pass_at_1_wilson_lb']:.1%}) "
