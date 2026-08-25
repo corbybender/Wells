@@ -935,6 +935,7 @@ def _run_bench_cmd(args: list[str]) -> None:
             "       wells bench list [--split train|val|blind|all]\n"
             "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
             "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
+            "                        [--bench-id ID] [--resume] [--heartbeat PATH]\n"
             "       wells bench results [ID]"
         )
         sys.exit(2)
@@ -999,6 +1000,10 @@ def _run_bench_cmd(args: list[str]) -> None:
         seeds_s, rest = _pop_flag_value("--seeds", rest)
         timeout_s, rest = _pop_flag_value("--timeout", rest)
         limit_s, rest = _pop_flag_value("--limit", rest)
+        bench_id, rest = _pop_flag_value("--bench-id", rest)
+        heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        resume = "--resume" in rest
+        rest = [a for a in rest if a != "--resume"]
         kwargs: dict = {"profile": profile or "", "task_filter": task_filter or ""}
         if seeds_s:
             kwargs["seeds"] = int(seeds_s)
@@ -1006,6 +1011,15 @@ def _run_bench_cmd(args: list[str]) -> None:
             kwargs["timeout"] = float(timeout_s)
         if limit_s:
             kwargs["limit"] = int(limit_s)
+        if bench_id:
+            kwargs["bench_id"] = bench_id
+        if heartbeat:
+            kwargs["heartbeat_path"] = heartbeat
+        if resume:
+            if not bench_id:
+                print("ERROR: --resume requires --bench-id ID (the id of the run to continue).")
+                sys.exit(2)
+            kwargs["resume"] = True
         try:
             run = runner.run_bench(workspace, split, **kwargs)
         except RuntimeError as e:
@@ -1093,7 +1107,11 @@ def _run_evolve_cmd(args: list[str]) -> None:
 
     if sub == "gate":
         if len(rest) < 1:
-            print("usage: wells evolve gate <mutation_id> [--split val] ...")
+            print(
+                "usage: wells evolve gate <mutation_id> [--split val] [--profile NAME]\n"
+                "                          [--seeds N] [--timeout SECONDS] [--task ID]\n"
+                "                          [--resume] [--heartbeat PATH]"
+            )
             sys.exit(2)
         mutation_id, rest = rest[0], rest[1:]
         split, rest = _pop_flag_value("--split", rest)
@@ -1101,6 +1119,9 @@ def _run_evolve_cmd(args: list[str]) -> None:
         task_filter, rest = _pop_flag_value("--task", rest)
         seeds_s, rest = _pop_flag_value("--seeds", rest)
         timeout_s, rest = _pop_flag_value("--timeout", rest)
+        heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        resume = "--resume" in rest
+        rest = [a for a in rest if a != "--resume"]
         kwargs: dict = {
             "split": split or "val",
             "profile": profile or "",
@@ -1110,6 +1131,10 @@ def _run_evolve_cmd(args: list[str]) -> None:
             kwargs["seeds"] = int(seeds_s)
         if timeout_s:
             kwargs["timeout"] = float(timeout_s)
+        if heartbeat:
+            kwargs["heartbeat_path"] = heartbeat
+        if resume:
+            kwargs["resume"] = True
         try:
             manifest = mutate.gate_mutation(mutation_id, workspace, **kwargs)
         except RuntimeError as e:

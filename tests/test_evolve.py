@@ -371,6 +371,116 @@ def test_run_bench_end_to_end_with_stubbed_harness(
     assert [r.task_id for r in reloaded.tasks] == [admitted[0].task_id]
 
 
+def test_run_bench_checkpoints_and_resumes_after_a_simulated_crash(
+    repo_with_fix: Path, tmp_path: Path, monkeypatch
+):
+    """Fault-injection test: a bench run that dies mid-way (process kill,
+    session death — simulated here as an exception on task 2) must leave
+    task 1's result on disk, and a resumed call with the same bench_id
+    must pick up from there — not re-execute task 1, and finish with both
+    tasks recorded."""
+    r2 = tmp_path / "repo2"
+    r2.mkdir()
+    _git(r2, "init", "-q")
+    _git(r2, "config", "user.email", "t@example.com")
+    _git(r2, "config", "user.name", "t")
+    (r2 / "mul.py").write_text(
+        "def mul(a, b):\n    return a + b  # bug\n", encoding="utf-8"
+    )
+    _commit(r2, "initial multiplier")
+    (r2 / "mul.py").write_text("def mul(a, b):\n    return a * b\n", encoding="utf-8")
+    (r2 / "test_mul.py").write_text(
+        "from mul import mul\n\n\ndef test_mul():\n    assert mul(2, 3) == 6\n",
+        encoding="utf-8",
+    )
+    _commit(r2, "fix mul() to multiply instead of add")
+
+    ws = tmp_path / "ws_crash"
+    ws.mkdir()
+    admitted1, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench1", log=lambda *a, **k: None,
+    )
+    admitted2, _ = evolve.mine_corpus(
+        str(r2), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench2", log=lambda *a, **k: None,
+    )
+    assert len(admitted1) == 1 and len(admitted2) == 1
+    tasks_dir = corp.tasks_dir(str(ws))
+    for t in (admitted1[0], admitted2[0]):
+        t.split = "val"
+        t.save(tasks_dir)
+
+    # Task execution order (calc vs. mul first) depends on content-hash
+    # -derived task ids, which are NOT stable across repo instances/runs —
+    # crash on whichever task runs *second* (by call count), not on a
+    # hardcoded "mul always crashes" assumption. Fixes a real flake: this
+    # test passed in isolation but failed in the full suite because task
+    # order flipped, crashing before task 1 ever got a chance to
+    # checkpoint.
+    calls: list[str] = []
+
+    def crashing_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        calc = Path(worktree) / "calc.py"
+        name = "calc" if calc.exists() else "mul"
+        calls.append(name)
+        if len(calls) == 1:
+            (calc if calc.exists() else Path(worktree) / "mul.py").write_text(
+                "def add(a, b):\n    return a + b\n"
+                if calc.exists()
+                else "def mul(a, b):\n    return a * b\n",
+                encoding="utf-8",
+            )
+            return {"status": "complete", "tokens": {"total": 10}}
+        raise RuntimeError("simulated crash mid-task (e.g. process killed)")
+
+    monkeypatch.setattr(run_mod, "_run_harness", crashing_harness)
+
+    bench_id = "fixed-crash-test-id"
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        evolve.run_bench(
+            str(ws), "val", bench_id=bench_id,
+            bench_home=tmp_path / "bench_run", log=lambda *a, **k: None,
+        )
+
+    # Checkpoint survived: the first task's result is on disk despite the
+    # second task crashing.
+    saved = ws / ".wells" / "bench" / "results" / f"{bench_id}.json"
+    assert saved.is_file()
+    partial = run_mod.BenchRun.load(saved)
+    assert len(partial.tasks) == 1
+    assert len(calls) == 2  # first succeeded and got checkpointed; second crashed
+    first_task_id = partial.tasks[0].task_id
+
+    def fixed_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        calc = Path(worktree) / "calc.py"
+        mul = Path(worktree) / "mul.py"
+        if calc.exists():
+            calls.append("calc")
+            calc.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        if mul.exists():
+            calls.append("mul")
+            mul.write_text("def mul(a, b):\n    return a * b\n", encoding="utf-8")
+        return {"status": "complete", "tokens": {"total": 10}}
+
+    monkeypatch.setattr(run_mod, "_run_harness", fixed_harness)
+    calls.clear()
+    run = evolve.run_bench(
+        str(ws), "val", bench_id=bench_id, resume=True,
+        bench_home=tmp_path / "bench_run", log=lambda *a, **k: None,
+    )
+    # The first task was already recorded before the crash — resume must
+    # re-run only the one that crashed, never the already-checkpointed one.
+    # Task ids embed a readable slug of the fix commit's subject ("fix
+    # add()..." vs. "fix mul()..."), so which repo completed first is
+    # recoverable from the id string itself.
+    first_was_mul = "mul" in first_task_id
+    assert len(calls) == 1
+    assert calls[0] == ("calc" if first_was_mul else "mul")
+    assert run.summary["tasks"] == 2
+    assert run.summary["resolved"] == 2
+
+
 def test_run_bench_rejects_unknown_split(repo_with_fix: Path, tmp_path: Path):
     ws = tmp_path / "ws3"
     ws.mkdir()

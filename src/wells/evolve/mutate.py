@@ -236,12 +236,23 @@ def gate_mutation(
     timeout: float = 1800.0,
     task_filter: str = "",
     bench_home: Path | None = None,
+    resume: bool = False,
+    heartbeat_path: str | Path | None = None,
     log=print,
 ) -> MutationManifest:
     """Run baseline vs. candidate bench passes over ``split`` and a replay
     pass over the trace corpus; record a promote/reject recommendation.
 
     Does not promote — see :func:`promote_mutation`.
+
+    **Fault tolerance.** Both passes use stable bench ids derived from
+    ``mutation_id`` (not a fresh random one each call), so re-invoking
+    with ``resume=True`` after a death (killed session, crash) picks up
+    exactly where either pass stopped — each :func:`~wells.evolve.runner.
+    run_bench` call is itself checkpointed per-task (see its own
+    docstring), so nothing earlier than the one task in flight when the
+    process died is ever redone. ``heartbeat_path``, if given, is passed
+    straight through to both passes.
     """
     from wells import principles, traces
     from wells.evolve import corpus
@@ -272,12 +283,16 @@ def gate_mutation(
     log(f"[evolve {mutation_id}] baseline pass (split={split!r}) ...")
     baseline_run = run_bench(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
-        task_filter=task_filter, bench_home=bench_home, extra_env=baseline_env, log=log,
+        task_filter=task_filter, bench_home=bench_home, extra_env=baseline_env,
+        bench_id=f"{mutation_id}-baseline", resume=resume, heartbeat_path=heartbeat_path,
+        log=log,
     )
     log(f"[evolve {mutation_id}] candidate pass (split={split!r}) ...")
     candidate_run = run_bench(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
-        task_filter=task_filter, bench_home=bench_home, extra_env=candidate_env, log=log,
+        task_filter=task_filter, bench_home=bench_home, extra_env=candidate_env,
+        bench_id=f"{mutation_id}-candidate", resume=resume, heartbeat_path=heartbeat_path,
+        log=log,
     )
 
     # Replay is a free, no-LLM sanity check over the recorded trace corpus.
