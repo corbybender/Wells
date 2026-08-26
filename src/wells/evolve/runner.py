@@ -155,6 +155,14 @@ def _run_harness(
         env["MODEL_PROFILE"] = profile
     if extra_env:
         env.update(extra_env)
+    # A tree-killed child (timeout) never prints its final JSON summary, so
+    # its token usage was silently lost — every gate/bench result row for a
+    # timed-out task showed tokens_total=0, even though real tokens were
+    # spent. wells.tokens.TokenLedger mirrors its running totals to this
+    # file on every LLM call when the env var is set, so the count survives
+    # the kill; read it back below as a fallback when the JSON parse fails.
+    tokens_sink = Path(worktree).parent / f"{Path(worktree).name}.tokens.json"
+    env["WELLS_TOKENS_FILE"] = str(tokens_sink)
     argv = [
         "--workspace",
         worktree,
@@ -197,10 +205,12 @@ def _run_harness(
                     out, err = proc.communicate(timeout=30)  # bounded drain
                 except subprocess.TimeoutExpired:
                     out, err = "", ""
-                return {
+                payload = {
                     "status": "timeout",
                     "error": f"harness run exceeded {timeout}s and was tree-killed",
                 }
+                _recover_tokens(payload, tokens_sink)
+                return payload
             if on_tick:
                 try:
                     on_tick()
@@ -214,10 +224,35 @@ def _run_harness(
                 return json.loads(line)
             except json.JSONDecodeError:
                 continue
-    return {
+    payload = {
         "status": "error",
         "error": f"no JSON on stdout (exit {proc.returncode}); stderr tail: {(err or '')[-400:]}",
     }
+    _recover_tokens(payload, tokens_sink)
+    return payload
+
+
+def _recover_tokens(payload: dict, tokens_sink: Path) -> None:
+    """Best-effort: fill payload["tokens"] from the ledger's mirrored sink
+    file when the child never got to print its own final JSON (timeout,
+    crash) — see the WELLS_TOKENS_FILE wiring in _run_harness above."""
+    try:
+        data = json.loads(tokens_sink.read_text(encoding="utf-8"))
+        payload["tokens"] = {
+            "input": data.get("input", 0),
+            "output": data.get("output", 0),
+            "total": data.get("input", 0) + data.get("output", 0),
+            "calls": data.get("calls", 0),
+            "cache_read": data.get("cache_read", 0),
+        }
+        payload["tokens_recovered"] = True
+    except Exception:
+        pass
+    finally:
+        try:
+            tokens_sink.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _score_oracle(worktree: str, task: TaskSpec) -> tuple[bool, dict[str, bool], str]:
