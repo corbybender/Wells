@@ -203,6 +203,7 @@ def run_autonomous_loop(
                     workspace,
                     f"autoloop cycle {state.cycle}: auto-drafted, informed by prior attempts",
                     auto=True, profile=profile, timeout=timeout,
+                    heartbeat_path=heartbeat_path,
                 )
             except Exception as e:
                 log(f"[autoloop] propose failed: {e}")

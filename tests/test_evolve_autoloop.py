@@ -30,7 +30,8 @@ def _isolate_state_dir(tmp_path, monkeypatch):
     yield
 
 
-def _fake_propose(workspace, rationale, *, auto=False, profile="", timeout=0, candidate_file=""):
+def _fake_propose(workspace, rationale, *, auto=False, profile="", timeout=0,
+                   candidate_file="", heartbeat_path=None):
     candidate_path = Path(workspace) / f"candidate-{len(mutate.list_manifests())}.md"
     candidate_path.write_text("# fake candidate AGENT.md\n", encoding="utf-8")
     m = mutate.MutationManifest(
