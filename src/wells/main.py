@@ -1079,7 +1079,11 @@ def _run_evolve_cmd(args: list[str]) -> None:
             "       wells evolve list\n"
             "       wells evolve show <mutation_id>\n"
             "       wells evolve promote <mutation_id> [--force]\n"
-            "       wells evolve reject <mutation_id>"
+            "       wells evolve reject <mutation_id>\n"
+            "       wells evolve autoloop [--max-cycles N] [--max-days D]\n"
+            "                             [--split val] [--profile NAME] [--no-push]\n"
+            "                             unattended propose->gate->promote/reject,\n"
+            "                             bounded and resumable — see autoloop.py"
         )
         sys.exit(2)
     sub = args[0]
@@ -1183,6 +1187,40 @@ def _run_evolve_cmd(args: list[str]) -> None:
         ok, msg = mutate.reject_mutation(rest[0], workspace)
         print(msg)
         sys.exit(0 if ok else 1)
+
+    if sub == "autoloop":
+        from wells.evolve import autoloop
+
+        max_cycles_s, rest = _pop_flag_value("--max-cycles", rest)
+        max_days_s, rest = _pop_flag_value("--max-days", rest)
+        split, rest = _pop_flag_value("--split", rest)
+        profile, rest = _pop_flag_value("--profile", rest)
+        seeds_s, rest = _pop_flag_value("--seeds", rest)
+        timeout_s, rest = _pop_flag_value("--timeout", rest)
+        heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        no_push = "--no-push" in rest
+        rest = [a for a in rest if a != "--no-push"]
+        kwargs: dict = {
+            "split": split or "val",
+            "profile": profile or "",
+            "push": not no_push,
+        }
+        if max_cycles_s:
+            kwargs["max_cycles"] = int(max_cycles_s)
+        if max_days_s:
+            kwargs["max_days"] = float(max_days_s)
+        if seeds_s:
+            kwargs["seeds"] = int(seeds_s)
+        if timeout_s:
+            kwargs["timeout"] = float(timeout_s)
+        if heartbeat:
+            kwargs["heartbeat_path"] = heartbeat
+        state = autoloop.run_autonomous_loop(workspace, **kwargs)
+        print(f"\nstopped: {state.stop_reason}")
+        print(f"cycles completed: {state.cycle}")
+        print(f"promoted: {sum(1 for h in state.history if h.promoted)}")
+        print(f"report: {autoloop.REPORT_PATH}")
+        return
 
     print(f"Unknown evolve subcommand: {sub!r}")
     sys.exit(2)

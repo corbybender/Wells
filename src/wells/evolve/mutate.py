@@ -152,7 +152,10 @@ def propose_mutation(
     if candidate_file:
         candidate_text = Path(candidate_file).read_text(encoding="utf-8")
     elif auto:
-        candidate_text = _draft_candidate(workspace, profile=profile, timeout=timeout)
+        candidate_text = _draft_candidate(
+            workspace, profile=profile, timeout=timeout,
+            history_context=_recent_mutation_history(),
+        )
     else:
         raise ValueError("propose_mutation: needs candidate_file=PATH or auto=True.")
 
@@ -175,7 +178,31 @@ def propose_mutation(
     return manifest
 
 
-def _draft_candidate(workspace: str, *, profile: str, timeout: float) -> str:
+def _recent_mutation_history(limit: int = 8) -> str:
+    """Summarize past gated mutations (rationale + outcome) for the --auto
+    prompt, so a fresh draft doesn't blindly re-propose an idea already
+    tried and rejected (or re-propose something already promoted)."""
+    lines: list[str] = []
+    for m in list_manifests()[:limit]:
+        if m.status not in ("gated", "promoted", "rejected"):
+            continue
+        base_lb = (m.baseline_bench or {}).get("pass_at_1_wilson_lb")
+        cand_lb = (m.candidate_bench or {}).get("pass_at_1_wilson_lb")
+        metrics = (
+            f"baseline_lb={base_lb:.1%} candidate_lb={cand_lb:.1%}"
+            if base_lb is not None and cand_lb is not None
+            else "(not gated)"
+        )
+        outcome = m.recommendation or "unknown"
+        lines.append(
+            f"- [{outcome}, status={m.status}] {m.rationale[:120]!r} -- {metrics}"
+        )
+    return "\n".join(lines) or "(no prior mutations recorded)"
+
+
+def _draft_candidate(
+    workspace: str, *, profile: str, timeout: float, history_context: str = ""
+) -> str:
     """Have the harness rewrite AGENT.md itself, seeded with recent bench
     failures as context. One real headless run — the only place in this
     module that spends tokens.
@@ -213,6 +240,11 @@ def _draft_candidate(workspace: str, *, profile: str, timeout: float) -> str:
             "it (in place, via write_file) to better address these recent "
             "bench-run failures:\n\n"
             f"{failures_block}\n\n"
+            "Prior mutation attempts and their real, measured outcomes "
+            "(promote = beat baseline; reject = tied or lost) — do not "
+            "re-propose an idea already rejected here, and don't undo one "
+            "already promoted:\n\n"
+            f"{history_context or '(no prior mutations recorded)'}\n\n"
             "Keep the tone and structure of the existing rules; make targeted "
             "improvements, not a rewrite from scratch. Do not touch any other "
             "file."
