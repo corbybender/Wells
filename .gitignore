@@ -24,3 +24,7 @@ nul
 
 # Runtime traces
 .wells/
+
+# Watchdog/launch logs (scripts/wells_resumable_launch.sh) — force-add
+# specific ones deliberately kept as evidence, same convention as .wells/
+logs/

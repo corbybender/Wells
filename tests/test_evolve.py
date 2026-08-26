@@ -550,8 +550,53 @@ def test_run_bench_supports_a_split_spanning_multiple_repos(
 
 
 # ---------------------------------------------------------------------------
-# Metrics
+# Token recovery on timeout/crash (the child never printed its own JSON)
 # ---------------------------------------------------------------------------
+
+
+def test_recover_tokens_fills_payload_from_sink_and_cleans_up(tmp_path: Path):
+    sink = tmp_path / "sometask-s1.tokens.json"
+    sink.write_text(
+        json.dumps({"input": 1000, "output": 200, "calls": 3, "cache_read": 400}),
+        encoding="utf-8",
+    )
+    payload = {"status": "timeout", "error": "harness run exceeded 60s"}
+    run_mod._recover_tokens(payload, sink)
+    assert payload["tokens"] == {
+        "input": 1000, "output": 200, "total": 1200, "calls": 3, "cache_read": 400,
+    }
+    assert payload["tokens_recovered"] is True
+    assert not sink.exists()  # cleaned up after reading
+
+
+def test_recover_tokens_missing_sink_is_a_silent_noop(tmp_path: Path):
+    payload = {"status": "timeout", "error": "harness run exceeded 60s"}
+    run_mod._recover_tokens(payload, tmp_path / "never-written.tokens.json")
+    assert "tokens" not in payload
+
+
+def test_token_ledger_mirrors_to_sink_file(tmp_path: Path, monkeypatch):
+    from wells.tokens import TokenLedger
+
+    sink = tmp_path / "ledger.tokens.json"
+    ledger = TokenLedger()
+    ledger.set_sink(sink)
+    ledger.record(
+        step="coder", task_type="code", model="zai:glm-5.2",
+        input_tokens=500, output_tokens=100, cache_read_tokens=50,
+    )
+    on_disk = json.loads(sink.read_text(encoding="utf-8"))
+    assert on_disk["input"] == 500
+    assert on_disk["output"] == 100
+    assert on_disk["calls"] == 1
+    # A second call updates the mirrored file in place (running totals).
+    ledger.record(
+        step="tester", task_type="test", model="zai:glm-5.2",
+        input_tokens=200, output_tokens=50,
+    )
+    on_disk2 = json.loads(sink.read_text(encoding="utf-8"))
+    assert on_disk2["input"] == 700
+    assert on_disk2["calls"] == 2
 
 
 def test_wilson_lower_bound_math():
