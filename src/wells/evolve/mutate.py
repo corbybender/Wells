@@ -134,6 +134,7 @@ def propose_mutation(
     auto: bool = False,
     profile: str = "",
     timeout: float = 1800.0,
+    heartbeat_path: str | Path | None = None,
 ) -> MutationManifest:
     """Create a candidate AGENT.md and record it as a pending mutation.
 
@@ -141,6 +142,16 @@ def propose_mutation(
     text, read as-is — zero LLM cost, deterministic) or ``auto=True`` (has
     the harness draft its own candidate via one real headless run — costs
     real tokens, opt-in only) must be given.
+
+    ``heartbeat_path``, when ``auto=True``, is touched periodically during
+    the draft (same mechanism as run_bench's mid-task ticks) — without
+    this, an external watchdog polling the heartbeat sees no update for
+    the whole draft call and, if that exceeds its staleness threshold,
+    concludes the process is dead and kills it mid-draft. Since propose's
+    own state isn't saved until *after* it returns, that kill abandons
+    the in-flight draft entirely rather than resuming it — a real bug
+    that wasted several real drafting calls in autoloop before this was
+    wired in.
     """
     from wells import principles
 
@@ -155,6 +166,7 @@ def propose_mutation(
         candidate_text = _draft_candidate(
             workspace, profile=profile, timeout=timeout,
             history_context=_recent_mutation_history(),
+            heartbeat_path=heartbeat_path,
         )
     else:
         raise ValueError("propose_mutation: needs candidate_file=PATH or auto=True.")
@@ -201,7 +213,8 @@ def _recent_mutation_history(limit: int = 8) -> str:
 
 
 def _draft_candidate(
-    workspace: str, *, profile: str, timeout: float, history_context: str = ""
+    workspace: str, *, profile: str, timeout: float, history_context: str = "",
+    heartbeat_path: str | Path | None = None,
 ) -> str:
     """Have the harness rewrite AGENT.md itself, seeded with recent bench
     failures as context. One real headless run — the only place in this
@@ -211,8 +224,12 @@ def _draft_candidate(
     import tempfile
 
     from wells import principles
-    from wells.evolve.runner import _run_harness, list_results
+    from wells.evolve.runner import _HeartbeatWriter, _run_harness, list_results
     from wells.evolve.schema import TaskSpec
+
+    hb = _HeartbeatWriter(heartbeat_path, job="evolve-propose-draft") if heartbeat_path else None
+    if hb:
+        hb.write(status="running", phase="draft")
 
     failure_notes: list[str] = []
     for p in list_results(workspace)[:2]:
@@ -249,7 +266,10 @@ def _draft_candidate(
             "improvements, not a rewrite from scratch. Do not touch any other "
             "file."
         )
-        _run_harness(str(scratch), goal, profile=profile, timeout=timeout)
+        harness_kwargs = {"profile": profile, "timeout": timeout}
+        if hb:
+            harness_kwargs["on_tick"] = lambda: hb.write(status="running", phase="draft")
+        _run_harness(str(scratch), goal, **harness_kwargs)
         return (scratch / "AGENT.md").read_text(encoding="utf-8")
 
 
