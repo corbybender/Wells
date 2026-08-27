@@ -332,6 +332,34 @@ def gate_mutation(
     }
     candidate_env = {"WELLS_PRINCIPLES": manifest.candidate_path}
 
+    # A no-op candidate — byte-identical to the baseline text — cannot
+    # represent a real improvement no matter what the two bench passes
+    # score. Running both passes anyway would just measure the harness's
+    # own run-to-run LLM variance against itself and could easily produce
+    # a spurious "promote" purely from noise (candidate happening to score
+    # higher than baseline on the SAME text). Caught live on 2026-08-27:
+    # an --auto draft made zero real edits, and the two passes scored
+    # 52.3% vs 74.1% on identical principles text, which would have been
+    # recorded as a genuine promotion. Skip both bench passes entirely —
+    # cheaper (no wasted API spend on a comparison that can't be
+    # meaningful) and correct (force reject, not noise-dependent).
+    candidate_text = Path(manifest.candidate_path).read_text(encoding="utf-8")
+    baseline_text = Path(baseline_env["WELLS_PRINCIPLES"]).read_text(encoding="utf-8")
+    if candidate_text == baseline_text:
+        log(
+            f"[evolve {mutation_id}] candidate is byte-identical to baseline "
+            f"AGENT.md (no-op draft) — skipping both bench passes, forcing reject."
+        )
+        manifest.split = split
+        manifest.task_filter = task_filter
+        manifest.status = "gated"
+        manifest.baseline_bench = None
+        manifest.candidate_bench = None
+        manifest.replay_summary = None
+        manifest.recommendation = "reject"
+        save_manifest(manifest)
+        return manifest
+
     log(f"[evolve {mutation_id}] baseline pass (split={split!r}) ...")
     baseline_run = run_bench(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
