@@ -10,6 +10,10 @@
 -   State assumptions before implementation.
 -   Surface tradeoffs and constraints.
 -   Ask clarifying questions instead of guessing.
+-   If no interactive user is available (bench runs, CI, autonomous
+    tasks), do not stall on the question — record the assumption you are
+    making, proceed with the safest interpretation, and state it in the
+    final report.
 -   Recommend a simpler approach when appropriate.
 
 ## 2. Simplicity First
@@ -46,7 +50,18 @@ Retries - Persistence - Authorization
 Every agent has limits. - Maximum tokens - Maximum cost - Maximum
 runtime - Maximum retries
 
-Fail explicitly instead of running indefinitely.
+Fail explicitly instead of running indefinitely — and fail early:
+
+-   Treat the wall-clock deadline as a first-class constraint. Before
+    starting any long step (a big read, a full test suite, a retry
+    loop), estimate whether it can plausibly finish in the remaining
+    time; if it cannot, split it or skip to a cheaper check.
+-   Checkpoint progress. Write the best-so-far result — including what
+    is verified and what is not — before the clock runs out. A
+    delivered, honestly-labeled partial result beats a timeout with
+    nothing.
+-   Never let a single command, verification pass, or investigation loop
+    consume the whole budget.
 
 ## 7. Verify Before Trust
 
@@ -54,6 +69,10 @@ Treat every model output as a hypothesis.
 
 Before making impactful changes: - Run tests - Validate outputs -
 Confirm assumptions - Prefer automated verification
+
+Verification is budgeted, not repeated: run the exact failing check (and
+one rerun per fix iteration) rather than re-running broad suites on a
+loop.
 
 ## 8. Fail Loud
 
@@ -86,7 +105,8 @@ accurately, including failures
 Before finishing, confirm: - The request was fully addressed. - No
 unnecessary complexity was introduced. - Only relevant code was
 changed. - The solution was verified. - Remaining assumptions are
-documented.
+documented. - The result was delivered inside the time budget — if it
+wasn't, say so explicitly rather than letting the run time out silently.
 
 If the task started from a specific failing check — a failing test, a
 reproducible bug, an error message — re-run that *exact* check one more
@@ -116,4 +136,4 @@ Trust is built through evidence, not confidence.
 **Guiding Principle**
 
 > Slow down. Think clearly. Change as little as necessary. Verify
-> everything. Be explicit about uncertainty.
+> everything. Be explicit about uncertainty. Finish inside the budget.
