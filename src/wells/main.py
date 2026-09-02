@@ -936,6 +936,7 @@ def _run_bench_cmd(args: list[str]) -> None:
             "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
             "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
             "                        [--bench-id ID] [--resume] [--heartbeat PATH]\n"
+            "                        [--workers N]\n"
             "       wells bench results [ID]"
         )
         sys.exit(2)
@@ -1002,6 +1003,7 @@ def _run_bench_cmd(args: list[str]) -> None:
         limit_s, rest = _pop_flag_value("--limit", rest)
         bench_id, rest = _pop_flag_value("--bench-id", rest)
         heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        workers_s, rest = _pop_flag_value("--workers", rest)
         resume = "--resume" in rest
         rest = [a for a in rest if a != "--resume"]
         kwargs: dict = {"profile": profile or "", "task_filter": task_filter or ""}
@@ -1015,6 +1017,8 @@ def _run_bench_cmd(args: list[str]) -> None:
             kwargs["bench_id"] = bench_id
         if heartbeat:
             kwargs["heartbeat_path"] = heartbeat
+        if workers_s:
+            kwargs["workers"] = int(workers_s)
         if resume:
             if not bench_id:
                 print("ERROR: --resume requires --bench-id ID (the id of the run to continue).")
@@ -1082,6 +1086,7 @@ def _run_evolve_cmd(args: list[str]) -> None:
             "       wells evolve reject <mutation_id>\n"
             "       wells evolve autoloop [--max-cycles N] [--max-days D]\n"
             "                             [--split val] [--profile NAME] [--no-push]\n"
+            "                             [--workers N]\n"
             "                             unattended propose->gate->promote/reject,\n"
             "                             bounded and resumable — see autoloop.py"
         )
@@ -1114,7 +1119,7 @@ def _run_evolve_cmd(args: list[str]) -> None:
             print(
                 "usage: wells evolve gate <mutation_id> [--split val] [--profile NAME]\n"
                 "                          [--seeds N] [--timeout SECONDS] [--task ID]\n"
-                "                          [--resume] [--heartbeat PATH]"
+                "                          [--resume] [--heartbeat PATH] [--workers N]"
             )
             sys.exit(2)
         mutation_id, rest = rest[0], rest[1:]
@@ -1124,6 +1129,7 @@ def _run_evolve_cmd(args: list[str]) -> None:
         seeds_s, rest = _pop_flag_value("--seeds", rest)
         timeout_s, rest = _pop_flag_value("--timeout", rest)
         heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        workers_s, rest = _pop_flag_value("--workers", rest)
         resume = "--resume" in rest
         rest = [a for a in rest if a != "--resume"]
         kwargs: dict = {
@@ -1137,6 +1143,8 @@ def _run_evolve_cmd(args: list[str]) -> None:
             kwargs["timeout"] = float(timeout_s)
         if heartbeat:
             kwargs["heartbeat_path"] = heartbeat
+        if workers_s:
+            kwargs["workers"] = int(workers_s)
         if resume:
             kwargs["resume"] = True
         try:
@@ -1198,6 +1206,7 @@ def _run_evolve_cmd(args: list[str]) -> None:
         seeds_s, rest = _pop_flag_value("--seeds", rest)
         timeout_s, rest = _pop_flag_value("--timeout", rest)
         heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        workers_s, rest = _pop_flag_value("--workers", rest)
         no_push = "--no-push" in rest
         rest = [a for a in rest if a != "--no-push"]
         kwargs: dict = {
@@ -1215,6 +1224,8 @@ def _run_evolve_cmd(args: list[str]) -> None:
             kwargs["timeout"] = float(timeout_s)
         if heartbeat:
             kwargs["heartbeat_path"] = heartbeat
+        if workers_s:
+            kwargs["workers"] = int(workers_s)
         state = autoloop.run_autonomous_loop(workspace, **kwargs)
         print(f"\nstopped: {state.stop_reason}")
         print(f"cycles completed: {state.cycle}")

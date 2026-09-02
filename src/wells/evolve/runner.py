@@ -511,6 +511,7 @@ def run_bench(
     bench_id: str | None = None,
     resume: bool = False,
     heartbeat_path: str | Path | None = None,
+    workers: int = 1,
     log=print,
 ) -> BenchRun:
     """Run one bench over a split and persist the results.
@@ -537,6 +538,24 @@ def run_bench(
     roughly every 20s (even mid-task, via _run_harness's poll loop) — an
     external monitor watching that file's age is how a caller finds out
     the run died *without* having to babysit it.
+
+    ``workers`` (default 1, serial — unchanged existing behavior) runs up
+    to that many (task, seed) pairs concurrently via a ``ThreadPoolExecutor``,
+    same isolation strategy as :func:`wells.fleet.run_fleet`: each pair's
+    actual work happens in its own ``subprocess.Popen`` child (see
+    ``_run_harness``), each in its own worktree directory, so there is no
+    shared-mutable-state race between concurrent pairs — the model profile
+    and token ledger that make *in-process* concurrency unsafe never leave
+    the child process. What parallel workers actually buy here: this bench
+    run is bound by remote LLM round-trip latency (each task ~15-20 minutes
+    of mostly-idle waiting on a remote API), not local CPU/GPU — running
+    them concurrently instead of one-at-a-time turns wall-clock time into
+    roughly wall-clock / workers rather than doing any more or less work.
+    Checkpointing is preserved: each completed pair's result is appended
+    and the run saved to disk immediately (protected by a lock so
+    concurrent completions never race on the same file), so a kill mid-run
+    still loses at most the ``workers`` pairs that were in flight at that
+    instant, never earlier progress.
     """
     tasks = list_tasks(workspace, split)
     if not tasks:
@@ -600,12 +619,40 @@ def run_bench(
     log(
         f"[bench {bench_id}] {len(tasks)} task(s) x {seeds} seed(s) on split={split!r}, profile={run.profile or '(active)'}"
     )
+    pending = [
+        (task, seed)
+        for task in tasks
+        for seed in range(1, seeds + 1)
+        if (task.task_id, seed) not in done_pairs
+    ]
+
+    def _run_one(task: TaskSpec, seed: int, on_tick=None) -> TaskResult:
+        return _execute_task(
+            task, seed, profile=profile, worktree_root=worktree_root,
+            timeout=timeout, extra_env=extra_env, on_tick=on_tick,
+        )
+
+    def _record(row: TaskResult) -> None:
+        # Called under `save_lock` in the parallel path; the serial path
+        # runs single-threaded so no lock is needed there.
+        run.tasks.append(row)
+        # Checkpoint after every task, not once at the end — a killed
+        # process (session death, crash, reboot) loses at most the pair(s)
+        # in flight at that instant, never earlier progress. See
+        # run_bench's docstring "Fault tolerance" section.
+        run.summary = summarize(run.tasks)
+        run.save(workspace)
+        log(
+            f"[bench {bench_id}] -> resolved={row.resolved} "
+            f"status={row.harness_status} tokens={row.tokens_total:,} "
+            f"{row.duration_seconds}s"
+            + (f" err={row.error[:80]}" if row.error else "")
+        )
+
     try:
-        for i, task in enumerate(tasks, 1):
-            for seed in range(1, seeds + 1):
-                if (task.task_id, seed) in done_pairs:
-                    continue
-                log(f"[bench {bench_id}] ({i}/{len(tasks)} s{seed}) {task.task_id} ...")
+        if workers <= 1:
+            for i, (task, seed) in enumerate(pending, 1):
+                log(f"[bench {bench_id}] ({i}/{len(pending)}) {task.task_id} s{seed} ...")
                 if hb:
                     hb.write(
                         status="running", split=split, task=task.task_id, seed=seed,
@@ -618,28 +665,35 @@ def run_bench(
                         done=len(run.tasks), total=total_pairs,
                     )
 
-                row = _execute_task(
-                    task,
-                    seed,
-                    profile=profile,
-                    worktree_root=worktree_root,
-                    timeout=timeout,
-                    extra_env=extra_env,
-                    on_tick=_tick if hb else None,
-                )
-                run.tasks.append(row)
-                # Checkpoint after every task, not once at the end — a killed
-                # process (session death, crash, reboot) loses at most this
-                # one in-flight task, never the whole run. See run_bench's
-                # docstring "Fault tolerance" section.
-                run.summary = summarize(run.tasks)
-                run.save(workspace)
-                log(
-                    f"[bench {bench_id}] -> resolved={row.resolved} "
-                    f"status={row.harness_status} tokens={row.tokens_total:,} "
-                    f"{row.duration_seconds}s"
-                    + (f" err={row.error[:80]}" if row.error else "")
-                )
+                row = _run_one(task, seed, on_tick=_tick if hb else None)
+                _record(row)
+        else:
+            import threading
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            save_lock = threading.Lock()
+            n_workers = max(1, min(workers, len(pending)))
+            log(
+                f"[bench {bench_id}] running {len(pending)} pending pair(s) "
+                f"with {n_workers} worker(s) ..."
+            )
+
+            def _tick_hb():
+                # Best-effort, lock-free: heartbeat freshness only needs
+                # *a* recent write, not a perfectly accurate `done` count
+                # under concurrency — see _HeartbeatWriter's own docstring.
+                if hb:
+                    hb.write(status="running", split=split, done=len(run.tasks), total=total_pairs)
+
+            with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="wells-bench") as pool:
+                futs = {
+                    pool.submit(_run_one, task, seed, on_tick=_tick_hb if hb else None): (task, seed)
+                    for task, seed in pending
+                }
+                for fut in as_completed(futs):
+                    row = fut.result()
+                    with save_lock:
+                        _record(row)
     except BaseException as e:
         if hb:
             hb.write(status="crashed", split=split, error=str(e)[:300], done=len(run.tasks), total=total_pairs)

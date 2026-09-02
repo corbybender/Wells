@@ -139,6 +139,7 @@ def run_autonomous_loop(
     timeout: float = 1200.0,
     push: bool = True,
     heartbeat_path: str | Path | None = None,
+    workers: int = 1,
     log=print,
 ) -> LoopState:
     """Run propose(--auto) -> gate -> promote/reject cycles until stopped.
@@ -227,7 +228,7 @@ def run_autonomous_loop(
             manifest = mutate.gate_mutation(
                 state.current_mutation_id, workspace, split=split, profile=profile,
                 seeds=seeds, timeout=timeout, resume=True, heartbeat_path=heartbeat_path,
-                log=log,
+                workers=workers, log=log,
             )
         except Exception as e:
             log(f"[autoloop] gate failed: {e}")

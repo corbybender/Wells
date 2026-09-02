@@ -1,12 +1,19 @@
 {
-  "updated_at": "2026-08-24 11:14:57",
-  "total": 58,
+  "updated_at": "2026-09-02 07:18:14",
+  "total": 158,
   "splits": {
-    "train": 36,
-    "val": 11,
-    "blind": 11
+    "train": 95,
+    "val": 33,
+    "blind": 30
   },
   "tasks": [
+    {
+      "task_id": "T-043511294a-fixed-inconsistency-in-forwardin",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "043511294a9eec59d08e64c351621e790ae74b76",
+      "subject": "Fixed inconsistency in forwarding params"
+    },
     {
       "task_id": "T-047adef258-preserve-declaration-order-of-he",
       "split": "blind",
@@ -43,11 +50,39 @@
       "subject": "Validate style() color arguments, fix explicit black color argument"
     },
     {
+      "task_id": "T-0b7a9acc63-allow-customization-of-help-opti",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "0b7a9acc63dac907088de7d9238f7f4b2afe02ea",
+      "subject": "Allow customization of help option right from its decorator."
+    },
+    {
       "task_id": "T-0baa8db077-document-ctx-params-bypass-with-",
       "split": "blind",
       "status": "verified",
       "source_commit": "0baa8db07736fc7ad3d3eed97d4c73b0059c63e1",
       "subject": "Document ctx.params bypass with test and doc"
+    },
+    {
+      "task_id": "T-0d69b6ce8b-adds-support-for-editing-multipl",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "0d69b6ce8b25fe31ea580c608adb8e45df3805bb",
+      "subject": "Adds support for editing multiple files (#2068)"
+    },
+    {
+      "task_id": "T-0db91e2205-return-resolved-name-not-origina",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "0db91e220517c767e1e81fd37d1dd7ce83fa77b7",
+      "subject": "return resolved name, not original name"
+    },
+    {
+      "task_id": "T-0ef55fda47-close-contexts-created-during-sh",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "0ef55fda47bb3d0dece21197d81d8d72a4250e73",
+      "subject": "Close contexts created during shell completion #2644. (#2800)"
     },
     {
       "task_id": "T-0f71fe771c-fix-dual-option-arbitration-to-r",
@@ -71,11 +106,46 @@
       "subject": "Use non-shadowed help option name in error hint"
     },
     {
+      "task_id": "T-144f3701b2-option-show-default-now-override",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "144f3701b23186ac8b2277d8f224fd7090366db5",
+      "subject": "Option.show_default now overrides Context.show_default"
+    },
+    {
+      "task_id": "T-149683755e-remove-suffixes-from-generated-c",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "149683755e07b62de7480b3a60a714f0a8b6618f",
+      "subject": "remove suffixes from generated command name"
+    },
+    {
+      "task_id": "T-1787497713-added-functionality-to-set-flag-",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "1787497713fa389435ed732c9b26274c3cdc458d",
+      "subject": "Added functionality to set flag_value correctly when using envvar (#2788)"
+    },
+    {
+      "task_id": "T-18d29196c5-ensure-that-type-cast-value-neve",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "18d29196c508b249ef1111f1f29c9133e0a8b097",
+      "subject": "Ensure that 'type_cast_value' never gets 'UNSET'"
+    },
+    {
       "task_id": "T-19fd4d6e18-fix-ensure-fish-completion-handl",
       "split": "train",
       "status": "verified",
       "source_commit": "19fd4d6e18bc9fce451f92f422696b11169faa57",
       "subject": "Fix: Ensure fish completion handles multiline help strings correctly (#3126)"
+    },
+    {
+      "task_id": "T-1a4d8c1bb1-fix-metavar-for-choice-options-w",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "1a4d8c1bb1e8f8e214ede7223bd2c05dc2ce006a",
+      "subject": "Fix metavar for Choice options when show_choices=False (#2365)"
     },
     {
       "task_id": "T-1aa2d53d63-redesigned-tests-and-get-pager-f",
@@ -85,11 +155,39 @@
       "subject": "Redesigned tests and get_pager_file branching to be more clear and not set color"
     },
     {
+      "task_id": "T-1b524bb30d-show-env-var-in-error-hint-2696",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "1b524bb30d0bd39528369c7029b9296e7663cf19",
+      "subject": "show env var in error hint (#2696)"
+    },
+    {
+      "task_id": "T-1c20dc6e72-fix-default-handling-to-defer-un",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "1c20dc6e724cd5625faaa17b715ba928d44c08bf",
+      "subject": "Fix default handling to defer UNSET normalization"
+    },
+    {
       "task_id": "T-1f9cd54f68-close-the-pager-temp-file-before",
       "split": "train",
       "status": "verified",
       "source_commit": "1f9cd54f686eb343cec714230ad825ce972739ab",
       "subject": "Close the pager temp file before unlinking it"
+    },
+    {
+      "task_id": "T-21a2a8c2b1-fix-shutdown-multiprocessing-man",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "21a2a8c2b1d0c8d47bc00cc59591470f6a9e2307",
+      "subject": "Fix Shutdown multiprocessing Manager in schedule_formatting (#4952)"
+    },
+    {
+      "task_id": "T-238ee070af-remove-mentions-of-deprecated-ba",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "238ee070af40576d23418e41fa96d1c41e53f6b1",
+      "subject": "remove mentions of deprecated base classes"
     },
     {
       "task_id": "T-2468b70997-fix-readline-backspace-line-wrap",
@@ -106,11 +204,53 @@
       "subject": "fix(sandbox): probe must actually run a container, not just query info"
     },
     {
+      "task_id": "T-257d392217-fix-removed-comments-in-stub-fil",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "257d392217974a76231e306133288748c7b70786",
+      "subject": "Fix removed comments in stub files (#3745)"
+    },
+    {
       "task_id": "T-27b3ee2633-add-built-in-powershell-shell-co",
       "split": "blind",
       "status": "verified",
       "source_commit": "27b3ee2633f80aeb04d6e15c2fb3c91542efa32b",
       "subject": "Add built-in PowerShell shell completion support"
+    },
+    {
+      "task_id": "T-280827938a-allow-a-callable-default-to-have",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "280827938a505b2a380ee96b16d2f431605bad83",
+      "subject": "Allow a callable default to have its own string representation"
+    },
+    {
+      "task_id": "T-2bc5ce8ae1-feat-add-schema-and-validate-pyp",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "2bc5ce8ae1f1ad52909b4656444c1e9988e23cab",
+      "subject": "feat: add schema and validate-pyproject support (#4181)"
+    },
+    {
+      "task_id": "T-2cabbe3175-specialize-progressbar-length-as",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "2cabbe3175026695210fe0bf9b179fd62d52634f",
+      "subject": "specialize progressbar(length=...) as ProgressBar[int] (#2630)"
+    },
+    {
+      "task_id": "T-2cc7244bec-show-default-doesn-t-show-false-",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "2cc7244becaa7381d6b5b0a7404490d5210c833a",
+      "subject": "show_default doesn't show False default for single boolean flag"
+    },
+    {
+      "task_id": "T-2d174df7cb-validate-include-and-force-exclu",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "2d174df7cb16f5dbdbb188da15fdb2059adb30d6",
+      "subject": "Validate include and force-exclude config types (#5193)"
     },
     {
       "task_id": "T-30749b45c5-don-t-parameterize-tests-using-n",
@@ -127,11 +267,46 @@
       "subject": "Warn when an argument name collide with other parameters"
     },
     {
+      "task_id": "T-3567cb1996-fix-tokens-recover-token-counts-",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "3567cb19966546cadbacc1ebc896cbd398d93872",
+      "subject": "fix(tokens): recover token counts lost on harness timeout/crash"
+    },
+    {
+      "task_id": "T-35a0eb13e6-feat-bench-support-a-split-spann",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "35a0eb13e611bfb83d07146a0a931aa91d738785",
+      "subject": "feat(bench): support a split spanning multiple repos"
+    },
+    {
+      "task_id": "T-380008389b-give-a-userwarning-when-paramete",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "380008389b32ca2b7de7c73f670a9eee1562004e",
+      "subject": "Give a UserWarning when Parameter is overriden by name (#2397)"
+    },
+    {
+      "task_id": "T-39413d9b1d-test-show-default-set-as-string-",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "39413d9b1d782317e72e82ec09d437bef8359078",
+      "subject": "Test `show_default` set as string and its display in prompt"
+    },
+    {
       "task_id": "T-399919f740-support-incremental-output-in-th",
       "split": "train",
       "status": "verified",
       "source_commit": "399919f740bfd26cb30d544877fafd03cfcd9091",
       "subject": "Support incremental output in the pager"
+    },
+    {
+      "task_id": "T-39ee8b0580-store-raw-help-string-for-comman",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "39ee8b0580ee48c43801feaa0c9a5b454a3e0e19",
+      "subject": "Store raw help string for commands"
     },
     {
       "task_id": "T-3a3e0350b6-split-string-values-from-default",
@@ -141,11 +316,60 @@
       "subject": "Split string values from `default_map` for multi-value parameters"
     },
     {
+      "task_id": "T-3d029e03eb-count-help-doesn-t-show-default-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "3d029e03eb2a793c64166cb1b690cd63e42461af",
+      "subject": "count help doesn't show default range type"
+    },
+    {
+      "task_id": "T-40830087dd-enforce-required-flag",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "40830087dd9e9023dbcf75befe0ca9056127a064",
+      "subject": "enforce required flag"
+    },
+    {
       "task_id": "T-41f04dc072-fix-cli-reflections-with-no-subc",
       "split": "train",
       "status": "verified",
       "source_commit": "41f04dc07217f7d01f77b880a467f87f6def7487",
       "subject": "fix(cli): /reflections with no subcommand crashed on an empty workspace"
+    },
+    {
+      "task_id": "T-422e211018-do-not-suppress-eoferror-keyboar",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "422e211018e9ef8ff9a840878464d35c4c6519ac",
+      "subject": "Do not suppress EOFError/KeyboardInterrupt when standalone is disabled"
+    },
+    {
+      "task_id": "T-4271fe283d-feat-new-method-for-choice-fail-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "4271fe283dc9365563aebb369ada8d20eee015a8",
+      "subject": "feat: new method for choice fail (#2622)"
+    },
+    {
+      "task_id": "T-437e1e3295-temporarily-provide-a-fake-conte",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "437e1e3295c7ec979fc1bf285bb402ca20d847e7",
+      "subject": "Temporarily provide a fake context to the callback to hide `UNSET` values as `No"
+    },
+    {
+      "task_id": "T-43c2e7f331-format-filename-replaces-invalid",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "43c2e7f331e78684d2549439c3338335f0ddb854",
+      "subject": "format_filename replaces invalid bytes"
+    },
+    {
+      "task_id": "T-46b78bcb80-command-decorator-params-argumen",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "46b78bcb80ac4f81e3248a83725c6f0adcc1089a",
+      "subject": "command decorator params argument"
     },
     {
       "task_id": "T-47914226c2-fix-empty-netrc-entry-usage-7205",
@@ -155,6 +379,69 @@
       "subject": "Fix empty netrc entry usage (#7205)"
     },
     {
+      "task_id": "T-4b4ae43e8b-fix-incorrect-linenos-on-fstring",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "4b4ae43e8b66a2eab2d41a73364745c2a4570287",
+      "subject": "Fix incorrect linenos on fstring tokens with escaped newlines (#4423)"
+    },
+    {
+      "task_id": "T-4e4c7a69b7-auto-detect-type-unprocessed-whe",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "4e4c7a69b7953ccb8c14e92368ca65d9525f1d2b",
+      "subject": "Auto-detect `type=UNPROCESSED` when `flag_value` has non-basic types"
+    },
+    {
+      "task_id": "T-4f9086bf8f-patch-pdb-in-clirunner-to-allow-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "4f9086bf8fd98aca1d804bf742f4f1ceb6c12295",
+      "subject": "Patch `pdb` in `CliRunner` to allow debugger interactions in tests"
+    },
+    {
+      "task_id": "T-4fd2fea0db-fix-condition-for-setting-flag-v",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "4fd2fea0db423d242aedcae0a5f664efe0a93484",
+      "subject": "Fix condition for setting flag value when type is provided"
+    },
+    {
+      "task_id": "T-546f2851f4-fix-callable-flag-value-being-in",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "546f2851f414b07413777ebcae89b2c21a685252",
+      "subject": "Fix callable ``flag_value`` being instantiated when used as a default"
+    },
+    {
+      "task_id": "T-56ba38a484-handle-empty-cache-files-5192",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "56ba38a484dae93f9793e70c4a136331284bdcc5",
+      "subject": "Handle empty cache files (#5192)"
+    },
+    {
+      "task_id": "T-589ca314ae-avoid-empty-lines-if-help-text-i",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "589ca314ae8d200ff55263a2c49c8ae6341866f3",
+      "subject": "avoid empty lines if help text is empty"
+    },
+    {
+      "task_id": "T-5961d31fb5-introduce-parameter-deprecated-c",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "5961d31fb566f089ad468a5b26a32f1ebfa7f63e",
+      "subject": "Introduce Parameter.deprecated + Command.deprecated message customization (#2271"
+    },
+    {
+      "task_id": "T-5b4b64c346-add-more-tests-to-prevent-regres",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "5b4b64c3467fd7a3c03f91ee641aaa348b6bed3b",
+      "subject": "Add more tests to prevent regression of CVE 2024 47081"
+    },
+    {
       "task_id": "T-60389df6d6-trim-excess-leading-path-separat",
       "split": "train",
       "status": "verified",
@@ -162,11 +449,25 @@
       "subject": "Trim excess leading path separators"
     },
     {
+      "task_id": "T-607316f9de-support-show-default-string-in-p",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "607316f9dea85ee81f8a215f5d5ae20f7f4fff71",
+      "subject": "Support show_default string in prompts"
+    },
+    {
       "task_id": "T-61bdc2ae81-implement-a-regex-based-solution",
       "split": "train",
       "status": "verified",
       "source_commit": "61bdc2ae81f6d0dc19bd247504544659245df056",
       "subject": "Implement a regex-based solution to hide hidden input"
+    },
+    {
+      "task_id": "T-61f8101f4e-fix-printing-of-default-option-v",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "61f8101f4e0d02cb902ef17853fa35ad88185265",
+      "subject": "Fix printing of default option value to handle empty strings"
     },
     {
       "task_id": "T-6404f345e5-fix-prepare-body-stream-detectio",
@@ -204,6 +505,27 @@
       "subject": "perf(repomap): background the embedding warm-up instead of blocking startup"
     },
     {
+      "task_id": "T-6c136f979c-fix-no-spurious-target-version-w",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "6c136f979c14956eeddb4a20c3f2653bce7e9505",
+      "subject": "fix: no spurious target-version warning when runtime version is included (#5167)"
+    },
+    {
+      "task_id": "T-6de2121518-treat-unset-in-a-default-map-as-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "6de212151893e4072ca21779b7b6f4cb82452f51",
+      "subject": "Treat `UNSET` in a `default_map` as absent"
+    },
+    {
+      "task_id": "T-6e05e1fa1c-update-dependencies-using-pip-co",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "6e05e1fa1c2804410f9916b27edc07076e3b156d",
+      "subject": "Update dependencies using pip-compile-multi (#2508)"
+    },
+    {
       "task_id": "T-6f205ff422-fix-encode-files-detection-for-g",
       "split": "train",
       "status": "verified",
@@ -225,11 +547,46 @@
       "subject": "Do not trigger a `BytesWarning` under `python -bb`"
     },
     {
+      "task_id": "T-70c673d37e-fix-eagerness-of-help-option-gen",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "70c673d37eb91ba42a129be9037caf3ebed62f3e",
+      "subject": "Fix eagerness of help option generated by `help_option_names` (#2811)"
+    },
+    {
+      "task_id": "T-70e0956f1f-respect-no-color-by-disabling-an",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "70e0956f1f23308d8bb69f2ca35259c34129c870",
+      "subject": "Respect NO_COLOR by disabling ANSI output (#5129)"
+    },
+    {
       "task_id": "T-71f2bafa54-strip-all-ansi-sequences",
       "split": "val",
       "status": "verified",
       "source_commit": "71f2bafa541e7f798834e74076786ff4281ac83e",
       "subject": "Strip all ANSI sequences"
+    },
+    {
+      "task_id": "T-74e7f7079c-command-and-group-decorator-pare",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "74e7f7079cb31578fa2578f219d93a33cfeb46f8",
+      "subject": "command and group decorator parentheses are optional"
+    },
+    {
+      "task_id": "T-777a89e232-add-regular-and-stress-tests-for",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "777a89e232d5771141be545ff749a7ad2eaa5fc2",
+      "subject": "Add regular and stress tests for ``CliRunner`` stream lifecycle and ownership"
+    },
+    {
+      "task_id": "T-7b5a657285-fix-line-ranges-behavior-when-ra",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "7b5a657285f38126bf28483478bbd9ea928077ec",
+      "subject": "Fix --line-ranges behavior when ranges are at EOF (#4273)"
     },
     {
       "task_id": "T-7d05a59b9d-fix-get-parameter-source-during-",
@@ -246,6 +603,20 @@
       "subject": "Fix pager test race by raising before yield"
     },
     {
+      "task_id": "T-7ed114f89a-move-command-cls-setting-after-a",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "7ed114f89a5997736c372faa0fa3b12d2bba377a",
+      "subject": "move command cls setting after assert check"
+    },
+    {
+      "task_id": "T-80efdf6c10-raise-an-exception-on-end-of-inp",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "80efdf6c10c51884416d11b3b575f61157af77fa",
+      "subject": "Raise an exception on end of input in CliRunner"
+    },
+    {
       "task_id": "T-82f377c547-fix-deprecated-label-formatting",
       "split": "train",
       "status": "verified",
@@ -258,6 +629,55 @@
       "status": "verified",
       "source_commit": "831c8f0948af519e45b90801d7430ff25451f972",
       "subject": "Add NoSuchCommand exception with suggestions for misspelled commands (#3228)"
+    },
+    {
+      "task_id": "T-8762c7752c-expose-original-file-descriptor-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "8762c7752cf1632d082c76922b15fef06ac3a2f1",
+      "subject": "Expose original file descriptor in `CliRunner`"
+    },
+    {
+      "task_id": "T-88328fc874-add-clirunner-default-catch-exce",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "88328fc8743d43566081d9f17acad5f5552f5a87",
+      "subject": "Add CliRunner default `catch_exceptions` parameter (#2818)"
+    },
+    {
+      "task_id": "T-8967b81b69-don-t-show-empty-multiple-true-d",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "8967b81b69958c4607a72769c38dbda80d6d7606",
+      "subject": "don't show empty multiple=True default"
+    },
+    {
+      "task_id": "T-8b0896368c-feat-bench-evolve-checkpoint-eve",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "8b0896368c2ecb78408e253b45b5f0ee6c3cf9a4",
+      "subject": "feat(bench,evolve): checkpoint every task, resumable runs, watchdog auto-restart"
+    },
+    {
+      "task_id": "T-8c842a43e8-pass-color-explicitly-in-error-e",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "8c842a43e884c5e69032223563649f4389e37dd8",
+      "subject": "Pass 'color' explicitly in error echoing (#2273)"
+    },
+    {
+      "task_id": "T-91de59c6c8-fix-3084-correct-flag-optional-v",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "91de59c6c8abc8251e7af551cd4546cc964288af",
+      "subject": "Fix #3084: Correct flag optional value behavior and add comprehensive tests"
+    },
+    {
+      "task_id": "T-91e388027d-completion-arguments-may-start-w",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "91e388027d2270966e5a75e7a55b8cea3becc66b",
+      "subject": "completion arguments may start with a \"/\""
     },
     {
       "task_id": "T-9399613aef-feat-self-improvement-reflexion-",
@@ -274,6 +694,27 @@
       "subject": "Strip ANSI from `confirm()` and `prompt()` when the stream don't support them"
     },
     {
+      "task_id": "T-955ca492a6-cleanup-changes-to-fix-flag-valu",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "955ca492a6b9e8de0660dae1c415568ca6f9c4b3",
+      "subject": "Cleanup changes to fix flag_value bug"
+    },
+    {
+      "task_id": "T-986f322e43-resolve-relative-symlinks-to-the",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "986f322e435fac5e1fb8505d3683c8a224c18b06",
+      "subject": "resolve relative symlinks to the containing directory"
+    },
+    {
+      "task_id": "T-9dd12077ee-deprecate-basecommand",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "9dd12077eed3eb331ee23cb94ac6f70895f0329a",
+      "subject": "deprecate BaseCommand"
+    },
+    {
       "task_id": "T-9f9b149ea3-add-custom-version-option-freeze",
       "split": "train",
       "status": "verified",
@@ -286,6 +727,13 @@
       "status": "verified",
       "source_commit": "a09c1c655eef3d43181eb46036b66cf058d72df4",
       "subject": "fix: show custom error message in prompt with hide_input=True"
+    },
+    {
+      "task_id": "T-a1235aacb1-fix-zsh-completions-with-colons-",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "a1235aacb1be55dc66ddcfefbf64dec44b6ab54d",
+      "subject": "Fix Zsh completions with colons (#2846)"
     },
     {
       "task_id": "T-a2ac5839f2-open-the-pager-temp-file-in-text",
@@ -316,11 +764,53 @@
       "subject": "Forwards all user's parameters set in `PAGER`"
     },
     {
+      "task_id": "T-a6e0d29368-hide-default-value-when-show-def",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "a6e0d2936891030f5092c9869c7391104f6721d9",
+      "subject": "Hide default value when show_default is False (#2509)"
+    },
+    {
+      "task_id": "T-aa6f36017e-option-with-multiple-and-flag-va",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "aa6f36017e5132836ea8679a4143a08944fa5c8c",
+      "subject": "option with multiple and flag_value replaces internal placeholder"
+    },
+    {
+      "task_id": "T-aaf99a3ee6-hide-sentinel-unset-values-as-no",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "aaf99a3ee6935f321f755bc7c5717a91d321cd39",
+      "subject": "Hide `Sentinel.UNSET` values as `None` in `lookup_default()`"
+    },
+    {
+      "task_id": "T-ac6a2acfdb-fix-shell-completion-for-nested-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ac6a2acfdb4550c35ce69ce54db502ba96c96324",
+      "subject": "Fix shell completion for nested groups"
+    },
+    {
+      "task_id": "T-ad2482bf69-test-runner-opens-stderr-with-ba",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ad2482bf696df25025ee78fb81a8cf91256af6a5",
+      "subject": "test runner opens stderr with backslashreplace"
+    },
+    {
       "task_id": "T-ad39d749be-add-capture-parameter-to-clirunn",
       "split": "train",
       "status": "verified",
       "source_commit": "ad39d749be85af02bf191636062eef51323ad5ab",
       "subject": "Add `capture` parameter to `CliRunner` and revert default-mode `fileno` exposure"
+    },
+    {
+      "task_id": "T-ad52b19c84-detect-type-from-flag-value",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ad52b19c84ab47cf6ec4df25b4e89ac939c3b253",
+      "subject": "detect type from flag_value"
     },
     {
       "task_id": "T-b1dd722aba-fix-vision-forward-pasted-images",
@@ -330,11 +820,39 @@
       "subject": "fix(vision): forward pasted images on the auto route; fix dead free-tier slug"
     },
     {
+      "task_id": "T-b36e3ede78-allow-multiple-true-with-flags",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "b36e3ede781b388ae8135af61e83269e211acdf1",
+      "subject": "allow multiple=True with flags"
+    },
+    {
+      "task_id": "T-b55294797e-add-path-normalization-edge-case",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "b55294797ef32e22eb41e7d9657edb8faefa4976",
+      "subject": "Add path normalization edge-cases, verify `shlex.split` behavior"
+    },
+    {
+      "task_id": "T-b96c2601af-document-and-fix-command-string-",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "b96c2601af4e01341b4d2c0db494ebee4aef8f42",
+      "subject": "Document and fix command string sanitizing with `shlex.split`"
+    },
+    {
       "task_id": "T-bc32a92cd2-refactor-pager-stream-handling-d",
       "split": "train",
       "status": "verified",
       "source_commit": "bc32a92cd2ae77afb2352f79ebdf00997f35d333",
       "subject": "Refactor pager stream handling; drop text/binary branching"
+    },
+    {
+      "task_id": "T-beb438cd63-add-validation-for-line-ranges-v",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "beb438cd6355aaa1a5cb4e9f980d87484744b68e",
+      "subject": "Add validation for --line-ranges values (#5107)"
     },
     {
       "task_id": "T-becbde5cf4-pager-doesn-t-close-std-streams",
@@ -344,11 +862,25 @@
       "subject": "pager doesn't close std streams"
     },
     {
+      "task_id": "T-bf1e8be90c-show-correct-value-for-flag-defa",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "bf1e8be90c46428f8bf8b45f295af80cfaf2e188",
+      "subject": "show correct value for flag default when using default_map"
+    },
+    {
       "task_id": "T-c2ed41490b-deprecate-isolated-filesystem-an",
       "split": "train",
       "status": "verified",
       "source_commit": "c2ed41490baa08002714ab79afa4a41f2d67c02c",
       "subject": "Deprecate `isolated_filesystem` and document its limits"
+    },
+    {
+      "task_id": "T-c326df95e9-fix-closing-of-callbacks-on-cli-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "c326df95e9e3da0425360e030413f6a3ee25fdee",
+      "subject": "Fix closing of callbacks on CLI exit (#2680)"
     },
     {
       "task_id": "T-c3c2cd0d33-fix-llm-retry-openrouter-gateway",
@@ -365,6 +897,62 @@
       "subject": "feat: run-completion notifications + cross-run daily spend cap"
     },
     {
+      "task_id": "T-c653ec8200-reconcile-default-value-passing-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "c653ec820093ed1dda41aae8d35bff7834b0344a",
+      "subject": "Reconcile default value passing and default activation"
+    },
+    {
+      "task_id": "T-c8ca29bd35-use-pathlib-to-resolve-symlinks",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "c8ca29bd3581d3c5e36ea0254f6c8cf0bf6c40c4",
+      "subject": "use pathlib to resolve symlinks"
+    },
+    {
+      "task_id": "T-cca3c0fd9f-test-that-preview-unstable-featu",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "cca3c0fd9f7f1097b93f0f14c08b1b8cd0103929",
+      "subject": "Test that preview/unstable features are documented (#4187)"
+    },
+    {
+      "task_id": "T-ce5da127e1-feat-evolve-phase-2-the-evolutio",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ce5da127e10015549d3e4c0fc970a938b5d103be",
+      "subject": "feat(evolve): Phase 2 — the evolution engine (AGENT.md mutation, v1)"
+    },
+    {
+      "task_id": "T-d48b59be39-fix-make-default-short-help-max-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "d48b59be391f9f9bfb41dd62db07e46519d08bfe",
+      "subject": "fix make_default_short_help max_length, refactor"
+    },
+    {
+      "task_id": "T-d7587ce9f5-validate-black-num-workers-value",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "d7587ce9f52f36eb41bc505e529540fd8cbdcd3e",
+      "subject": "Validate BLACK_NUM_WORKERS values (#5211)"
+    },
+    {
+      "task_id": "T-d8763b9302-help-shown-via-no-args-is-help-r",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "d8763b93021c416549b5f8b4b5497234619410db",
+      "subject": "Help shown via no_args_is_help results in exit code 2, was 0 (#1489)"
+    },
+    {
+      "task_id": "T-d8e987eae7-namedtextiowrapper-stop-closing-",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "d8e987eae723fbb0ccc355d125d0e179a1bf5fd8",
+      "subject": "NamedTextIOWrapper: stop closing buffer"
+    },
+    {
       "task_id": "T-d946074a8f-rewrite-wrap-chunks-in-textwrapp",
       "split": "train",
       "status": "verified",
@@ -372,11 +960,81 @@
       "subject": "Rewrite `_wrap_chunks` in `TextWrapper` to be ANSI-aware"
     },
     {
+      "task_id": "T-daa2d8e443-disallow-use-of-is-flag-and-mult",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "daa2d8e44332f66f09be83a9872218fde318bb8d",
+      "subject": "disallow use of is_flag and multiple in option"
+    },
+    {
+      "task_id": "T-dcd991d986-helpformatter-write-text-uses-fu",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "dcd991d986d43c4f12cc838c4008dfafc015c21d",
+      "subject": "HelpFormatter.write_text uses full width"
+    },
+    {
       "task_id": "T-ddf20d0673-add-changelog-entry-fix-admoniti",
       "split": "train",
       "status": "verified",
       "source_commit": "ddf20d0673788ebe8ec28b6031a24a36cba92115",
       "subject": "Add changelog entry, fix admonition and add test"
+    },
+    {
+      "task_id": "T-de8429ffda-fix-ipv6-session-transactions",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "de8429ffda8cfb54db175529e2bae72a24e1fa7e",
+      "subject": "Fix IPv6 session transactions"
+    },
+    {
+      "task_id": "T-e002dbc40c-fix-return-value-and-type-signat",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "e002dbc40ceb6a7e78dbe5e5868744690ba3120f",
+      "subject": "Fix return value and type signature of `shell_completion.add_completion_class` f"
+    },
+    {
+      "task_id": "T-e003331551-fix-paramtype-to-info-dict-with-",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "e0033315510510acdba14e880a361ccca091fb4b",
+      "subject": "fix ParamType.to_info_dict() with no name"
+    },
+    {
+      "task_id": "T-e1d4fff02c-feat-evolve-autonomous-propose-g",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "e1d4fff02c6e479cdb7e1eb2552b2e8e303a8cbd",
+      "subject": "feat(evolve): autonomous propose->gate->promote/reject loop"
+    },
+    {
+      "task_id": "T-ebe6018e32-ci-hotfixes-5136",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "ebe6018e3254629788376e619207719fbe34a849",
+      "subject": "CI Hotfixes (#5136)"
+    },
+    {
+      "task_id": "T-ecb99836a4-echo-doesn-t-fail-with-no-stream",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "ecb99836a44367bad62960045d586e31e4a95766",
+      "subject": "echo doesn't fail with no streams"
+    },
+    {
+      "task_id": "T-ee4feaaa99-expand-patterns-in-windows-args",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ee4feaaa99a50831fb52963a08e16c9d3e70aacd",
+      "subject": "expand patterns in Windows args"
+    },
+    {
+      "task_id": "T-ee56925bc4-fix-is-bool-flag-being-set-to-tr",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ee56925bc4f5451a125317e183f498e8bd1aecb3",
+      "subject": "Fix is_bool_flag being set to True even if is_flag is False"
     },
     {
       "task_id": "T-ef439eb779-prevent-response-self-reference-",
@@ -393,6 +1051,20 @@
       "subject": "fix(providers): detect tunneled Ollama profiles; cap local-model steps"
     },
     {
+      "task_id": "T-f2ae679984-use-the-value-of-enum-choices-to",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "f2ae679984c3dfaa0c7639686cd793f59eb4d9b8",
+      "subject": "Use the value of Enum choices to render default"
+    },
+    {
+      "task_id": "T-f2e579ab18-shell-completion-prioritizes-opt",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "f2e579ab187ca8fdfbe6ce86de08f0e9f62fe4ae",
+      "subject": "shell completion prioritizes option values over new options"
+    },
+    {
       "task_id": "T-f316d5cb3a-land-the-progress-bar-on-its-fin",
       "split": "train",
       "status": "verified",
@@ -400,11 +1072,39 @@
       "subject": "Land the progress bar on its final position"
     },
     {
+      "task_id": "T-f3a4363d1e-flush-sys-stderr-when-clirunner-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "f3a4363d1e8383df496adb31f2a6ed037f85380c",
+      "subject": "flush sys.stderr when CliRunner.invoke finalizes"
+    },
+    {
+      "task_id": "T-f6f8976900-use-decorator-to-pause-echo",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "f6f8976900d9c9d65e82d61477a626545c58f054",
+      "subject": "use decorator to pause echo"
+    },
+    {
+      "task_id": "T-f82ee1ff81-getting-default-value-doesn-t-pe",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "f82ee1ff81bd466493d8746a0146065c306da747",
+      "subject": "getting default value doesn't perform type cast"
+    },
+    {
       "task_id": "T-fc6c7c47ed-funcparamtype-should-use-valueer",
       "split": "val",
       "status": "verified",
       "source_commit": "fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1",
       "subject": "`FuncParamType` should use `ValueError` message in `self.fail()` (#3211)"
+    },
+    {
+      "task_id": "T-fcd85032cf-add-functionality-to-hide-the-pr",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "fcd85032cff78aa536a6d2b455fb83bfcc02b228",
+      "subject": "Add functionality to hide the progress bar #2609 (#2727)"
     },
     {
       "task_id": "T-fd628095d7-preserve-leading-slashes-in-requ",

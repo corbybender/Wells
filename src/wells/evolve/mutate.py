@@ -224,6 +224,7 @@ def _draft_candidate(
     import tempfile
 
     from wells import principles
+    from wells.evolve import corpus
     from wells.evolve.runner import _HeartbeatWriter, _run_harness, list_results
     from wells.evolve.schema import TaskSpec
 
@@ -231,8 +232,18 @@ def _draft_candidate(
     if hb:
         hb.write(status="running", phase="draft")
 
-    failure_notes: list[str] = []
-    for p in list_results(workspace)[:2]:
+    # Pull from the last few result files (not just 2) and separate
+    # failures by *kind* (timeout vs wrong-answer vs harness error) with an
+    # aggregate count up front — a mutation that only sees "these tasks
+    # failed" has no way to tell "the model got the wrong answer" apart
+    # from "the model ran out of time before finishing," which call for
+    # opposite fixes (better reasoning vs tighter time budgeting). Include
+    # each failing task's actual problem statement (not just its id) so
+    # the draft has real signal about what kind of work is failing, not
+    # just an opaque status code.
+    by_kind: dict[str, list[dict]] = {}
+    seen_task_ids: set[str] = set()
+    for p in list_results(workspace)[:5]:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
@@ -240,37 +251,86 @@ def _draft_candidate(
         for row in data.get("tasks", []):
             if row.get("resolved"):
                 continue
-            failure_notes.append(
-                f"- task {row.get('task_id')}: status={row.get('harness_status')} "
-                f"error={(row.get('error') or '')[:150]}"
-            )
-    failures_block = "\n".join(failure_notes[:10]) or "(no recorded bench failures found)"
+            tid = row.get("task_id", "")
+            if tid in seen_task_ids:
+                continue  # same task failing in an earlier result file — count once
+            seen_task_ids.add(tid)
+            kind = row.get("harness_status") or "unknown"
+            by_kind.setdefault(kind, []).append(row)
+
+    total_failures = sum(len(v) for v in by_kind.values())
+    if total_failures:
+        # TaskResult rows don't carry the problem statement (only
+        # task_id/status/error) — look it up from the corpus so the draft
+        # sees actual task content, not just an opaque id and status code.
+        problem_by_id = {t.task_id: t.problem_statement for t in corpus.load_corpus(workspace)}
+        counts_line = ", ".join(f"{len(v)} {k}" for k, v in sorted(by_kind.items()))
+        detail_lines: list[str] = []
+        for kind, rows in sorted(by_kind.items()):
+            for row in rows[:5]:  # cap detail per kind, not just overall, so no one kind crowds out the rest
+                problem = (problem_by_id.get(row.get("task_id", "")) or "")[:200]
+                detail_lines.append(
+                    f"- [{kind}] task {row.get('task_id')}: {(row.get('error') or '')[:200]}\n"
+                    f"  problem: {problem}"
+                )
+        failures_block = (
+            f"{total_failures} distinct unresolved task(s) across recent runs "
+            f"({counts_line}):\n\n" + "\n".join(detail_lines[:15])
+        )
+    else:
+        failures_block = "(no recorded bench failures found)"
 
     current_text = principles.principles_text(workspace)
 
-    with tempfile.TemporaryDirectory() as td:
-        scratch = Path(td)
-        (scratch / "AGENT.md").write_text(current_text, encoding="utf-8")
-        goal = (
-            "Improve your own operating principles. The file AGENT.md in this "
-            "workspace is your behavioral constitution — read it, then rewrite "
-            "it (in place, via write_file) to better address these recent "
-            "bench-run failures:\n\n"
-            f"{failures_block}\n\n"
-            "Prior mutation attempts and their real, measured outcomes "
-            "(promote = beat baseline; reject = tied or lost) — do not "
-            "re-propose an idea already rejected here, and don't undo one "
-            "already promoted:\n\n"
-            f"{history_context or '(no prior mutations recorded)'}\n\n"
-            "Keep the tone and structure of the existing rules; make targeted "
-            "improvements, not a rewrite from scratch. Do not touch any other "
-            "file."
-        )
-        harness_kwargs = {"profile": profile, "timeout": timeout}
+    def _draft_once(extra_instruction: str = "") -> str:
+        with tempfile.TemporaryDirectory() as td:
+            scratch = Path(td)
+            (scratch / "AGENT.md").write_text(current_text, encoding="utf-8")
+            goal = (
+                "Improve your own operating principles. The file AGENT.md in this "
+                "workspace is your behavioral constitution — read it, then rewrite "
+                "it (in place, via write_file) to better address these recent "
+                "bench-run failures. If most failures are timeouts, the fix is "
+                "about time/scope budgeting, not correctness; if most are "
+                "wrong-answer, the fix is about verification or approach:\n\n"
+                f"{failures_block}\n\n"
+                "Prior mutation attempts and their real, measured outcomes "
+                "(promote = beat baseline; reject = tied or lost) — do not "
+                "re-propose an idea already rejected here, and don't undo one "
+                "already promoted:\n\n"
+                f"{history_context or '(no prior mutations recorded)'}\n\n"
+                "Keep the tone and structure of the existing rules; make targeted "
+                "improvements, not a rewrite from scratch. Do not touch any other "
+                "file. You MUST call write_file on AGENT.md with a concrete, "
+                "specific change before finishing — leaving the file exactly as "
+                "you found it is not an acceptable outcome, even if you are "
+                "unsure which change is best; make your best-supported bet."
+                f"{extra_instruction}"
+            )
+            harness_kwargs = {"profile": profile, "timeout": timeout}
+            if hb:
+                harness_kwargs["on_tick"] = lambda: hb.write(status="running", phase="draft")
+            _run_harness(str(scratch), goal, **harness_kwargs)
+            return (scratch / "AGENT.md").read_text(encoding="utf-8")
+
+    candidate_text = _draft_once()
+    if candidate_text == current_text:
+        # A no-op draft can't ever be a real improvement — gate_mutation
+        # would just skip it and force-reject (see its own no-op guard),
+        # burning a whole autoloop cycle for nothing. One retry with a
+        # harder, more explicit nudge is cheap relative to that (a single
+        # extra LLM call vs. a wasted cycle slot) and empirically recovers
+        # some of these: 2 of 8 real cycles in the 2026-08-26/28 run
+        # produced an identical-text candidate on the first attempt.
         if hb:
-            harness_kwargs["on_tick"] = lambda: hb.write(status="running", phase="draft")
-        _run_harness(str(scratch), goal, **harness_kwargs)
-        return (scratch / "AGENT.md").read_text(encoding="utf-8")
+            hb.write(status="running", phase="draft-retry")
+        candidate_text = _draft_once(
+            "\n\nYour previous attempt made ZERO changes to this file — that is "
+            "the one outcome that is never acceptable here. Pick the single "
+            "most promising failure above and make one concrete, targeted "
+            "edit that addresses it, however small."
+        )
+    return candidate_text
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +350,7 @@ def gate_mutation(
     bench_home: Path | None = None,
     resume: bool = False,
     heartbeat_path: str | Path | None = None,
+    workers: int = 1,
     log=print,
 ) -> MutationManifest:
     """Run baseline vs. candidate bench passes over ``split`` and a replay
@@ -304,7 +365,12 @@ def gate_mutation(
     run_bench` call is itself checkpointed per-task (see its own
     docstring), so nothing earlier than the one task in flight when the
     process died is ever redone. ``heartbeat_path``, if given, is passed
-    straight through to both passes.
+    straight through to both passes. ``workers`` is passed straight
+    through to :func:`~wells.evolve.runner.run_bench` — this is a remote-
+    LLM-latency-bound workload, not local-compute-bound, so running
+    several tasks concurrently is the actual lever for wall-clock time,
+    not local CPU/GPU (see run_bench's own docstring for why this is
+    safe: each task is fully isolated in its own subprocess/worktree).
     """
     from wells import principles, traces
     from wells.evolve import corpus
@@ -365,14 +431,14 @@ def gate_mutation(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
         task_filter=task_filter, bench_home=bench_home, extra_env=baseline_env,
         bench_id=f"{mutation_id}-baseline", resume=resume, heartbeat_path=heartbeat_path,
-        log=log,
+        workers=workers, log=log,
     )
     log(f"[evolve {mutation_id}] candidate pass (split={split!r}) ...")
     candidate_run = run_bench(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
         task_filter=task_filter, bench_home=bench_home, extra_env=candidate_env,
         bench_id=f"{mutation_id}-candidate", resume=resume, heartbeat_path=heartbeat_path,
-        log=log,
+        workers=workers, log=log,
     )
 
     # Replay is a free, no-LLM sanity check over the recorded trace corpus.

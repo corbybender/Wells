@@ -47,7 +47,7 @@ def _fake_propose(workspace, rationale, *, auto=False, profile="", timeout=0,
 def _fake_gate_factory(recommendation: str):
     def _fake_gate(mutation_id, workspace, *, split="val", profile="", seeds=1,
                     timeout=0, task_filter="", bench_home=None, resume=False,
-                    heartbeat_path=None, log=print):
+                    heartbeat_path=None, workers=1, log=print):
         m = mutate.load_manifest(mutation_id)
         m.status = "gated"
         m.baseline_bench = {"pass_at_1_wilson_lb": 0.5}
