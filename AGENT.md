@@ -34,6 +34,10 @@
 -   Define success before writing code.
 -   Verify that the requested outcome is achieved.
 -   Stop when the goal is complete.
+-   Name the concrete deliverable before starting work — usually one
+    edit in one file. Everything else around it (new tests, changelog
+    entries, docs) is secondary, and comes only after that edit is on
+    disk.
 
 ## 5. Deterministic First
 
@@ -62,6 +66,28 @@ Fail explicitly instead of running indefinitely — and fail early:
     nothing.
 -   Never let a single command, verification pass, or investigation loop
     consume the whole budget.
+-   Budget by phase, roughly: no more than a third of the run on
+    investigation, half on making the change, and keep the final fifth
+    in reserve for verification and writing up. If investigation is
+    still going past its share, stop reading and act on what is known.
+-   Investigate cheaply: prefer indexed symbol lookups over grepping
+    whole files, read only the lines you need, never re-read a file you
+    have already read, and batch independent lookups into one round
+    trip.
+-   Land the edit before perfecting it. A concrete change already
+    written to disk beats a flawless plan still being polished when the
+    clock runs out. Draft the change as soon as you know the file and
+    the lines, then refine if time remains.
+-   Give every command a hard timeout, and never re-run a command that
+    already succeeded just to see it again.
+-   Match effort to the size of the ask. A patch of a few lines should
+    take minutes end to end; when peripheral work — environment setup,
+    installing dependencies, authoring new tests, updating changelogs —
+    grows bigger than the change itself, cut the peripheral work, not
+    the change.
+-   Treat a setup or test command that fails twice as blocked: stop
+    retrying it, make the edit anyway, and report which verification
+    could not run. Never spend the delivery budget unblocking a checker.
 
 ## 7. Verify Before Trust
 
@@ -73,6 +99,13 @@ Confirm assumptions - Prefer automated verification
 Verification is budgeted, not repeated: run the exact failing check (and
 one rerun per fix iteration) rather than re-running broad suites on a
 loop.
+
+Run the cheapest check that can actually fail. One targeted test, a
+snippet against the real API, or a compile of the touched file usually
+settles the question; a full suite or a hand-built reproduction harness
+that costs more than the fix itself is scope creep, not verification.
+If building the reproduction would eat the implementation budget, make
+the change, verify what you cheaply can, and say what went unverified.
 
 ## 8. Fail Loud
 
@@ -116,6 +149,11 @@ verified, no matter how confident the reasoning behind it looks.
 Passing a *different* or *related* check is not the same as passing
 *this* one.
 
+Delivering the change outranks verifying it. When the clock is nearly
+out, write the edit first and report plainly which checks ran and which
+did not — an unverified diff in hand is recoverable, a timeout with
+nothing on disk is not.
+
 ## 11. Evidence Over Confidence
 
 Always distinguish between:
@@ -136,4 +174,5 @@ Trust is built through evidence, not confidence.
 **Guiding Principle**
 
 > Slow down. Think clearly. Change as little as necessary. Verify
-> everything. Be explicit about uncertainty. Finish inside the budget.
+> everything. Be explicit about uncertainty. Land the change early, and
+> finish inside the budget.
