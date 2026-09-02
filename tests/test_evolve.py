@@ -549,6 +549,98 @@ def test_run_bench_supports_a_split_spanning_multiple_repos(
     assert run.summary["resolved"] == 2
 
 
+def test_run_bench_workers_parallelizes_and_checkpoints_safely(
+    repo_with_fix: Path, tmp_path: Path, monkeypatch
+):
+    """workers>1 must (a) actually run concurrently — proven by wall-clock
+    time dropping below what two serial 0.3s tasks would take — and (b)
+    still leave a fully correct, race-free checkpointed result: every
+    (task_id, seed) pair recorded exactly once, no lost or duplicated
+    rows despite concurrent completions writing to the same result file."""
+    r2 = tmp_path / "repo2"
+    r2.mkdir()
+    _git(r2, "init", "-q")
+    _git(r2, "config", "user.email", "t@example.com")
+    _git(r2, "config", "user.name", "t")
+    (r2 / "mul.py").write_text(
+        "def mul(a, b):\n    return a + b  # bug\n", encoding="utf-8"
+    )
+    _commit(r2, "initial multiplier")
+    (r2 / "mul.py").write_text("def mul(a, b):\n    return a * b\n", encoding="utf-8")
+    (r2 / "test_mul.py").write_text(
+        "from mul import mul\n\n\ndef test_mul():\n    assert mul(2, 3) == 6\n",
+        encoding="utf-8",
+    )
+    _commit(r2, "fix mul() to multiply instead of add")
+
+    ws = tmp_path / "ws_parallel"
+    ws.mkdir()
+    admitted1, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench1", log=lambda *a, **k: None,
+    )
+    admitted2, _ = evolve.mine_corpus(
+        str(r2), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench2", log=lambda *a, **k: None,
+    )
+    assert len(admitted1) == 1 and len(admitted2) == 1
+    tasks_dir = corp.tasks_dir(str(ws))
+    for t in (admitted1[0], admitted2[0]):
+        t.split = "val"
+        t.save(tasks_dir)
+
+    import time as _time
+
+    def slow_fake_run_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        _time.sleep(0.3)  # each "task" takes 0.3s of wall time
+        calc = Path(worktree) / "calc.py"
+        mul = Path(worktree) / "mul.py"
+        if calc.exists():
+            calc.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        if mul.exists():
+            mul.write_text("def mul(a, b):\n    return a * b\n", encoding="utf-8")
+        return {"status": "complete", "tokens": {"total": 10}}
+
+    monkeypatch.setattr(run_mod, "_run_harness", slow_fake_run_harness)
+
+    # Measure serial (workers=1) first, as the fair per-environment baseline
+    # — real per-task overhead (git worktree add/remove etc.) varies by
+    # machine/CI, so comparing against a hardcoded wall-clock threshold
+    # would be flaky. Two independent bench_ids/bench_homes so neither run
+    # sees the other's checkpoint.
+    t0 = _time.time()
+    serial_run = evolve.run_bench(
+        str(ws), "val", bench_home=tmp_path / "bench_serial", workers=1,
+        log=lambda *a, **k: None,
+    )
+    serial_elapsed = _time.time() - t0
+    assert serial_run.summary["tasks"] == 2
+
+    t0 = _time.time()
+    run = evolve.run_bench(
+        str(ws), "val", bench_home=tmp_path / "bench_run", workers=2,
+        log=lambda *a, **k: None,
+    )
+    elapsed = _time.time() - t0
+
+    # workers=2 running two independent tasks concurrently must take
+    # meaningfully less wall time than running them one at a time —
+    # generous margin (25% faster) for scheduling/test-env jitter while
+    # still failing if the "parallel" path is secretly serial.
+    assert elapsed < serial_elapsed * 0.75, (
+        f"workers=2 ({elapsed:.2f}s) was not meaningfully faster than "
+        f"workers=1 ({serial_elapsed:.2f}s) — parallel path may be serial"
+    )
+
+    assert run.summary["tasks"] == 2
+    assert run.summary["resolved"] == 2
+    saved = ws / ".wells" / "bench" / "results" / f"{run.bench_id}.json"
+    reloaded = run_mod.BenchRun.load(saved)
+    recorded_ids = sorted(r.task_id for r in reloaded.tasks)
+    assert recorded_ids == sorted([admitted1[0].task_id, admitted2[0].task_id])
+    assert len(reloaded.tasks) == 2  # no duplicate/lost rows from the race
+
+
 # ---------------------------------------------------------------------------
 # Token recovery on timeout/crash (the child never printed its own JSON)
 # ---------------------------------------------------------------------------

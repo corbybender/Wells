@@ -144,6 +144,40 @@ def test_propose_mutation_auto_uses_stubbed_harness(tmp_path: Path, monkeypatch)
     assert Path(m.candidate_path).read_text(encoding="utf-8") == "# Drafted\n"
 
 
+def test_propose_mutation_auto_retries_once_on_a_no_op_draft(tmp_path: Path, monkeypatch):
+    """A draft that makes zero edits (candidate == current principles text)
+    can never be a real improvement — gate_mutation would just skip it and
+    force-reject. One retry with a harder nudge is cheap relative to
+    burning a whole autoloop cycle on nothing; this proves the retry
+    actually happens and can recover a real edit on the second attempt."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    from wells import principles
+
+    current_text = principles.principles_text(str(ws))
+    calls: list[str] = []
+
+    def fake_run_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        calls.append(problem)
+        agent_path = Path(worktree) / "AGENT.md"
+        if len(calls) == 1:
+            # First attempt: no-op — leaves the seeded file untouched.
+            return {"status": "complete", "tokens": {"total": 10}}
+        # Second attempt (the retry): a real, distinct edit.
+        agent_path.write_text(current_text + "\n- a genuinely new rule\n", encoding="utf-8")
+        return {"status": "complete", "tokens": {"total": 10}}
+
+    monkeypatch.setattr(run_mod, "_run_harness", fake_run_harness)
+    m = mutate.propose_mutation(str(ws), "auto-draft", auto=True)
+
+    assert len(calls) == 2  # first (no-op) + one retry, not more
+    assert "ZERO changes" in calls[1]  # retry prompt carries the harder nudge
+    candidate_text = Path(m.candidate_path).read_text(encoding="utf-8")
+    assert candidate_text != current_text
+    assert "a genuinely new rule" in candidate_text
+
+
 # ---------------------------------------------------------------------------
 # Gate
 # ---------------------------------------------------------------------------
