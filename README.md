@@ -57,17 +57,33 @@ Re-running the installer updates an existing install.
 **Already have `uv` or `pipx`?** Skip the script:
 
 ```bash
-uv tool install git+https://github.com/corbybender/Wells.git && wells config
+uv tool install wells-agent && wells config      # from PyPI
+# or, tracking the repo:  uv tool install git+https://github.com/corbybender/Wells.git
 ```
+
+Wells is published on PyPI as [`wells-agent`](https://pypi.org/project/wells-agent/)
+(the bare name `wells` was taken by an unrelated package; the `wells` *command*
+is unchanged). That gives you versioned installs, `uvx wells-agent` for a
+no-install trial run, and a corporate-proxy-friendly path.
+
+**No Python at all?** Every release also ships standalone binaries:
+
+```bash
+# https://github.com/corbybender/Wells/releases  -> wells-<version>-<platform>
+```
+
+Unzip, put the `wells` folder on your `PATH`, run `wells config`. These are
+self-contained (no Python, no uv, no venv) and start instantly.
 
 **Which install path fits you?**
 
 | You want ... | Use |
 |---|---|
 | It to just work (default) | The one-liner above |
+| Versioned installs / `uvx` trials / corporate proxies | `uv tool install wells-agent` ([PyPI](https://pypi.org/project/wells-agent/)) |
+| No Python runtime at all, instant cold start | [Standalone binary](#get-started-in-one-command) from Releases |
 | No global install — run Wells against one project from a clone | [Option A](#option-a---cloned-standalone-no-install-needed) |
 | To embed Wells inside another project's folder | [Option B](#option-b---drive-a-different-project-embedding) |
-| `uv`/`pipx` already installed | `uv tool install git+https://github.com/corbybender/Wells.git` |
 | Every knob and prerequisite explained | [Quick start](#quick-start) |
 
 ## Contents
@@ -731,7 +747,7 @@ entirely.
 `AGENTS.md` lessons and Reflexion critiques are Wells's own memory layers.
 On top of them, Wells embeds
 [BigBrain](https://github.com/corbybender/bigbrain-memory) as a **durable
-transaction-log store** (optional dependency: `pip install 'wells[memory]'`;
+transaction-log store** (optional dependency: `pip install 'wells-agent[memory]'`;
 disable with `WELLS_BIGBRAIN=0`):
 
 - **Write**: the finisher appends every run's lesson (LEARNING) and reviewer
