@@ -1648,6 +1648,18 @@ def _run_executor_impl(
     # Cleared whenever a mutating call succeeds (conservative: any write may
     # have changed what any read would return).
     _readonly_seen: dict[str, tuple[int, int]] = {}
+    # ── Cumulative repetition guard ─────────────────────────────────────────
+    # The consecutive detector (`_last_call_repeat`) only fires on an unbroken
+    # run of one identical call. A loop that alternates between two actions
+    # resets it every round and can run forever — measured on a live bench run:
+    # 4,609 tool calls in one hour, 856 of them reads of the same throwaway
+    # file, with the agent alternating read_file → list_dir → read_file.
+    # This counter is cumulative per *target* (path/pattern, not exact args, so
+    # paging through one file still counts) and is cleared for a path only when
+    # a mutation touches it.
+    _repeat_hits: dict[str, int] = {}
+    _REPEAT_WARN = int(os.environ.get("WELLS_REPEAT_WARN", "4"))
+    _REPEAT_STOP = int(os.environ.get("WELLS_REPEAT_STOP", "8"))
 
     def _stopped(reason: str, summary: str) -> ExecutorResult:
         return ExecutorResult(
@@ -2403,6 +2415,12 @@ def _run_executor_impl(
                     _readonly_seen[call_key] = (rounds, steps)
             elif result.ok and not result.simulated:
                 _readonly_seen.clear()  # a successful mutation may change any read
+                # ...and it invalidates repetition memory for the path it
+                # touched: re-reading a file you just wrote is legitimate.
+                _touched = str(args.get("path") or args.get("file") or "")
+                if _touched:
+                    for _k in [k for k in _repeat_hits if _touched in k]:
+                        del _repeat_hits[_k]
             # dispatch() can block for a while (a shell command, a subagent);
             # check again right after it returns instead of waiting for the
             # top of the next round — a cancel that landed mid-command should
@@ -2502,6 +2520,63 @@ def _run_executor_impl(
                     f"{_last_call_repeat}× with identical args — model "
                     f"told to change approach[/bold yellow]",
                 )
+
+            # ── Cumulative repetition guard ──────────────────────────────────
+            # Catches the loop the consecutive detector structurally cannot see:
+            # alternating between two read-only actions forever. Coaches at
+            # _REPEAT_WARN, stops the run at _REPEAT_STOP (after handing the
+            # transcript to the escalation profile, when one is configured).
+            if name in _readonly_names and name in (
+                "read_file", "list_dir", "grep", "glob", "list_symbols",
+                "find_symbol",
+            ):
+                _target = str(
+                    args.get("path")
+                    or args.get("pattern")
+                    or args.get("symbol")
+                    or ""
+                )
+                _rkey = f"{name}:{_target}"
+                _rhits = _repeat_hits[_rkey] = _repeat_hits.get(_rkey, 0) + 1
+
+                if _rhits == _REPEAT_WARN:
+                    obs_text = obs_text + (
+                        f"\n\n[HARNESS: This is call #{_rhits} to {name} on "
+                        f"'{_target}' in this run (not necessarily in a row). "
+                        f"Repeating it will not reveal anything new. Stop "
+                        f"gathering and make a change, run the relevant test, "
+                        f"or state the blocker in plain text with no tool "
+                        f"call.]"
+                    )
+                    _ui(
+                        "warn",
+                        f"  [bold yellow]⚠ {name} on '{_target}' called "
+                        f"{_rhits}× this run — model told to stop "
+                        f"re-reading[/bold yellow]",
+                    )
+                elif _rhits >= _REPEAT_STOP:
+                    messages.append(
+                        _tool_message(
+                            obs_text, tool_call_id=tcid, name=name,
+                            ai_message=resp,
+                        )
+                    )
+                    if _try_escalate(
+                        f"called {name} on '{_target}' {_rhits}× without "
+                        f"progress"
+                    ):
+                        break
+                    _ui(
+                        "warn",
+                        f"  [bold red]⛔ stuck loop — {name} on "
+                        f"'{_target}' ran {_rhits}× without progress, "
+                        f"stopping the run[/bold red]",
+                    )
+                    return _stopped(
+                        "stuck_loop",
+                        f"(stopped: {name} on '{_target}' ran {_rhits}× "
+                        f"without making progress)",
+                    )
 
             if rules_engine is not None and decision is not None:
                 # Liability transitions apply only after the command actually
