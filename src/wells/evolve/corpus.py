@@ -325,6 +325,8 @@ def _run_tests_in(
                     text=True,
                     timeout=_SETUP_TIMEOUT,
                     env=env,
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except Exception:
                 return None, f"environment_setup failed: {cmd}"
@@ -446,7 +448,9 @@ def load_corpus(workspace: str) -> list[TaskSpec]:
 
 
 def list_tasks(workspace: str, split: str = "all") -> list[TaskSpec]:
-    tasks = load_corpus(workspace)
+    tasks = [
+        t for t in load_corpus(workspace) if t.status != "rejected"
+    ]  # quarantined tasks stay on disk (audit trail) but never run
     if split == "all":
         return tasks
     return [t for t in tasks if t.split == split]

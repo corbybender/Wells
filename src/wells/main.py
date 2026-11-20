@@ -931,7 +931,10 @@ def _run_bench_cmd(args: list[str]) -> None:
     if not args:
         print(
             "usage: wells bench mine [--workspace REPO] [--max N] [--skip-validation]\n"
+            "                         [--env-setup CMD]  (repeatable; run in the\n"
+            "                         validation worktree, e.g. --env-setup 'uv sync')\n"
             "       wells bench list [--split train|val|blind|all]\n"
+            "       wells bench quarantine ID  (exclude a structurally unreliable task)\n"
             "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
             "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
             "       wells bench results [ID]"
@@ -947,12 +950,22 @@ def _run_bench_cmd(args: list[str]) -> None:
         max_tasks_s, rest = _pop_flag_value("--max", rest)
         max_tasks = int(max_tasks_s) if max_tasks_s else 50
         skip_validation = "--skip-validation" in rest
+        # Repeatable --env-setup CMD: commands run inside the throwaway
+        # validation worktree before tests (dependency install for repos a
+        # bare checkout can't run: 'uv sync', 'pip install -e .', 'npm ci').
+        env_setup: list[str] = []
+        while True:
+            v, rest = _pop_flag_value("--env-setup", rest)
+            if v is None:
+                break
+            env_setup.append(v)
         try:
             tasks, stats = corpus.mine_corpus(
                 repo_root,
                 workspace,
                 max_tasks=max_tasks,
                 skip_validation=skip_validation,
+                env_setup=env_setup or None,
             )
         except RuntimeError as e:
             print(f"ERROR: {e}")
@@ -965,6 +978,25 @@ def _run_bench_cmd(args: list[str]) -> None:
         for t in tasks:
             first_line = t.problem_statement.splitlines()[0][:70]
             print(f"  {t.task_id}  [{t.split}]  {first_line!r}")
+        return
+
+    if sub == "quarantine":
+        # Mark a task rejected: it stays on disk for audit but is excluded
+        # from list/run/gate. Use for tasks that are structurally unreliable
+        # on this host (e.g. a base commit that predates a bug the task's
+        # own verification triggers) — quarantine beats loosening the gate.
+        if not rest:
+            print("usage: wells bench quarantine TASK_ID_PREFIX")
+            sys.exit(2)
+        prefix = rest[0]
+        matches = [t for t in corpus.load_corpus(workspace) if t.task_id.startswith(prefix)]
+        if not matches:
+            print(f"No task matches {prefix!r}.")
+            sys.exit(1)
+        for t in matches:
+            t.status = "rejected"
+            t.save(corpus.tasks_dir(workspace))
+            print(f"quarantined {t.task_id} (excluded from bench runs and evolve gates)")
         return
 
     if sub == "list":

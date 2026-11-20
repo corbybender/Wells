@@ -37,6 +37,10 @@ def git(
         proc = subprocess.run(
             ["git", *args], cwd=cwd, capture_output=True, text=True,
             timeout=timeout, env=env,
+            # Explicit UTF-8: on Windows text=True alone decodes with the
+            # locale codec (cp1252), which crashes the reader thread on any
+            # non-ASCII commit subject (em-dashes, CJK…) — git outputs UTF-8.
+            encoding="utf-8", errors="replace",
         )
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"

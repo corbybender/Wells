@@ -44,7 +44,7 @@ global install, or want the full walkthrough of every option? →
 
 ## Contents
 
-- [How Wells compares](#how-wells-compares) — [vs Aider](#vs-aider) · [vs OpenHands](#vs-openhands) · [vs OpenCode](#vs-opencode) · [vs Claude Code](#vs-claude-code) · [vs Cursor](#vs-cursor)
+- [How Wells compares](#how-wells-compares) — [vs Aider](#vs-aider) · [vs OpenHands](#vs-openhands) · [vs OpenCode](#vs-opencode) · [vs Claude Code](#vs-claude-code) · [vs Cursor](#vs-cursor) · [vs the 2026 harnesses](#vs-the-2026-first-party-harnesses-codex-kimi-code-grok-build-deepseek-harness) (Codex / Kimi Code / Grok Build / DSH)
 - [What it does](#what-it-does) — the planner→coder→tester→reviewer graph
 - [The TUI](#the-tui) — commands, keyboard shortcuts, the info panel
 - [Provider profiles](#provider-profiles-model-agnostic) — model-agnostic setup
@@ -52,16 +52,18 @@ global install, or want the full walkthrough of every option? →
 - [CLI](#cli)
 - [Scheduled runs](#scheduled-runs) — unattended recurring runs (Task Scheduler / cron)
 - [Notifications & daily spend cap](#notifications--daily-spend-cap) — desktop/webhook alerts, cross-run budget
-- [Safety model](#safety-model) — auto / approve / dryrun / plan / sandbox
+- [Safety model](#safety-model) — auto / approve / dryrun / plan / sandbox (+ auto-upgrade)
 - [Operating rules](#operating-rules--deterministic-not-hopeful) — deterministic enforcement + permission allowlists
 - [Repository index](#repository-index-wells-index) (`wells-index`)
 - [Behavioral principles](#behavioral-principles-agentmd) (`AGENT.md`)
 - [Global user memory](#global-user-memory) — standing preferences across every project
+- [Durable project memory — BigBrain](#durable-project-memory--bigbrain) — transaction-log lessons, curated compile, `memory_search` recall
 - [Agent capabilities](#agent-capabilities)
-  - [Skills](#skills--load-on-demand-know-how) · [CodeAct](#codeact--let-it-compute) · [Browser](#browser--drive-a-real-js-rendered-session)
+  - [Skills](#skills--load-on-demand-know-how) (incl. cross-harness packs) · [CodeAct](#codeact--let-it-compute) · [Code Mode](#code-mode--compose-many-tool-calls-into-one) · [Browser](#browser--drive-a-real-js-rendered-session)
   - [Background agents](#background-agents--concurrent-fan-out) · [Subagent personas](#subagent-personas--custom-specialist-identities) · [Model-driven todo list](#model-driven-todo-list)
 - [Self-improvement](#self-improvement--reflexion-auto-skill-authoring--seacs-evolution) — [Reflexion](#reflexion--persistent-failure-critiques) (failure critiques) · [Auto-skill authoring](#auto-skill-authoring--package-verified-runs-into-reusable-skills) (proven-run → skill proposals) · [SEACS bench + evolve](#seacs--oracle-scored-bench--agentmd-evolution) (mine a task corpus, gate AGENT.md mutations against it)
 - [MCP — server and client](#mcp--server-and-client)
+- [ACP — drive Wells from your editor](#acp--drive-wells-from-your-editor) (`wells-acp`, Zed/JetBrains)
 - [Project structure](#project-structure)
 - [Configuration reference](#configuration-reference)
 - [Token & cost optimization](#token--cost-optimization)
@@ -117,8 +119,12 @@ built on overlapping ideas, not a one-sided list.
 | | OpenCode | Wells |
 |---|---|---|
 | Test verification | Model-driven (runs tests via its own tool calls, no ground-truth gate) | **Deterministic test-gate**: the real suite's exit code is ground truth — a green suite skips the LLM interpretation pass entirely, and post-edit self-heal (fast: ruff/`node --check`/JSON-parse; optional semantic: pyright/`tsc`/`cargo check`/`go vet`) catches broken syntax *and* type errors the same round |
-| Sandboxing | Permission gating (allow/deny/ask); no container/VM isolation found | `sandbox` mode: `run_command` and `run_code` execute in a disposable Podman/Docker container, picked explicitly per run |
+| Code Mode | Experimental `execute` tool (MCP tools as JS functions) | **`program` tool**: Python, *all* harness tools callable — and every inner call passes the safety gate/deny-lists inside the program |
+| Sandboxing | Permission gating (allow/deny/ask); no container/VM isolation found | `sandbox` mode: disposable Podman/Docker container; with `WELLS_SANDBOX_AUTO=1` the default `auto` policy upgrades itself whenever a runtime is available |
+| Skill portability | Reads `.claude/skills` + `.agents/skills` | Reads `.claude`/`.agents`/`.codex` skill dirs (workspace + user-global) — packs written for Claude Code/Codex/Kimi work unmodified |
+| Editor integration | Desktop app / IDE integrations | **ACP server** (`wells-acp`) — any ACP client (Zed, JetBrains) drives Wells; plus the MCP server mode below |
 | MCP | Client only (connects out to MCP servers) | **Server** (drive Wells from Claude Code/OpenCode/other CLIs) *and* **client** |
+| Durable project memory | Session-scoped | **BigBrain transaction-log memory**: every finished run appends lessons/invariants to a locked log, deterministically compiled into curated memory, recallable via the `memory_search` tool |
 | Unattended operation | Not found | `wells schedule` — Task Scheduler/cron, no live process required, with completion notifications (desktop/webhook) and a cross-run daily spend cap |
 | Code intelligence | Live LSP servers per language (accurate, but a process to start/maintain per language) | Precomputed Rust structural index (`wells-index`) — `find_symbol`/`find_references`/`find_callers` in one lookup, ~98% fewer tokens than a live search; a different tradeoff (speed + low overhead vs. a language server's live accuracy), not a strict upgrade |
 | Parallel work | Subagents (blocking) | Both blocking (`parallel_research`) *and* non-blocking (`bg_start`/`bg_status`/`bg_collect`) fan-out, plus `fleet` — N full parallel worktree attempts at the same task, pick the winner |
@@ -135,7 +141,9 @@ further:
 |---|---|---|
 | Provider | Anthropic's Claude only | Any of them — Claude, OpenAI, Gemini, Z.ai, OpenRouter, any OpenAI-compatible endpoint, or fully local (Ollama/vLLM), switchable per task, not a one-time choice |
 | Test verification | Model decides whether/when to run tests via its own Bash calls | **Deterministic test-gate** + automatic post-edit self-heal — enforced by the harness, not left to model judgment |
-| Sandboxing | Bash tool runs on the host directly (as far as the CLI itself exposes) | `sandbox` mode: disposable Podman/Docker container per run, opt-in |
+| Sandboxing | Bash tool runs on the host directly (as far as the CLI itself exposes) | `sandbox` mode: disposable Podman/Docker container per run — opt-in, or auto-upgrade from `auto` with `WELLS_SANDBOX_AUTO=1` |
+| Editor integration | First-party VS Code/JetBrains extensions | **ACP server** (`wells-acp`) — any ACP-capable editor (Zed, JetBrains, custom clients) drives the full pipeline over stdio |
+| Long-term project memory | Auto-memory notes | **BigBrain transaction log** — locked append + deterministic compile into curated memory; planner recallable via `memory_search`; Reflexion failure critiques mirrored in automatically |
 | Unattended operation | Cloud-hosted scheduled routines (Anthropic's infrastructure, needs an account/plan tier) | `wells schedule` — your own machine's Task Scheduler/cron, no cloud dependency; completion notifications + a cross-run daily spend cap guard against a stuck/runaway recurring goal |
 | Parallel fan-out | Task-tool subagent delegation (blocking) | Blocking *and* non-blocking (`bg_start`), plus `fleet` — N parallel worktree attempts, pick the winner, merge or discard |
 | Code intelligence | Grep/Glob live search each time | Precomputed structural index (`wells-index`) — exact file:line answers, ~98% fewer tokens per lookup |
@@ -159,6 +167,29 @@ MCP support) — just wrapped in a GUI editor instead of a terminal.
 | Persistent instructions | `.cursor/rules` — static context injected at the start of every prompt | Both static (`AGENT.md`/`AGENTS.md`/`RULES.md`, prompt-injected) *and* a stateful liability ledger + tool-boundary enforcement that runs *before* a call, not just prompted |
 | Test verification | Not found as a distinct ground-truth gate | **Deterministic test-gate** + automatic post-edit self-heal |
 | MCP | Client only (confirmed); no evidence of an MCP server mode | **Server** *and* **client** |
+
+### vs the 2026 first-party harnesses (Codex, Kimi Code, Grok Build, DeepSeek Harness)
+
+The field has since filled with vendor-built harnesses — OpenAI's **Codex**,
+Moonshot's **Kimi Code**, xAI's **Grok Build**, and DeepSeek's **DSH**. They're
+converging on a shared template (single agent loop + AGENTS.md/SKILL.md/MCP
+portability + wide subagent fan-out) and competing on models and scale. Wells
+differ on architecture, not just polish:
+
+| | The 2026 template | Wells |
+|---|---|---|
+| Agent structure | One agentic loop; agents = prompts + permission sets | **Staged graph** — planner/architect/coder/tester/reviewer as checkpointed nodes with deterministic routing (failing tests loop to the coder; simple+green skips review entirely) |
+| Ground truth | Model judges its own work (or a classifier approves) | **Deterministic test gate** — the suite's exit code routes the graph; post-edit self-heal fixes syntax/type errors the same round |
+| Tool latency | One tool call = one model round trip | **Code Mode** — one `program` call composes N tool calls, safety-gated inside the program |
+| Self-improvement | Config/memory tuning by hand | **SEACS evolution** — mine git history into an oracle-scored corpus, benchmark, and evolve the harness's own principles file with Wilson-bound gating |
+| Long-term memory | Flat memory files / session logs | **BigBrain transaction-log memory** — locked appends, deterministic compile, keyword recall, Reflexion mirroring |
+| Unattended operation | Cloud schedulers / dashboards | `wells schedule` on the OS's own scheduler + cross-run spend cap; `fleet` runs N parallel best-of-N attempts locally |
+| Lock-in | Each vendor's model ecosystem | Model-agnostic by design — 12+ provider profiles incl. fully local, switchable per task |
+
+Credit where due: they win on scale (Grok Build's 128–1,024-agent workflows,
+DSH's plugin ecosystem and community), polish, and first-party model tuning.
+Wells is the harness for people who want determinism, verification, and
+self-improvement in one self-hosted package.
 
 ## What it does
 
@@ -532,6 +563,14 @@ command) and reused for the rest of the session; `WELLS_SANDBOX_IMAGE`
 overrides the default `python:3.12-slim` image. Pick the mode with the new
 `/config` choice picker (arrow keys + Enter) or `/mode sandbox`.
 
+**Auto-upgrade to sandbox** (Codex-style sandbox-by-default, staged): with
+`WELLS_SANDBOX_AUTO=1`, the `auto` policy upgrades itself to `sandbox`
+whenever a container runtime is installed and its daemon answers — a cached
+reachability probe, checked once per process, with silent fallback to `auto`
+when no runtime is reachable. Explicit modes (`dryrun`, `approve`, `sandbox`)
+are never overridden. Opt-in today; enabling it as the shipped default is
+planned once the sandbox has soaked in real unattended runs.
+
 Two extra safety nets regardless of mode: every run **snapshots the working
 tree** (including untracked files) to a hidden git commit before starting —
 `/undo` restores it — and `MAX_RUN_TOKENS` hard-caps a run's spend.
@@ -659,6 +698,32 @@ modal TUI form). `type` is free-form categorization (conventional values:
 persona's `tools:` field. `WELLS_USER_MEMORY=0` disables the feature
 entirely.
 
+## Durable project memory — BigBrain
+
+`AGENTS.md` lessons and Reflexion critiques are Wells's own memory layers.
+On top of them, Wells embeds
+[BigBrain](https://github.com/corbybender/bigbrain-memory) as a **durable
+transaction-log store** (optional dependency: `pip install 'wells[memory]'`;
+disable with `WELLS_BIGBRAIN=0`):
+
+- **Write**: the finisher appends every run's lesson (LEARNING) and reviewer
+  gotchas (INVARIANT) to a **locked append-only log** under `.bigbrain/` —
+  crash-safe and safe under concurrent writers (fleet mode, background
+  agents), which direct file writes are not.
+- **Compile**: at session end the log is deterministically reconciled into
+  curated Markdown memory files — no LLM involved, no data loss possible by
+  design.
+- **Recall**: the read-only `memory_search` tool (available to the planner,
+  coder, reviewer, and read-only subagents) answers "how did similar work go
+  before?" from that curated memory before a plan is written.
+- **Reflexion mirror**: failure critiques are appended to the same log, so
+  "we already failed at this once" is keyword-recallable instead of hoping
+  the right prompt injection fires.
+
+Retrieval stays Wells-side: `semantic_search`/`wells-index` handle *code*;
+BigBrain search covers *decisions and learnings* only. Library-only
+embedding — BigBrain's CLI/installer/MCP surface is deliberately unused.
+
 ## Agent capabilities
 
 Three capability layers let Wells' agents *teach themselves*, *compute*, and
@@ -702,6 +767,13 @@ This is the natural complement to `AGENTS.md` memory:
 
 Each skill lives in `skills/<name>/SKILL.md` with YAML front-matter + markdown
 body:
+
+**Cross-harness compatibility**: Wells also discovers skills written for
+*other* harnesses — `<workspace>/.claude/skills/`, `.agents/skills/`,
+`.codex/skills/`, plus user-global `~/.claude/skills/` and
+`~/.agents/skills/`. Any Agent Skills pack built for Claude Code, Codex, or
+Kimi Code works unmodified; on a name collision your own `skills/` dir wins.
+Disable with `WELLS_CROSS_SKILLS=0`.
 
 ```markdown
 ---
@@ -861,6 +933,38 @@ anyone who wants it, without imposing it by default.
 |---|---|---|
 | `WELLS_CODEACT` | `1` | Expose the `run_code` tool (set `0` to disable) |
 | `CODEACT_TIMEOUT` | `30` | Max seconds for a single `run_code` execution |
+
+### Code Mode — compose many tool calls into one
+
+`run_code` computes; **Code Mode** (`program` tool) *orchestrates*. The model
+writes one Python program in which every registered harness tool is a plain
+callable on a `tools` object — turning a chain of dependent lookups from
+N model round trips (each 5–30s of token generation) into **one** turn of
+milliseconds-fast tool execution:
+
+```python
+program('''
+listing = tools.list_dir(path="src")
+api = tools.read_file(path="src/api.ts")
+callers = {n: tools.grep(pattern=n) for n in ["handleIssue", "closeIssue"]}
+RESULT = {"api_len": len(api), "callers": callers}
+''')
+```
+
+Every inner call dispatches through the ordinary tool pipeline, so **the
+safety gate, plan/dry-run modes, and deny-lists all apply inside the
+program** — permissions the model can't see past. Guardrails: restricted
+`exec` (no `open`/`exec`/`eval`/`__import__`; imports limited to pure
+computation stdlib), budgets (40 tool calls / 200k result chars / wall-clock
+timeout), cancel checked before every inner call. This is guardrails for
+well-behaved models, not a hard security boundary — the safety modes are the
+boundary. `WELLS_CODE_MODE=0` disables (recommended for weak/local model
+profiles, where orchestration code costs more than it saves).
+
+| Variable | Default | Description |
+|---|---|---|
+| `WELLS_CODE_MODE` | `1` | Expose the `program` tool |
+| `CODE_MODE_TIMEOUT` | `120` | Max seconds for one program execution |
 
 ### Browser — drive a real, JS-rendered session
 
@@ -1347,6 +1451,30 @@ github, postgres, sqlite, memory, plus HTTP/SSE templates). The
 `MCP_SERVERS` env var (JSON) overrides the file. Every external call
 passes the safety gate, so `approve` and `dryrun` apply to MCP tools too.
 
+## ACP — drive Wells from your editor
+
+Wells ships an **Agent Client Protocol** server (`wells-acp`): JSON-RPC over
+stdio, the protocol Zed, JetBrains, and other ACP-capable editors speak
+natively. A editor can open a session, send prompts (each runs the full
+Wells pipeline headlessly and streams turn updates back), and cancel
+mid-run — no terminal required:
+
+```jsonc
+// Zed: ~/.config/zed/settings.json
+{
+  "agent_servers": {
+    "Wells": { "type": "custom", "command": "wells-acp", "args": [], "env": {} }
+  }
+}
+```
+
+| Capability | Status |
+|---|---|
+| `initialize` / `session/new` / `session/prompt` / `session/cancel` | ✓ |
+| Turn streaming (`session/update` notifications) | ✓ (turn start/complete + final message; token-level streaming is an easy upgrade via the event bus) |
+| `fs/read_text_file` | Unsupported (editors fall back to their own reads) |
+| Session resume across server restarts | Not yet (`loadSession: false`) |
+
 ## Project structure
 
 ```
@@ -1512,6 +1640,25 @@ wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
 
 - ~~Embedding-based retrieval for very large repos.~~ ✅ Shipped — see
   "Semantic code retrieval" below.
+- ~~Live progress / no more silent waits.~~ ✅ Shipped — the executor emits
+  `llm_start` / retry-backoff / first-token / tool-progress events through
+  the UI bus; every pipeline node reports stage timings; long shell commands
+  tick elapsed time in the status bar.
+- ~~Code Mode (compose N tool calls in one turn).~~ ✅ Shipped — the
+  `program` tool, with safety gating inside the program.
+- ~~Editor integration via ACP.~~ ✅ Shipped — `wells-acp`.
+- ~~Durable project memory.~~ ✅ Shipped — BigBrain transaction-log memory
+  (`memory_bridge`), `memory_search` recall, Reflexion mirroring.
+- ~~Cross-harness skill compatibility.~~ ✅ Shipped — `.claude`/`.agents`/
+  `.codex` skill dirs discovered natively.
+- **SEACS corpus growth** — the self-improvement loop's biggest lever: mine
+  more repos (`wells bench mine --env-setup '...'` now handles repos a bare
+  checkout can't run), quarantine structurally unreliable tasks, grow the
+  val split past zero so `evolve gate` runs end-to-end.
+- **Sandbox-by-default** — flip the `WELLS_SANDBOX_AUTO` shipped default to
+  on once the container path has soaked in real unattended runs.
+- **Rust launcher / single-binary distribution** — a compiled shell around
+  the Python engine for millisecond cold start and one-command install.
 
 
 ## Semantic code retrieval
