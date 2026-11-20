@@ -5,6 +5,21 @@ Edit or prune freely; it is version-controlled with the code.
 
 ## Lessons Learned
 
+### 2026-11-20 — SEACS corpus growth
+Facts: corpus lives at <workspace>/.wells/bench/corpus (10 tasks, val split
+empty = small-n statistics, NOT a bug — 20% bucket at n=10 lands empty ~11%
+of the time). `.env` WORKSPACE_ROOT points at q:\\corbytools, so bench CLI
+commands need `$env:WORKSPACE_ROOT='Q:\wells'` override in this repo.
+Growth levers shipped: `wells bench mine --env-setup CMD` (repeatable;
+would have made the `cog` repo minable), `wells bench quarantine ID`
+(rejected tasks stay on disk but never run — T-24da16076e sandbox-probe task
+quarantined), and list_tasks now filters status=rejected.
+**UTF-8 bug found by mining**: _gitutils.git used text=True without
+encoding → cp1252 reader-thread crash on any non-ASCII commit subject
+(em-dashes!) → mining silently saw 0 candidates. Fixed with
+encoding="utf-8", errors="replace" in _gitutils + corpus env_setup path.
+Also fixed in codeact.py: prefer sys.executable over PATH python.
+
 ### 2026-11-20 — Ecosystem round: cross-harness skills, sandbox auto, reflexion mirror
 - **skills.py** now discovers `.claude/skills`, `.agents/skills`, `.codex/skills`
   (workspace) + `~/.claude/skills`, `~/.agents/skills` (user) — Agent Skills
