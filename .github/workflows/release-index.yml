@@ -1,9 +1,11 @@
 name: Release wells-index
 
-# Builds wells-index wheels for Linux/macOS/Windows on Python 3.12 + 3.13 and
-# publishes them to PyPI. Trigger by pushing a tag like `index-v0.1.1`, or run
-# manually from the Actions tab (workflow_dispatch builds without publishing
-# unless "publish" is set to true).
+# Builds wells-index wheels for Linux/macOS/Windows and publishes them to
+# PyPI. abi3 (see wells-index/pyproject.toml): ONE wheel per platform covers
+# every CPython >= 3.12 — no per-version matrix, no rebuilds on new Pythons.
+# Trigger by pushing a tag like `index-v0.2.0`, or run manually from the
+# Actions tab (workflow_dispatch builds without publishing unless "publish"
+# is set to true).
 #
 # Publishing auth: PyPI "trusted publishing" (configure this repo + workflow
 # as a trusted publisher for the wells-index project on pypi.org — no token
@@ -23,23 +25,21 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.12
-            3.13
+          python-version: "3.12"
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           working-directory: wells-index
           command: build
-          args: --release --interpreter python3.12 python3.13
+          args: --release --interpreter python3.12
           manylinux: auto
 
       - uses: actions/upload-artifact@v4

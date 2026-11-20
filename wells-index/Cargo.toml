@@ -1,6 +1,6 @@
 [package]
 name = "wells-index"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["Wells Contributors"]
 description = "Fast structural repository indexer for Wells"
@@ -12,7 +12,7 @@ name = "wells_index"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
 tree-sitter = "0.24"
 rayon = "1.10"
