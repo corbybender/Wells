@@ -5,6 +5,17 @@ Edit or prune freely; it is version-controlled with the code.
 
 ## Lessons Learned
 
+### 2026-11-20 — Ecosystem round: cross-harness skills, sandbox auto, reflexion mirror
+- **skills.py** now discovers `.claude/skills`, `.agents/skills`, `.codex/skills`
+  (workspace) + `~/.claude/skills`, `~/.agents/skills` (user) — Agent Skills
+  packs written for Claude Code/Codex/Kimi work unmodified. First-wins order:
+  workspace `skills/` shadows cross-harness on collision. WELLS_CROSS_SKILLS=0.
+- **safety.policy()**: `auto` upgrades to `sandbox` when WELLS_SANDBOX_AUTO=1
+  AND a container runtime answers (probe cached in _sandbox_probe_result).
+  Opt-in for now; flipping the shipped default is a release decision.
+- **reflections.capture_from_state** mirrors critiques into the BigBrain log
+  (keyword-recallable via memory_search) after the dedup+gate checks pass.
+
 ### 2026-11-20 — Feature day: BigBrain bridge, Code Mode, ACP server
 - **BigBrain** (`wells.memory_bridge`): library-only embed of bigbrain-memory
   (installed editable from Q:\\BigBrain; optional dep `wells[memory]` via git

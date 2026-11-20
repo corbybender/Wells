@@ -98,3 +98,32 @@ def test_finisher_writes_bigbrain(workspace: Path, monkeypatch):
     assert bb.is_dir()
     compiled = "\n".join(p.read_text(encoding="utf-8") for p in (bb / "memory").glob("*.md"))
     assert "cursor" in compiled.lower()
+
+
+def test_reflection_mirrored_to_bigbrain(workspace: Path, monkeypatch):
+    _need_bigbrain()
+    from wells import reflections
+
+    monkeypatch.setattr(reflections, "enabled", lambda: True)
+    monkeypatch.setattr(
+        reflections, "_detect_failure", lambda s, d: ("test_failure", "always index cursors", "ev")
+    )
+    monkeypatch.setattr(reflections, "load", lambda w: [])
+    monkeypatch.setattr(
+        safety_mod(),
+        "gate",
+        lambda *a, **k: safety_mod().SafetyDecision(True, "auto", False),
+    )
+    path = reflections.capture_from_state({"goal": "fix pagination"}, str(workspace))
+    assert path is not None
+    memory_bridge.compile(workspace)
+    compiled = "\n".join(
+        p.read_text(encoding="utf-8") for p in (workspace / ".bigbrain" / "memory").glob("*.md")
+    )
+    assert "always index cursors" in compiled.lower()
+
+
+def safety_mod():
+    from wells import safety
+
+    return safety
