@@ -57,6 +57,26 @@ def finisher(state: dict) -> dict:
         except Exception as e:
             print(f"[finisher] memory write skipped: {e}")
 
+    # ----- 1a. BigBrain durable log: same lesson into the transaction log,
+    # then deterministic compile into .bigbrain/memory/. AGENTS.md stays the
+    # injected-context file; BigBrain is the durable, lock-protected store
+    # (crash-safe, fleet-safe) that memory_search recalls from.
+    if not dry and summary:
+        try:
+            from wells import memory_bridge
+
+            if memory_bridge.enabled():
+                memory_bridge.log_lesson(
+                    ctx.workspace,
+                    goal=goal,
+                    summary=_first_line(summary),
+                    key_files=_extract_files(summary),
+                    gotchas=_extract_gotchas(review),
+                )
+                memory_bridge.compile(ctx.workspace)
+        except Exception as e:
+            print(f"[finisher] bigbrain write skipped: {e}")
+
     # ----- 1b. Reflexion: persist a critique when this run failed ----------
     # (self-improvement #1). Best-effort; never affects the run's outcome.
     reflection_path = None

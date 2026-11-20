@@ -86,6 +86,7 @@ class RunControl:
         self._activity: str = ""
         self._activity_at: float = 0.0
         self._listener: Callable[[UIEvent], None] | None = None
+        self._verbose_listener: Callable[[UIEvent], None] | None = None
         self._steers: list[str] = []
         # Ordered per-stage progress: label -> (current_step, cap). cap 0 = no limit.
         self._progress: dict[str, tuple[int, int]] = {}
@@ -240,6 +241,30 @@ class RunControl:
 
     def set_listener(self, fn: Callable[[UIEvent], None] | None) -> None:
         self._listener = fn
+
+    def set_verbose_listener(self, fn: Callable[[UIEvent], None] | None) -> None:
+        """Register the F5 verbose panel's feed — deliberately separate from
+        :meth:`set_listener`. Subagents run with ``quiet=True`` precisely so
+        their per-step output never reaches the main listener (interleaved
+        concurrent subagent output would be unreadable there, and callers
+        like the TUI's main log rely on quiet meaning silent — see
+        ``test_quiet_executor_emits_no_ui_events``). The verbose panel is a
+        debug view of literally everything, subagents included, so it needs
+        its own always-on channel that quiet mode does not gate."""
+        self._verbose_listener = fn
+
+    def emit_verbose(self, kind: str, text: str = "", **data) -> None:
+        """Send an event straight to the verbose panel, bypassing quiet mode
+        and the print-fallback :func:`ui` has for plain-CLI mode — this
+        channel only ever means something to a listening TUI panel, never to
+        a terminal without one."""
+        fn = self._verbose_listener
+        if fn is None:
+            return
+        try:
+            fn(UIEvent(kind=kind, text=text, data=data))
+        except Exception:
+            pass
 
     def emit(self, kind: str, text: str = "", **data) -> bool:
         """Send an event to the registered listener.

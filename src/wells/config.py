@@ -563,6 +563,14 @@ def _invoke_with_retry(llm, messages):
 
     last_err: Exception | None = None
     for attempt in range(1, LLM_MAX_RETRIES + 1):
+        # Per-attempt visibility: the status bar (polled) shows which call
+        # we're on, and the always-on F5 channel records the start even for
+        # quiet subagent runs. Without this, a slow time-to-first-token is
+        # indistinguishable from a hang.
+        model_label = getattr(llm, "model_name", None) or getattr(llm, "model", "model")
+        CONTROL.set_activity(f"{model_label} · call {attempt}/{LLM_MAX_RETRIES}")
+        CONTROL.emit_verbose("llm_start", f"call {attempt}/{LLM_MAX_RETRIES}",
+                             model=str(model_label), attempt=attempt)
         try:
             return llm.invoke(messages)
         except Exception as err:
@@ -574,10 +582,20 @@ def _invoke_with_retry(llm, messages):
             if not _is_transient(err) or attempt == LLM_MAX_RETRIES:
                 break
             backoff = min(LLM_BACKOFF_BASE**attempt, 30.0)
-            print(
-                f"[llm] transient {type(err).__name__} on attempt {attempt}/"
-                f"{LLM_MAX_RETRIES}; retrying in {backoff:.1f}s ..."
-            )
+            # Styled event when a TUI is listening; plain print otherwise
+            # (same fallback contract as control.ui). Previously this was a
+            # bare print that reached the TUI unstyled via the stdout shim.
+            if not CONTROL.emit(
+                "llm_retry",
+                f"[yellow]⟳ {type(err).__name__} (attempt {attempt}/{LLM_MAX_RETRIES}) — "
+                f"retrying in {backoff:.1f}s[/yellow]",
+                error=type(err).__name__, attempt=attempt, backoff=backoff,
+            ):
+                print(
+                    f"[llm] transient {type(err).__name__} on attempt {attempt}/"
+                    f"{LLM_MAX_RETRIES}; retrying in {backoff:.1f}s ..."
+                )
+            CONTROL.set_activity(f"retry {attempt}/{LLM_MAX_RETRIES} in {backoff:.0f}s · {type(err).__name__}")
             # Sleep in small slices so a cancel lands within ~250ms instead
             # of blocking for the full backoff (up to 30s per attempt).
             waited = 0.0

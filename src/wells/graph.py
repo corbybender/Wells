@@ -16,10 +16,35 @@ from wells.agents.planner import planner
 from wells.agents.reviewer import reviewer
 from wells.agents.tester import tester
 from wells.config import MAX_ITERATIONS, INDEX_AUTO_UPDATE
+from wells.control import CONTROL, ui
 from wells.finisher import finisher
 from wells.state import AgentState
 from wells.summarize import summarizer_node
 from wells.tools import ToolContext
+
+
+def _with_stage(name: str, fn):
+    """Wrap a graph node so the TUI's InfoPanel breadcrumb tracks it.
+
+    Calls ``CONTROL.stage_start`` on entry and ``stage_end`` on exit, so the
+    pipeline timeline (indexer → planner → …) shows live per-node elapsed
+    time instead of appearing only when an agent happens to set it. Routing
+    output goes through the event bus (``graph`` kind) with a print fallback
+    for plain-CLI runs — previously these were bare ``print()`` calls that
+    reached the TUI unstyled via the stdout-capture shim.
+    """
+
+    def wrapped(state: AgentState) -> AgentState:
+        CONTROL.stage_start(name)
+        try:
+            return fn(state)
+        except Exception:
+            CONTROL.stage_end(name, ok=False)
+            raise
+        else:
+            CONTROL.stage_end(name, ok=True)
+
+    return wrapped
 
 
 def indexer_node(state: AgentState) -> AgentState:
@@ -51,7 +76,7 @@ def _route_after_plan(state: AgentState) -> str:
     would only restate them. Unknown/missing labels default to complex.
     """
     if state.get("plan_complexity") == "simple":
-        print("[graph] simple plan -> coder (architect skipped).")
+        ui("graph", "[dim]simple plan -> coder (architect skipped).[/dim]")
         return "code"
     return "design"
 
@@ -65,13 +90,14 @@ def _route_after_tests(state: AgentState) -> str:
     reviewer decides as usual.
     """
     if state.get("tests_passed") is True and state.get("review_complete"):
-        print("[graph] auto-approved (simple + green) -> finisher (reviewer skipped).")
+        ui("graph", "[dim]auto-approved (simple + green) -> finisher (reviewer skipped).[/dim]")
         return "finalize"
     if state.get("tests_passed") is False:
         iteration = state.get("iteration", 0)
         cap = state.get("max_iterations", MAX_ITERATIONS)
         if cap == 0 or iteration < cap:  # cap 0 = no limit
-            print(f"[graph] tests failing (iteration {iteration}) -> summarizer -> coder (reviewer skipped).")
+            ui("graph", f"[dim]tests failing (iteration {iteration}) -> summarizer -> coder "
+                         "(reviewer skipped).[/dim]")
             return "loop"
     return "review"
 
@@ -86,31 +112,31 @@ def _route_after_review(state: AgentState) -> str:
         # infra failure. Looping the coder against it (possibly forever,
         # with max_iterations=0) burns cycles "fixing" a review that never
         # happened. Stop now instead of pretending this was a real verdict.
-        print("[graph] reviewer could not run (LLM/tool error) -> "
-              "finalizing instead of looping on a broken review.")
+        ui("graph", "[dim]reviewer could not run (LLM/tool error) -> "
+                     "finalizing instead of looping on a broken review.[/dim]")
         return "finalize"
 
     iteration = state.get("iteration", 0)
     cap = state.get("max_iterations", MAX_ITERATIONS)
     if cap and iteration >= cap:  # cap 0 = no limit
-        print(f"[graph] reached max iterations ({cap}); finalizing.")
+        ui("graph", f"[dim]reached max iterations ({cap}); finalizing.[/dim]")
         return "finalize"
 
-    print(f"[graph] iteration {iteration} incomplete -> summarizer -> coder.")
+    ui("graph", f"[dim]iteration {iteration} incomplete -> summarizer -> coder.[/dim]")
     return "loop"
 
 
 def build_graph():
     graph = StateGraph(AgentState)
 
-    graph.add_node("indexer", indexer_node)
-    graph.add_node("planner", planner)
-    graph.add_node("architect", architect)
-    graph.add_node("coder", coder)
-    graph.add_node("tester", tester)
-    graph.add_node("reviewer", reviewer)
-    graph.add_node("summarizer", summarizer_node)
-    graph.add_node("finisher", finisher)
+    graph.add_node("indexer", _with_stage("indexer", indexer_node))
+    graph.add_node("planner", _with_stage("planner", planner))
+    graph.add_node("architect", _with_stage("architect", architect))
+    graph.add_node("coder", _with_stage("coder", coder))
+    graph.add_node("tester", _with_stage("tester", tester))
+    graph.add_node("reviewer", _with_stage("reviewer", reviewer))
+    graph.add_node("summarizer", _with_stage("summarizer", summarizer_node))
+    graph.add_node("finisher", _with_stage("finisher", finisher))
 
     graph.add_edge(START, "indexer")
     graph.add_edge("indexer", "planner")

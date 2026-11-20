@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import shutil
 import sys
 import threading
@@ -83,6 +84,9 @@ Screen {
 
 #log-col {
     width: 1fr;
+    min-width: 20;   /* guards against the side panels (F2/F3/F5) starving
+                        it to 0 on a narrow terminal with all of them open,
+                        which crashes the prompt's placeholder wrap */
     height: 100%;
 }
 
@@ -138,6 +142,34 @@ FileTreePanel > #file-tree {
 FileTreePanel > #file-panel-hint {
     width: 100%;
     height: auto;
+    padding: 0 1;
+}
+
+VerbosePanel {
+    width: 60;
+    height: 100%;
+    border-left: solid $accent 40%;
+    background: $surface-darken-1;
+    display: none;   /* hidden by default — Python flips this on F5 */
+}
+
+/* F5 cycles hidden -> normal -> wide -> hidden. Wide mode also hides
+   log-col/info-panel/file-panel (see _apply_verbose_state), so 1fr here
+   claims the entire #main width with no siblings left to share it. */
+VerbosePanel.-wide {
+    width: 1fr;
+    border-left: none;
+}
+
+VerbosePanel > #verbose-panel-title {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+VerbosePanel > #verbose-log {
+    width: 100%;
+    height: 1fr;
     padding: 0 1;
 }
 
@@ -628,7 +660,7 @@ class InfoPanel(Vertical):
             pass
 
         L.append(rule)
-        L.append("[dim]F2: hide · F3: file tree · F4: paste image[/dim]")
+        L.append("[dim]F2: hide · F3: file tree · F4: paste image · F5: verbose log[/dim]")
         return "\n".join(L)
 
 
@@ -799,6 +831,148 @@ class FileTreePanel(Vertical):
         yield Static("[bold]Files[/bold]", id="file-panel-title")
         yield WellsDirectoryTree(config.WORKSPACE_ROOT, id="file-tree")
         yield Static("[dim]n: new · d/Del: delete[/dim]", id="file-panel-hint", markup=True)
+
+
+# Rich's own markup parser treats *any* ``[...]`` as a candidate tag and
+# silently drops ones it can't resolve — fine for hand-authored strings, but
+# executor headlines like tool_start's embed raw fragments of tool args
+# (a regex, a path, a bracketed index) that were never meant as markup and
+# must survive intact. This only recognizes the exact, fixed vocabulary of
+# style words this codebase actually authors (see every ``_ui("kind", ...)``
+# call site) — anything else, ``[a-z]+`` included, is left as plain text.
+_SAFE_STYLE_WORD = (
+    r"bold|dim|italic|underline|strike|blink|reverse"
+    r"|red|green|yellow|cyan|magenta|blue|white|black"
+)
+_SAFE_TAG_RE = re.compile(
+    rf"\[(/?)((?:(?:{_SAFE_STYLE_WORD})(?:\s+(?:{_SAFE_STYLE_WORD}))*)?)\]"
+)
+
+
+def _safe_markup_text(s: str, base_style: str | None = None):
+    """Render ``s`` as a Rich ``Text``, honoring only the known-safe style
+    tags above; everything else — including a stray ``[...]`` that looks
+    like a tag but isn't one of these words — passes through unmodified.
+
+    ``base_style`` is the style applied outside of any recognized tag (e.g.
+    a kind's color), so a plain string with no tags at all still gets one
+    solid color instead of falling back to no style.
+    """
+    from rich.text import Text
+
+    result = Text()
+    stack: list[str | None] = [base_style]
+    pos = 0
+    for m in _SAFE_TAG_RE.finditer(s):
+        if m.start() > pos:
+            result.append(s[pos:m.start()], style=stack[-1])
+        closing, words = m.group(1), m.group(2)
+        if closing:
+            if len(stack) > 1:
+                stack.pop()
+        elif words:
+            stack.append(words)
+        pos = m.end()
+    if pos < len(s):
+        result.append(s[pos:], style=stack[-1])
+    return result
+
+
+class AutoScrollRichLog(RichLog):
+    """A RichLog that stops yanking the view back to the bottom once the
+    user scrolls up to read history, and re-arms itself the moment they
+    scroll back down to the true bottom — same convention as a terminal
+    or a chat app's "new messages" behavior, just automatic either way.
+
+    RichLog's own ``auto_scroll`` is a static switch: on, every ``write()``
+    snaps to the end regardless of where the user is looking. Recomputing it
+    from the actual scroll position on every ``scroll_y`` change instead —
+    including the one ``write()`` itself causes while already pinned — keeps
+    it self-reinforcing: pinned stays pinned across new writes, and it only
+    flips off when the user's own scroll moves away from the bottom.
+    """
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self.auto_scroll = self.is_vertical_scroll_end
+
+
+# ---------------------------------------------------------------------------
+# Verbose activity panel (F5 toggles; independent of the other two panels).
+#
+# The main log deliberately shows a *curated* trace — a short headline per
+# tool call, a truncated preview of model text — so a long run doesn't drown
+# the user in noise. That curation is exactly what makes a genuinely slow run
+# (a big local model grinding through a tool call) look identical to a hung
+# one: nothing new appears for minutes and there is no way to tell "still
+# working" from "frozen". This panel is the uncurated escape hatch: every
+# UI event the executor emits, full tool args/results instead of 50-char
+# previews, and a 1 Hz heartbeat line (ticked from the app's own event loop,
+# so it keeps posting even while a worker thread is blocked inside a network
+# call) showing exactly what CONTROL.activity() has said for however long
+# it's been saying it.
+# ---------------------------------------------------------------------------
+
+class VerbosePanel(Vertical):
+    """Timestamped, unfiltered stream of executor activity."""
+
+    MAX_LINES = 5000
+
+    HEARTBEAT_SECS = 5.0
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "[bold]Verbose[/bold]  [dim]F5: wide · full · hide[/dim]",
+            id="verbose-panel-title",
+        )
+        yield AutoScrollRichLog(id="verbose-log", markup=False, highlight=False, wrap=True,
+                                max_lines=self.MAX_LINES)
+
+    def on_mount(self) -> None:
+        self._vlog: AutoScrollRichLog = self.query_one("#verbose-log", AutoScrollRichLog)
+        self.set_interval(self.HEARTBEAT_SECS, self._heartbeat)
+
+    def _heartbeat(self) -> None:
+        try:
+            import wells.cli as _cli
+            busy = _cli._REPL_STATE.get("busy_since") is not None
+        except Exception:
+            busy = False
+        if not busy:
+            return
+        act, age = CONTROL.activity_info()
+        if not act:
+            return
+        self.log_event("heartbeat", act, [f"{age:.0f}s elapsed"], color="green")
+
+    def log_event(
+        self, kind: str, text: str, extra: list[str] | None = None,
+        color: str | None = None,
+    ) -> None:
+        """Append one timestamped line.
+
+        ``text`` goes through :func:`_safe_markup_text` — real color tags
+        render, anything else (a regex, a path, a bracketed arg) passes
+        through as literal text instead of risking either extreme: Rich's
+        full markup parser silently eating unrecognized ``[...]`` spans, or
+        (the previous version of this method) showing every tag as raw
+        ``[green]...[/green]`` text because parsing was disabled entirely.
+        ``color`` is the base color for ``text`` outside of any tag, and is
+        always applied verbatim (never parsed) to the kind label and to
+        ``extra`` — both are plain strings the executor never wraps in
+        markup, so there's nothing there to parse in the first place.
+        """
+        from rich.text import Text
+
+        line = Text()
+        line.append(_time.strftime("%H:%M:%S "), style="dim")
+        line.append(f"{kind:<10} ", style=f"bold {color}" if color else "bold")
+        if text:
+            line.append_text(_safe_markup_text(text, color))
+        for part in extra or ():
+            line.append("\n           ")
+            line.append(part, style="dim")
+        self._vlog.write(line)
 
 
 # ---------------------------------------------------------------------------
@@ -2705,6 +2879,7 @@ class WellsApp(App[None]):
         Binding("ctrl+l", "clear_log", "Clear output"),
         Binding("f2", "toggle_panel", "Info panel", priority=True),
         Binding("f3", "toggle_file_panel", "File tree", priority=True),
+        Binding("f5", "toggle_verbose_panel", "Verbose log", priority=True),
         # Scroll bindings — priority=True so they fire even when Input has focus.
         # Mouse capture is enabled (mouse=True) so the scroll wheel works in the
         # output panel. Hold Shift while selecting to use the terminal's native
@@ -2781,6 +2956,7 @@ class WellsApp(App[None]):
                     yield StatusBar()
             yield InfoPanel(id="info-panel")
             yield FileTreePanel(id="file-panel")
+            yield VerbosePanel(id="verbose-panel")
 
     # ------------------------------------------------------------------
     # Startup
@@ -2804,9 +2980,15 @@ class WellsApp(App[None]):
         self._file_tree: WellsDirectoryTree = self.query_one(
             "#file-tree", WellsDirectoryTree
         )
+        self._verbose_panel: VerbosePanel = self.query_one(
+            "#verbose-panel", VerbosePanel
+        )
+        self._log_col: Vertical = self.query_one("#log-col", Vertical)
         self._statusbar: StatusBar = self.query_one(StatusBar)
         self._apply_panel_visibility(self._load_panel_pref())
         self._apply_file_panel_visibility(self._load_file_panel_pref())
+        self._verbose_state = "hidden"
+        self._apply_verbose_state(self._load_verbose_state())
 
         # Initialize shared REPL state.
         _REPL_STATE["memory"] = chat.ConversationMemory()
@@ -2817,6 +2999,9 @@ class WellsApp(App[None]):
 
         # Typed UI events from the executor render directly (no stdout hop).
         CONTROL.set_listener(self._on_ui_event)
+        # Separate always-on channel for the F5 panel — reaches it even from
+        # quiet subagent runs the main listener above never sees.
+        CONTROL.set_verbose_listener(self._on_verbose_event)
         # Seed the global rules file so every workspace gets the defaults.
         try:
             from wells import rules as _rules
@@ -2863,6 +3048,7 @@ class WellsApp(App[None]):
 
     def on_unmount(self) -> None:
         CONTROL.set_listener(None)
+        CONTROL.set_verbose_listener(None)
 
     # ------------------------------------------------------------------
     # Output helpers
@@ -2873,21 +3059,104 @@ class WellsApp(App[None]):
         self._transcript.append(renderable)
         self._log.write(renderable)
 
+    # Kinds that exist purely to feed the F5 verbose panel — full tool
+    # args/results and untruncated model text the main log deliberately
+    # doesn't show. They must never fall through to write_log.
+    _VERBOSE_ONLY_KINDS = frozenset({"verbose", "tool_end", "llm_full"})
+    # Also sent, richer, over CONTROL's dedicated always-on verbose channel
+    # (see _on_verbose_event) — skip it here so a top-level (non-quiet) run
+    # doesn't get the same tool call logged twice into the F5 panel.
+    _MIRRORED_ON_VERBOSE_CHANNEL = frozenset({"tool_start"})
+
     def _on_ui_event(self, ev: UIEvent) -> None:
         """Render a typed executor event (called from worker threads)."""
         try:
-            if ev.kind == "llm_chunk":
-                self.call_from_thread(self._llm_chunk, ev.text)
-            elif ev.kind == "llm_done":
-                self.call_from_thread(self._llm_done)
-            else:
-                self.call_from_thread(self.write_log, ev.text)
+            self.call_from_thread(self._dispatch_event, ev)
         except Exception:
             # Already on the app thread (or app shutting down).
             try:
-                self.write_log(ev.text)
+                self._dispatch_event(ev)
             except Exception:
                 pass
+
+    def _dispatch_event(self, ev: UIEvent) -> None:
+        if ev.kind not in self._MIRRORED_ON_VERBOSE_CHANNEL:
+            self._log_verbose(ev)
+        if ev.kind == "llm_chunk":
+            self._llm_chunk(ev.text)
+        elif ev.kind == "llm_done":
+            self._llm_done()
+        elif ev.kind in self._VERBOSE_ONLY_KINDS:
+            pass
+        else:
+            self.write_log(ev.text)
+
+    def _on_verbose_event(self, ev: UIEvent) -> None:
+        """Feed from CONTROL's always-on verbose channel — unlike
+        _on_ui_event, this fires for quiet subagent runs too (parallel
+        research and friends), which is the whole point: it's the only way
+        the F5 panel ever sees what a subagent is actually doing."""
+        try:
+            self.call_from_thread(self._log_verbose, ev)
+        except Exception:
+            try:
+                self._log_verbose(ev)
+            except Exception:
+                pass
+
+    # Kind -> Rich style name for the F5 panel, so it reads as more than a
+    # wall of grey text: warm color for what's currently happening (tool
+    # calls), cool color for model output, green for the still-alive
+    # heartbeat, red/yellow for anything that needs attention.
+    _VERBOSE_COLORS = {
+        "heartbeat": "green",
+        "tool_start": "dark_orange",
+        "tool_progress": "dark_orange",
+        "llm_start": "cyan",
+        "first_token": "green",
+        "llm_retry": "yellow",
+        "llm_full": "cyan",
+        "llm_text": "cyan",
+        "graph": "blue",
+        "round": "blue",
+        "warn": "yellow",
+        "error": "red",
+    }
+
+    def _verbose_color(self, kind: str, data: dict) -> str | None:
+        if kind == "tool_end":  # not in the static map — color depends on outcome
+            return "green" if data.get("ok") else "red"
+        return self._VERBOSE_COLORS.get(kind)
+
+    def _log_verbose(self, ev: UIEvent) -> None:
+        """Mirror every event (minus per-character stream chunks) into the
+        F5 panel, timestamped, with any full args/output the main log
+        truncated or skipped entirely."""
+        if ev.kind in ("llm_chunk", "llm_done"):
+            return
+        panel = getattr(self, "_verbose_panel", None)
+        if panel is None:
+            return
+        extra: list[str] = []
+        data = ev.data or {}
+        args = data.get("args")
+        if args is not None:
+            try:
+                extra.append("args=" + json.dumps(args, default=str)[:1000])
+            except Exception:
+                extra.append(f"args={args!r}"[:1000])
+        output = data.get("output")
+        if output:
+            extra.append(f"output ({'ok' if data.get('ok') else 'error'})=" + str(output)[:2000])
+        text = data.get("text")
+        if text and ev.kind == "llm_full":
+            extra.append(str(text)[:2000])
+        name = data.get("name")
+        label = f"{ev.kind}:{name}" if name else ev.kind
+        source = data.get("source")
+        if source and source != "executor":
+            label += f" ({source})"
+        panel.log_event(label, ev.text, extra, color=self._verbose_color(ev.kind, data))
 
     # -- live streaming region (in-progress model output) --------------------
 
@@ -2957,7 +3226,7 @@ class WellsApp(App[None]):
             "Type [bold]/[/bold] for all commands. "
             "[dim]Shift+Enter: newline · ↑/↓: history · Esc: cancel run · "
             "F2: hide panel to select/copy text · F3: file tree · "
-            "F4: paste clipboard image[/dim]\n"
+            "F4: paste clipboard image · F5: verbose activity log[/dim]\n"
         )
 
     def _ensure_repo_index(self) -> None:
@@ -3998,6 +4267,50 @@ class WellsApp(App[None]):
         visible = not self._file_panel.display
         self._apply_file_panel_visibility(visible)
         self._save_file_panel_pref(visible)
+
+    # F5 cycles through these in order, wrapping back to hidden from wide.
+    _VERBOSE_CYCLE = ("hidden", "normal", "wide")
+
+    def _load_verbose_state(self) -> str:
+        v = self._load_ui_prefs().get("verbose_panel", False)
+        if isinstance(v, str):
+            return v if v in self._VERBOSE_CYCLE else "hidden"
+        return "normal" if v else "hidden"  # legacy bool pref, pre-tri-state
+
+    def _save_verbose_state(self, state: str) -> None:
+        self._save_ui_pref("verbose_panel", state)
+
+    def _apply_verbose_state(self, state: str) -> None:
+        prev = getattr(self, "_verbose_state", "hidden")
+        self._verbose_state = state
+        self._verbose_panel.display = state != "hidden"
+        self._verbose_panel.set_class(state == "wide", "-wide")
+        if state == "wide":
+            # Entering wide from anything else: remember what was open so
+            # leaving wide can put it back instead of always reopening it.
+            if prev != "wide":
+                self._pre_wide_info_visible = self._panel.display
+                self._pre_wide_file_visible = self._file_panel.display
+            self._log_col.display = False
+            self._panel.display = False
+            self._file_panel.display = False
+        else:
+            self._log_col.display = True
+            if prev == "wide":
+                self._panel.display = getattr(self, "_pre_wide_info_visible", True)
+                self._file_panel.display = getattr(self, "_pre_wide_file_visible", False)
+                # Hiding #log-col to go wide silently drops focus (a
+                # display=False widget can't hold it) and Textual never
+                # gives it back on its own — leaving nothing focused, which
+                # swallows the next paste/keystroke entirely rather than
+                # routing it anywhere visible.
+                self._input.focus()
+
+    def action_toggle_verbose_panel(self) -> None:
+        idx = self._VERBOSE_CYCLE.index(self._verbose_state)
+        state = self._VERBOSE_CYCLE[(idx + 1) % len(self._VERBOSE_CYCLE)]
+        self._apply_verbose_state(state)
+        self._save_verbose_state(state)
 
     def action_scroll_up(self) -> None:
         self._log.scroll_page_up(animate=False)
