@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "wells-index"
-version = "0.1.1"
+version = "0.2.0"
 description = "Fast structural repository indexer for Wells"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,7 +25,10 @@ classifiers = [
 dev = ["pytest>=9.1.1", "black>=24.0", "ruff>=0.4"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+# abi3-py312: stable-ABI wheels. One wheel per platform installs on EVERY
+# CPython >= 3.12 (3.14, 3.15, ...) forever — no per-version rebuilds, and
+# downstream packages can depend on us without pinning their users' Python.
+features = ["pyo3/extension-module", "pyo3/abi3-py312"]
 python-source = "python"
 module-name = "wells_index._core"
 # Pre-built cores committed for the no-toolchain install path (wells.bat /
