@@ -32,7 +32,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 # --- 2. wells ----------------------------------------------------------------
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Host "[wells] note: git not found (only needed for repo installs)." -ForegroundColor Yellow }
 Say "Installing the wells command (also fetches Python 3.12 if needed) ..."
-uv tool install --force --python 3.12 "wells-agent[index]"
+uv tool install --force wells-agent
 
 # --- 3. first-run setup --------------------------------------------------------
 Say "Installed. Starting provider setup - pick a model and paste a key."

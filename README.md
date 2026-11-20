@@ -59,7 +59,7 @@ Re-running the installer updates an existing install.
 **Already have `uv` or `pipx`?** Skip the script:
 
 ```bash
-uv tool install 'wells-agent[index]' && wells config   # from PyPI
+uv tool install wells-agent && wells config        # from PyPI
 # or, tracking the repo:  uv tool install git+https://github.com/corbybender/Wells.git
 ```
 
@@ -82,7 +82,7 @@ self-contained (no Python, no uv, no venv) and start instantly.
 | You want ... | Use |
 |---|---|
 | It to just work (default) | The one-liner above |
-| Versioned installs / `uvx` trials / corporate proxies | `uv tool install 'wells-agent[index]'` ([PyPI](https://pypi.org/project/wells-agent/)) — drop `[index]` if you don't need the native code index |
+| Versioned installs / `uvx` trials / corporate proxies | `uv tool install wells-agent` ([PyPI](https://pypi.org/project/wells-agent/)) |
 | No Python runtime at all, instant cold start | [Standalone binary](#get-started-in-one-command) from Releases |
 | No global install — run Wells against one project from a clone | [Option A](#option-a---cloned-standalone-no-install-needed) |
 | To embed Wells inside another project's folder | [Option B](#option-b---drive-a-different-project-embedding) |
@@ -472,7 +472,7 @@ Install once and `wells` is on your PATH from any directory. From PyPI
 (recommended — versioned, and `uvx wells-agent` works with no install at all):
 
 ```bash
-uv tool install "wells-agent[index]"          # or: pipx install 'wells-agent[index]'
+uv tool install wells-agent                   # or: pipx install wells-agent
 ```
 
 Or straight from the repo (tracks master, or your own fork):
@@ -488,9 +488,8 @@ wells "your goal"                        # from any directory
 wells --workspace /path/to/project "goal"
 ```
 
-(The `[index]` extra adds the native `wells-index` code index; without it Wells
-falls back to grep/glob search. It's skipped by default because native wheels
-only cover some Python versions.)
+(`wells-index`, the native Rust code index, ships as a core dependency —
+abi3 wheels cover every Python 3.12+ on all four platforms.)
 
 **Note:** During installation, `uv` may show a warning about hardlinks across
 filesystems (`WARN: Hardlink or symlink copy required…`). It's harmless;
