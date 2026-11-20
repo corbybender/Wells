@@ -5,6 +5,38 @@ Edit or prune freely; it is version-controlled with the code.
 
 ## Lessons Learned
 
+### 2026-11-20 — Distribution: PyPI + binaries shipped; two real bugs found by shipping
+- PyPI name is **wells-agent** (bare `wells` taken). `bigbrain-memory` also
+  published (trusted publishing, OIDC, env `pypi`, no tokens). One-liners now
+  `uv tool install --python 3.12 "wells-agent[index]"`.
+- **Hard dep on native modules breaks everything**: `wells-index` (PyO3,
+  cp312/cp313 wheels only) as a core dep made `uvx wells-agent` unresolvable on
+  CPython 3.15. Now the optional `[index]` extra (code already falls back to
+  grep/glob via index_tools._try_load_indexer). Keep native deps OUT of core.
+- Version lived in 3 places and drifted (`--version` said 0.2.0 while the
+  package was 0.3.0). Now single source: importlib.metadata in
+  `wells/__init__.py`; mcp_server imports `__version__`.
+- **macos-14 label is RETIRED** ("configuration 'macos-14-arm64-us-default is
+  not supported") and macos-13 never schedules; `macos-15` / `macos-15-intel`
+  work. Probed live on a throwaway branch before burning another release tag.
+- Gotcha: `workflow_dispatch` 404s unless the workflow exists on the default
+  branch — use a `push:`-triggered probe branch instead.
+- Lost work by committing real changes on a probe branch then deleting it —
+  recovered via `git cherry-pick -n` from the reflog. Don't mix probe and
+  product commits.
+
+### 2026-11-20 — Bench forensics: alternating loop defeated the stuck-loop guard
+60-min val run on T-c9d4f56d48: **4,609 tool calls** (2,177 list_dir, 1,488
+read_file; 856 reads of one throwaway `maths.py`), 0/1 resolved, tokens=0.
+The agent **alternated** read_file → list_dir → read_file, which resets the
+consecutive-repeat detector (`_last_call_repeat`) every round — the guard
+structurally cannot see it. Fix: cumulative per-target counter
+(`_repeat_hits`) for read-only tools — coach at 4, escalate/hard-stop at 8,
+reset on write to that path (`WELLS_REPEAT_WARN`/`WELLS_REPEAT_STOP`).
+Also: bench timeout is **per task**, not per run. And T-c9d4f56d48 is a
+3-feature mega-task (ACP + Code Mode + BigBrain, 35 fail_to_pass tests) —
+arguably too large to be a fair corpus task; consider splitting.
+
 ### 2026-11-20 — SEACS corpus growth
 Facts: corpus lives at <workspace>/.wells/bench/corpus (10 tasks, val split
 empty = small-n statistics, NOT a bug — 20% bucket at n=10 lands empty ~11%
