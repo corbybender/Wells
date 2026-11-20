@@ -134,6 +134,7 @@ def propose_mutation(
     auto: bool = False,
     profile: str = "",
     timeout: float = 1800.0,
+    heartbeat_path: str | Path | None = None,
 ) -> MutationManifest:
     """Create a candidate AGENT.md and record it as a pending mutation.
 
@@ -141,6 +142,16 @@ def propose_mutation(
     text, read as-is — zero LLM cost, deterministic) or ``auto=True`` (has
     the harness draft its own candidate via one real headless run — costs
     real tokens, opt-in only) must be given.
+
+    ``heartbeat_path``, when ``auto=True``, is touched periodically during
+    the draft (same mechanism as run_bench's mid-task ticks) — without
+    this, an external watchdog polling the heartbeat sees no update for
+    the whole draft call and, if that exceeds its staleness threshold,
+    concludes the process is dead and kills it mid-draft. Since propose's
+    own state isn't saved until *after* it returns, that kill abandons
+    the in-flight draft entirely rather than resuming it — a real bug
+    that wasted several real drafting calls in autoloop before this was
+    wired in.
     """
     from wells import principles
 
@@ -152,7 +163,11 @@ def propose_mutation(
     if candidate_file:
         candidate_text = Path(candidate_file).read_text(encoding="utf-8")
     elif auto:
-        candidate_text = _draft_candidate(workspace, profile=profile, timeout=timeout)
+        candidate_text = _draft_candidate(
+            workspace, profile=profile, timeout=timeout,
+            history_context=_recent_mutation_history(),
+            heartbeat_path=heartbeat_path,
+        )
     else:
         raise ValueError("propose_mutation: needs candidate_file=PATH or auto=True.")
 
@@ -175,7 +190,32 @@ def propose_mutation(
     return manifest
 
 
-def _draft_candidate(workspace: str, *, profile: str, timeout: float) -> str:
+def _recent_mutation_history(limit: int = 8) -> str:
+    """Summarize past gated mutations (rationale + outcome) for the --auto
+    prompt, so a fresh draft doesn't blindly re-propose an idea already
+    tried and rejected (or re-propose something already promoted)."""
+    lines: list[str] = []
+    for m in list_manifests()[:limit]:
+        if m.status not in ("gated", "promoted", "rejected"):
+            continue
+        base_lb = (m.baseline_bench or {}).get("pass_at_1_wilson_lb")
+        cand_lb = (m.candidate_bench or {}).get("pass_at_1_wilson_lb")
+        metrics = (
+            f"baseline_lb={base_lb:.1%} candidate_lb={cand_lb:.1%}"
+            if base_lb is not None and cand_lb is not None
+            else "(not gated)"
+        )
+        outcome = m.recommendation or "unknown"
+        lines.append(
+            f"- [{outcome}, status={m.status}] {m.rationale[:120]!r} -- {metrics}"
+        )
+    return "\n".join(lines) or "(no prior mutations recorded)"
+
+
+def _draft_candidate(
+    workspace: str, *, profile: str, timeout: float, history_context: str = "",
+    heartbeat_path: str | Path | None = None,
+) -> str:
     """Have the harness rewrite AGENT.md itself, seeded with recent bench
     failures as context. One real headless run — the only place in this
     module that spends tokens.
@@ -184,11 +224,26 @@ def _draft_candidate(workspace: str, *, profile: str, timeout: float) -> str:
     import tempfile
 
     from wells import principles
-    from wells.evolve.runner import _run_harness, list_results
+    from wells.evolve import corpus
+    from wells.evolve.runner import _HeartbeatWriter, _run_harness, list_results
     from wells.evolve.schema import TaskSpec
 
-    failure_notes: list[str] = []
-    for p in list_results(workspace)[:2]:
+    hb = _HeartbeatWriter(heartbeat_path, job="evolve-propose-draft") if heartbeat_path else None
+    if hb:
+        hb.write(status="running", phase="draft")
+
+    # Pull from the last few result files (not just 2) and separate
+    # failures by *kind* (timeout vs wrong-answer vs harness error) with an
+    # aggregate count up front — a mutation that only sees "these tasks
+    # failed" has no way to tell "the model got the wrong answer" apart
+    # from "the model ran out of time before finishing," which call for
+    # opposite fixes (better reasoning vs tighter time budgeting). Include
+    # each failing task's actual problem statement (not just its id) so
+    # the draft has real signal about what kind of work is failing, not
+    # just an opaque status code.
+    by_kind: dict[str, list[dict]] = {}
+    seen_task_ids: set[str] = set()
+    for p in list_results(workspace)[:5]:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
@@ -196,29 +251,86 @@ def _draft_candidate(workspace: str, *, profile: str, timeout: float) -> str:
         for row in data.get("tasks", []):
             if row.get("resolved"):
                 continue
-            failure_notes.append(
-                f"- task {row.get('task_id')}: status={row.get('harness_status')} "
-                f"error={(row.get('error') or '')[:150]}"
-            )
-    failures_block = "\n".join(failure_notes[:10]) or "(no recorded bench failures found)"
+            tid = row.get("task_id", "")
+            if tid in seen_task_ids:
+                continue  # same task failing in an earlier result file — count once
+            seen_task_ids.add(tid)
+            kind = row.get("harness_status") or "unknown"
+            by_kind.setdefault(kind, []).append(row)
+
+    total_failures = sum(len(v) for v in by_kind.values())
+    if total_failures:
+        # TaskResult rows don't carry the problem statement (only
+        # task_id/status/error) — look it up from the corpus so the draft
+        # sees actual task content, not just an opaque id and status code.
+        problem_by_id = {t.task_id: t.problem_statement for t in corpus.load_corpus(workspace)}
+        counts_line = ", ".join(f"{len(v)} {k}" for k, v in sorted(by_kind.items()))
+        detail_lines: list[str] = []
+        for kind, rows in sorted(by_kind.items()):
+            for row in rows[:5]:  # cap detail per kind, not just overall, so no one kind crowds out the rest
+                problem = (problem_by_id.get(row.get("task_id", "")) or "")[:200]
+                detail_lines.append(
+                    f"- [{kind}] task {row.get('task_id')}: {(row.get('error') or '')[:200]}\n"
+                    f"  problem: {problem}"
+                )
+        failures_block = (
+            f"{total_failures} distinct unresolved task(s) across recent runs "
+            f"({counts_line}):\n\n" + "\n".join(detail_lines[:15])
+        )
+    else:
+        failures_block = "(no recorded bench failures found)"
 
     current_text = principles.principles_text(workspace)
 
-    with tempfile.TemporaryDirectory() as td:
-        scratch = Path(td)
-        (scratch / "AGENT.md").write_text(current_text, encoding="utf-8")
-        goal = (
-            "Improve your own operating principles. The file AGENT.md in this "
-            "workspace is your behavioral constitution — read it, then rewrite "
-            "it (in place, via write_file) to better address these recent "
-            "bench-run failures:\n\n"
-            f"{failures_block}\n\n"
-            "Keep the tone and structure of the existing rules; make targeted "
-            "improvements, not a rewrite from scratch. Do not touch any other "
-            "file."
+    def _draft_once(extra_instruction: str = "") -> str:
+        with tempfile.TemporaryDirectory() as td:
+            scratch = Path(td)
+            (scratch / "AGENT.md").write_text(current_text, encoding="utf-8")
+            goal = (
+                "Improve your own operating principles. The file AGENT.md in this "
+                "workspace is your behavioral constitution — read it, then rewrite "
+                "it (in place, via write_file) to better address these recent "
+                "bench-run failures. If most failures are timeouts, the fix is "
+                "about time/scope budgeting, not correctness; if most are "
+                "wrong-answer, the fix is about verification or approach:\n\n"
+                f"{failures_block}\n\n"
+                "Prior mutation attempts and their real, measured outcomes "
+                "(promote = beat baseline; reject = tied or lost) — do not "
+                "re-propose an idea already rejected here, and don't undo one "
+                "already promoted:\n\n"
+                f"{history_context or '(no prior mutations recorded)'}\n\n"
+                "Keep the tone and structure of the existing rules; make targeted "
+                "improvements, not a rewrite from scratch. Do not touch any other "
+                "file. You MUST call write_file on AGENT.md with a concrete, "
+                "specific change before finishing — leaving the file exactly as "
+                "you found it is not an acceptable outcome, even if you are "
+                "unsure which change is best; make your best-supported bet."
+                f"{extra_instruction}"
+            )
+            harness_kwargs = {"profile": profile, "timeout": timeout}
+            if hb:
+                harness_kwargs["on_tick"] = lambda: hb.write(status="running", phase="draft")
+            _run_harness(str(scratch), goal, **harness_kwargs)
+            return (scratch / "AGENT.md").read_text(encoding="utf-8")
+
+    candidate_text = _draft_once()
+    if candidate_text == current_text:
+        # A no-op draft can't ever be a real improvement — gate_mutation
+        # would just skip it and force-reject (see its own no-op guard),
+        # burning a whole autoloop cycle for nothing. One retry with a
+        # harder, more explicit nudge is cheap relative to that (a single
+        # extra LLM call vs. a wasted cycle slot) and empirically recovers
+        # some of these: 2 of 8 real cycles in the 2026-08-26/28 run
+        # produced an identical-text candidate on the first attempt.
+        if hb:
+            hb.write(status="running", phase="draft-retry")
+        candidate_text = _draft_once(
+            "\n\nYour previous attempt made ZERO changes to this file — that is "
+            "the one outcome that is never acceptable here. Pick the single "
+            "most promising failure above and make one concrete, targeted "
+            "edit that addresses it, however small."
         )
-        _run_harness(str(scratch), goal, profile=profile, timeout=timeout)
-        return (scratch / "AGENT.md").read_text(encoding="utf-8")
+    return candidate_text
 
 
 # ---------------------------------------------------------------------------
@@ -236,12 +348,29 @@ def gate_mutation(
     timeout: float = 1800.0,
     task_filter: str = "",
     bench_home: Path | None = None,
+    resume: bool = False,
+    heartbeat_path: str | Path | None = None,
+    workers: int = 1,
     log=print,
 ) -> MutationManifest:
     """Run baseline vs. candidate bench passes over ``split`` and a replay
     pass over the trace corpus; record a promote/reject recommendation.
 
     Does not promote — see :func:`promote_mutation`.
+
+    **Fault tolerance.** Both passes use stable bench ids derived from
+    ``mutation_id`` (not a fresh random one each call), so re-invoking
+    with ``resume=True`` after a death (killed session, crash) picks up
+    exactly where either pass stopped — each :func:`~wells.evolve.runner.
+    run_bench` call is itself checkpointed per-task (see its own
+    docstring), so nothing earlier than the one task in flight when the
+    process died is ever redone. ``heartbeat_path``, if given, is passed
+    straight through to both passes. ``workers`` is passed straight
+    through to :func:`~wells.evolve.runner.run_bench` — this is a remote-
+    LLM-latency-bound workload, not local-compute-bound, so running
+    several tasks concurrently is the actual lever for wall-clock time,
+    not local CPU/GPU (see run_bench's own docstring for why this is
+    safe: each task is fully isolated in its own subprocess/worktree).
     """
     from wells import principles, traces
     from wells.evolve import corpus
@@ -269,15 +398,47 @@ def gate_mutation(
     }
     candidate_env = {"WELLS_PRINCIPLES": manifest.candidate_path}
 
+    # A no-op candidate — byte-identical to the baseline text — cannot
+    # represent a real improvement no matter what the two bench passes
+    # score. Running both passes anyway would just measure the harness's
+    # own run-to-run LLM variance against itself and could easily produce
+    # a spurious "promote" purely from noise (candidate happening to score
+    # higher than baseline on the SAME text). Caught live on 2026-08-27:
+    # an --auto draft made zero real edits, and the two passes scored
+    # 52.3% vs 74.1% on identical principles text, which would have been
+    # recorded as a genuine promotion. Skip both bench passes entirely —
+    # cheaper (no wasted API spend on a comparison that can't be
+    # meaningful) and correct (force reject, not noise-dependent).
+    candidate_text = Path(manifest.candidate_path).read_text(encoding="utf-8")
+    baseline_text = Path(baseline_env["WELLS_PRINCIPLES"]).read_text(encoding="utf-8")
+    if candidate_text == baseline_text:
+        log(
+            f"[evolve {mutation_id}] candidate is byte-identical to baseline "
+            f"AGENT.md (no-op draft) — skipping both bench passes, forcing reject."
+        )
+        manifest.split = split
+        manifest.task_filter = task_filter
+        manifest.status = "gated"
+        manifest.baseline_bench = None
+        manifest.candidate_bench = None
+        manifest.replay_summary = None
+        manifest.recommendation = "reject"
+        save_manifest(manifest)
+        return manifest
+
     log(f"[evolve {mutation_id}] baseline pass (split={split!r}) ...")
     baseline_run = run_bench(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
-        task_filter=task_filter, bench_home=bench_home, extra_env=baseline_env, log=log,
+        task_filter=task_filter, bench_home=bench_home, extra_env=baseline_env,
+        bench_id=f"{mutation_id}-baseline", resume=resume, heartbeat_path=heartbeat_path,
+        workers=workers, log=log,
     )
     log(f"[evolve {mutation_id}] candidate pass (split={split!r}) ...")
     candidate_run = run_bench(
         workspace, split, profile=profile, seeds=seeds, timeout=timeout,
-        task_filter=task_filter, bench_home=bench_home, extra_env=candidate_env, log=log,
+        task_filter=task_filter, bench_home=bench_home, extra_env=candidate_env,
+        bench_id=f"{mutation_id}-candidate", resume=resume, heartbeat_path=heartbeat_path,
+        workers=workers, log=log,
     )
 
     # Replay is a free, no-LLM sanity check over the recorded trace corpus.

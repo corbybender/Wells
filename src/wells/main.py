@@ -27,7 +27,7 @@ Usage:
 
     # SEACS bench: mine a git history into an oracle-scored task corpus, then
     # measure the harness against it (see src/wells/evolve/ for the design)
-    wells bench mine --workspace <repo>
+    wells bench mine --repo <repo>
     wells bench list --split val
     wells bench run --split val --profile zai
     wells bench results
@@ -930,13 +930,16 @@ def _run_bench_cmd(args: list[str]) -> None:
 
     if not args:
         print(
-            "usage: wells bench mine [--workspace REPO] [--max N] [--skip-validation]\n"
+            "usage: wells bench mine [--repo PATH] [--max N] [--max-commits N]\n"
             "                         [--env-setup CMD]  (repeatable; run in the\n"
             "                         validation worktree, e.g. --env-setup 'uv sync')\n"
+            "                         [--skip-validation]\n"
             "       wells bench list [--split train|val|blind|all]\n"
             "       wells bench quarantine ID  (exclude a structurally unreliable task)\n"
             "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
             "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
+            "                        [--bench-id ID] [--resume] [--heartbeat PATH]\n"
+            "                        [--workers N]\n"
             "       wells bench results [ID]"
         )
         sys.exit(2)
@@ -945,11 +948,19 @@ def _run_bench_cmd(args: list[str]) -> None:
     workspace = config.WORKSPACE_ROOT
 
     if sub == "mine":
-        repo_root, rest = _pop_flag_value("--workspace", rest)
+        # NOTE: intentionally --repo, not --workspace — main()'s Pass-1
+        # global-flag stripper consumes -w/--workspace before subcommand
+        # dispatch ever sees it (it becomes WORKSPACE_ROOT itself), so a
+        # subcommand-local flag of that exact name is silently unreachable.
+        repo_root, rest = _pop_flag_value("--repo", rest)
         repo_root = repo_root or workspace
         max_tasks_s, rest = _pop_flag_value("--max", rest)
         max_tasks = int(max_tasks_s) if max_tasks_s else 50
+        max_commits_s, rest = _pop_flag_value("--max-commits", rest)
         skip_validation = "--skip-validation" in rest
+        mine_kwargs: dict = {"max_tasks": max_tasks, "skip_validation": skip_validation}
+        if max_commits_s:
+            mine_kwargs["max_commits"] = int(max_commits_s)
         # Repeatable --env-setup CMD: commands run inside the throwaway
         # validation worktree before tests (dependency install for repos a
         # bare checkout can't run: 'uv sync', 'pip install -e .', 'npm ci').
@@ -959,14 +970,10 @@ def _run_bench_cmd(args: list[str]) -> None:
             if v is None:
                 break
             env_setup.append(v)
+        if env_setup:
+            mine_kwargs["env_setup"] = env_setup
         try:
-            tasks, stats = corpus.mine_corpus(
-                repo_root,
-                workspace,
-                max_tasks=max_tasks,
-                skip_validation=skip_validation,
-                env_setup=env_setup or None,
-            )
+            tasks, stats = corpus.mine_corpus(repo_root, workspace, **mine_kwargs)
         except RuntimeError as e:
             print(f"ERROR: {e}")
             sys.exit(1)
@@ -1020,6 +1027,11 @@ def _run_bench_cmd(args: list[str]) -> None:
         seeds_s, rest = _pop_flag_value("--seeds", rest)
         timeout_s, rest = _pop_flag_value("--timeout", rest)
         limit_s, rest = _pop_flag_value("--limit", rest)
+        bench_id, rest = _pop_flag_value("--bench-id", rest)
+        heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        workers_s, rest = _pop_flag_value("--workers", rest)
+        resume = "--resume" in rest
+        rest = [a for a in rest if a != "--resume"]
         kwargs: dict = {"profile": profile or "", "task_filter": task_filter or ""}
         if seeds_s:
             kwargs["seeds"] = int(seeds_s)
@@ -1027,6 +1039,17 @@ def _run_bench_cmd(args: list[str]) -> None:
             kwargs["timeout"] = float(timeout_s)
         if limit_s:
             kwargs["limit"] = int(limit_s)
+        if bench_id:
+            kwargs["bench_id"] = bench_id
+        if heartbeat:
+            kwargs["heartbeat_path"] = heartbeat
+        if workers_s:
+            kwargs["workers"] = int(workers_s)
+        if resume:
+            if not bench_id:
+                print("ERROR: --resume requires --bench-id ID (the id of the run to continue).")
+                sys.exit(2)
+            kwargs["resume"] = True
         try:
             run = runner.run_bench(workspace, split, **kwargs)
         except RuntimeError as e:
@@ -1086,7 +1109,12 @@ def _run_evolve_cmd(args: list[str]) -> None:
             "       wells evolve list\n"
             "       wells evolve show <mutation_id>\n"
             "       wells evolve promote <mutation_id> [--force]\n"
-            "       wells evolve reject <mutation_id>"
+            "       wells evolve reject <mutation_id>\n"
+            "       wells evolve autoloop [--max-cycles N] [--max-days D]\n"
+            "                             [--split val] [--profile NAME] [--no-push]\n"
+            "                             [--workers N]\n"
+            "                             unattended propose->gate->promote/reject,\n"
+            "                             bounded and resumable — see autoloop.py"
         )
         sys.exit(2)
     sub = args[0]
@@ -1114,7 +1142,11 @@ def _run_evolve_cmd(args: list[str]) -> None:
 
     if sub == "gate":
         if len(rest) < 1:
-            print("usage: wells evolve gate <mutation_id> [--split val] ...")
+            print(
+                "usage: wells evolve gate <mutation_id> [--split val] [--profile NAME]\n"
+                "                          [--seeds N] [--timeout SECONDS] [--task ID]\n"
+                "                          [--resume] [--heartbeat PATH] [--workers N]"
+            )
             sys.exit(2)
         mutation_id, rest = rest[0], rest[1:]
         split, rest = _pop_flag_value("--split", rest)
@@ -1122,6 +1154,10 @@ def _run_evolve_cmd(args: list[str]) -> None:
         task_filter, rest = _pop_flag_value("--task", rest)
         seeds_s, rest = _pop_flag_value("--seeds", rest)
         timeout_s, rest = _pop_flag_value("--timeout", rest)
+        heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        workers_s, rest = _pop_flag_value("--workers", rest)
+        resume = "--resume" in rest
+        rest = [a for a in rest if a != "--resume"]
         kwargs: dict = {
             "split": split or "val",
             "profile": profile or "",
@@ -1131,6 +1167,12 @@ def _run_evolve_cmd(args: list[str]) -> None:
             kwargs["seeds"] = int(seeds_s)
         if timeout_s:
             kwargs["timeout"] = float(timeout_s)
+        if heartbeat:
+            kwargs["heartbeat_path"] = heartbeat
+        if workers_s:
+            kwargs["workers"] = int(workers_s)
+        if resume:
+            kwargs["resume"] = True
         try:
             manifest = mutate.gate_mutation(mutation_id, workspace, **kwargs)
         except RuntimeError as e:
@@ -1180,6 +1222,43 @@ def _run_evolve_cmd(args: list[str]) -> None:
         print(msg)
         sys.exit(0 if ok else 1)
 
+    if sub == "autoloop":
+        from wells.evolve import autoloop
+
+        max_cycles_s, rest = _pop_flag_value("--max-cycles", rest)
+        max_days_s, rest = _pop_flag_value("--max-days", rest)
+        split, rest = _pop_flag_value("--split", rest)
+        profile, rest = _pop_flag_value("--profile", rest)
+        seeds_s, rest = _pop_flag_value("--seeds", rest)
+        timeout_s, rest = _pop_flag_value("--timeout", rest)
+        heartbeat, rest = _pop_flag_value("--heartbeat", rest)
+        workers_s, rest = _pop_flag_value("--workers", rest)
+        no_push = "--no-push" in rest
+        rest = [a for a in rest if a != "--no-push"]
+        kwargs: dict = {
+            "split": split or "val",
+            "profile": profile or "",
+            "push": not no_push,
+        }
+        if max_cycles_s:
+            kwargs["max_cycles"] = int(max_cycles_s)
+        if max_days_s:
+            kwargs["max_days"] = float(max_days_s)
+        if seeds_s:
+            kwargs["seeds"] = int(seeds_s)
+        if timeout_s:
+            kwargs["timeout"] = float(timeout_s)
+        if heartbeat:
+            kwargs["heartbeat_path"] = heartbeat
+        if workers_s:
+            kwargs["workers"] = int(workers_s)
+        state = autoloop.run_autonomous_loop(workspace, **kwargs)
+        print(f"\nstopped: {state.stop_reason}")
+        print(f"cycles completed: {state.cycle}")
+        print(f"promoted: {sum(1 for h in state.history if h.promoted)}")
+        print(f"report: {autoloop.REPORT_PATH}")
+        return
+
     print(f"Unknown evolve subcommand: {sub!r}")
     sys.exit(2)
 
@@ -1192,7 +1271,7 @@ def _run_schedule_cmd(args: list[str]) -> None:
 
     if not args:
         print(
-            "usage: wells schedule add <name> <interval> [--workspace <path>] \"<goal>\"\n"
+            "usage: wells schedule add <name> <interval> [--for <path>] \"<goal>\"\n"
             "       wells schedule list\n"
             "       wells schedule remove <name>\n"
             "\n"
@@ -1205,14 +1284,19 @@ def _run_schedule_cmd(args: list[str]) -> None:
     if sub == "add":
         rest = args[1:]
         if len(rest) < 3:
-            print('usage: wells schedule add <name> <interval> [--workspace <path>] "<goal>"')
+            print('usage: wells schedule add <name> <interval> [--for <path>] "<goal>"')
             sys.exit(2)
         name, interval = rest[0], rest[1]
         rest = rest[2:]
         workspace = config.WORKSPACE_ROOT
-        if rest and rest[0] == "--workspace":
+        # NOTE: intentionally --for, not --workspace — main()'s Pass-1
+        # global-flag stripper consumes -w/--workspace before subcommand
+        # dispatch ever sees it, so a subcommand-local flag of that exact
+        # name is silently unreachable (see the identical bug/fix note on
+        # `bench mine`'s --repo).
+        if rest and rest[0] == "--for":
             if len(rest) < 2:
-                print("ERROR: --workspace requires a path.")
+                print("ERROR: --for requires a path.")
                 sys.exit(2)
             workspace = rest[1]
             rest = rest[2:]

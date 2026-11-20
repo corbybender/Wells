@@ -100,11 +100,46 @@ class StepUsage:
 
 
 class TokenLedger:
-    """Thread-safe accumulator of per-step token usage."""
+    """Thread-safe accumulator of per-step token usage.
+
+    Optionally mirrors running totals to a side file on every ``record()``
+    call (set ``$WELLS_TOKENS_FILE``, or call :meth:`set_sink` directly) —
+    this is what lets a supervisor recover token counts from a child
+    process that never got to print its own final JSON summary (e.g.
+    evolve/bench's runner tree-kills a harness subprocess on timeout;
+    the LEDGER dies with it, but the last-written sink file survives on
+    disk). Best-effort and silent on any failure: a broken/unwritable
+    sink must never affect the actual run.
+    """
 
     def __init__(self) -> None:
         self.steps: list[StepUsage] = []
         self._lock = threading.Lock()
+        self._sink_path = None
+        self.set_sink_from_env()
+
+    def set_sink_from_env(self) -> None:
+        import os
+
+        self._sink_path = os.environ.get("WELLS_TOKENS_FILE") or None
+
+    def set_sink(self, path) -> None:
+        self._sink_path = str(path) if path else None
+
+    def _write_sink(self) -> None:
+        if not self._sink_path:
+            return
+        try:
+            import json
+            from pathlib import Path
+
+            p = Path(self._sink_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(self.totals()), encoding="utf-8")
+            tmp.replace(p)
+        except Exception:
+            pass
 
     def reset(self) -> None:
         with self._lock:
@@ -139,6 +174,7 @@ class TokenLedger:
                     saved_by_summary=saved_by_summary,
                 )
             )
+        self._write_sink()
 
     def totals(self) -> dict:
         with self._lock:
