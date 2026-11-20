@@ -1,6 +1,6 @@
 [project]
 name = "wells-agent"
-version = "0.3.1"
+version = "0.3.2"
 description = "Wells — a model-agnostic, self-improving agentic coding harness (planner/architect/coder/tester/reviewer) with deterministic test-gate verification, Code Mode, SEACS evolution, ACP + MCP."
 readme = "README.md"
 requires-python = ">=3.12"
