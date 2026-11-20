@@ -1,0 +1,37 @@
+{
+  "task_id": "T-c037fa3ba5-feat-cross-harness-skills-sandbo",
+  "repo_root": "Q:\\wells",
+  "base_commit": "c9d4f56d48075a88a8f88594dd6f2d721fbb8c05",
+  "problem_statement": "feat: cross-harness skills, sandbox auto-upgrade, reflexion->BigBrain mirror\n\nskills: discover .claude/.agents/.codex skills dirs (workspace + user-global), WELLS_CROSS_SKILLS=0 opt-out, first-wins shadowing. safety: auto upgrades to sandbox when WELLS_SANDBOX_AUTO=1 and a container runtime answers (cached probe); explicit modes never upgraded. reflections: critiques mirrored into the BigBrain log for memory_search recall. Suite: 1061 passed.",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_crossharness.py::test_claude_skills_discovered",
+      "tests/test_crossharness.py::test_agents_and_codex_skills_discovered",
+      "tests/test_crossharness.py::test_workspace_skills_shadow_crossharness",
+      "tests/test_crossharness.py::test_cross_skills_opt_out",
+      "tests/test_crossharness.py::test_policy_auto_upgrades_to_sandbox",
+      "tests/test_crossharness.py::test_policy_no_upgrade_without_opt_in",
+      "tests/test_crossharness.py::test_policy_no_upgrade_without_runtime",
+      "tests/test_crossharness.py::test_explicit_modes_never_upgraded",
+      "tests/test_memory_bridge.py::test_log_lesson_and_compile",
+      "tests/test_memory_bridge.py::test_recall_finds_compiled_lesson",
+      "tests/test_memory_bridge.py::test_log_lesson_disabled",
+      "tests/test_memory_bridge.py::test_memory_search_tool_registered_when_available",
+      "tests/test_memory_bridge.py::test_memory_search_tool_dispatch",
+      "tests/test_memory_bridge.py::test_finisher_writes_bigbrain",
+      "tests/test_memory_bridge.py::test_reflection_mirrored_to_bigbrain"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_crossharness.py",
+      "tests/test_memory_bridge.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "c037fa3ba55c3da90c8e84b3217c6ff71beb5cfe",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-11-20 12:30:04"
+}

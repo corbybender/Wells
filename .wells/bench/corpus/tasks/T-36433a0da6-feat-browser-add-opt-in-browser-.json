@@ -1,0 +1,37 @@
+{
+  "task_id": "T-36433a0da6-feat-browser-add-opt-in-browser-",
+  "repo_root": "Q:\\wells",
+  "base_commit": "1142bcff22a5c05c719f51ee69812fe437ab9dcb",
+  "problem_statement": "feat(browser): add opt-in browser_* tools (Playwright)\n\nnavigate/click/type/read/screenshot against a real, JS-rendered\nChromium session -- fetch_url only ever sees static HTML, so SPAs,\ndashboards, and local dev-server frontends need an actual browser.\nOne lazily-launched session per process (cookies/login persist across\ncalls), closed at exit. click/type go through the safety gate like\nevery other mutating tool; navigate/read/screenshot are read-only,\nsame as fetch_url. Screenshots route through the new vision-profile\nrouting (MODEL_PROFILE_VISION) automatically to get a text\ndescription back, even when the active model isn't vision-capable.\n\nOff by default (WELLS_BROWSER=0) since it pulls in Playwright + a\ndownloaded Chromium binary -- new 'browser' optional-dependency group\nin pyproject.toml. Tests cover registration/gating without a real\nbrowser plus a live-Chromium suite that self-skips when Playwright/\nChromium aren't installed (16 tests total, 10 always run).\n\nAlso documents this + MODEL_PROFILE_VISION's /config CRUD in README.",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_browser.py::test_disabled_by_default",
+      "tests/test_browser.py::test_enabled_via_env",
+      "tests/test_browser.py::test_not_registered_by_default",
+      "tests/test_browser.py::test_registered_when_enabled",
+      "tests/test_browser.py::test_click_without_session_errors",
+      "tests/test_browser.py::test_type_without_session_errors",
+      "tests/test_browser.py::test_read_without_session_errors",
+      "tests/test_browser.py::test_navigate_requires_url",
+      "tests/test_browser.py::test_click_requires_target",
+      "tests/test_browser.py::test_type_requires_target",
+      "tests/test_browser.py::test_navigate_and_read_local_html",
+      "tests/test_browser.py::test_click_by_css_selector",
+      "tests/test_browser.py::test_type_into_input",
+      "tests/test_browser.py::test_click_respects_plan_mode",
+      "tests/test_browser.py::test_click_respects_dryrun",
+      "tests/test_browser.py::test_screenshot_without_describe"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_browser.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "36433a0da6e8f9feecdd0f7630823d98b38c000c",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-11-20 12:34:30"
+}

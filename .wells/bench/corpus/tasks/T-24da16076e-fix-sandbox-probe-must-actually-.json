@@ -32,7 +32,7 @@
   "environment_setup": [],
   "source_commit": "24da16076eb3be558bde9050c3cc995872d787b5",
   "split": "train",
-  "status": "verified",
+  "status": "rejected",
   "schema_version": 1,
   "mined_at": "2026-08-22 09:27:06"
 }

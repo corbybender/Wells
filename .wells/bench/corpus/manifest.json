@@ -1,12 +1,19 @@
 {
-  "updated_at": "2026-08-22 09:32:21",
-  "total": 10,
+  "updated_at": "2026-11-20 12:34:42",
+  "total": 22,
   "splits": {
-    "train": 7,
-    "val": 0,
-    "blind": 3
+    "train": 17,
+    "val": 1,
+    "blind": 4
   },
   "tasks": [
+    {
+      "task_id": "T-0525a67691-feat-rules-permission-allowlists",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "0525a67691ca2fba2a2f7dfd2bb05082500cf789",
+      "subject": "feat(rules): permission allowlists -- severity=allow bypasses approve mode"
+    },
     {
       "task_id": "T-11e9879fdf-feat-opt-in-semantic-self-heal-v",
       "split": "train",
@@ -15,11 +22,53 @@
       "subject": "feat: opt-in semantic self-heal via real type-checkers"
     },
     {
-      "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
+      "task_id": "T-1d62411d7d-feat-sandbox-add-opt-in-sandbox-",
       "split": "train",
       "status": "verified",
+      "source_commit": "1d62411d7db127f11422cf1fedffe843f502aaba",
+      "subject": "feat(sandbox): add opt-in 'sandbox' mode -- disposable container per run"
+    },
+    {
+      "task_id": "T-2235fb8e2f-feat-todo-model-driven-task-brea",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "2235fb8e2febba1af886375313ad5233380ad4a3",
+      "subject": "feat(todo): model-driven task breakdown, rendered live in the TUI"
+    },
+    {
+      "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
+      "split": "train",
+      "status": "rejected",
       "source_commit": "24da16076eb3be558bde9050c3cc995872d787b5",
       "subject": "fix(sandbox): probe must actually run a container, not just query info"
+    },
+    {
+      "task_id": "T-251d5e6279-feat-browser-flip-wells-browser-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "251d5e62790863bbeb25d558089f0a5cca838c10",
+      "subject": "feat(browser): flip WELLS_BROWSER to on by default"
+    },
+    {
+      "task_id": "T-2d522e1d0f-feat-browser-drive-an-installed-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "2d522e1d0f92e34b30077474d8729d8b5894853f",
+      "subject": "feat(browser): drive an installed Chrome/Edge/Brave instead of downloading Chrom"
+    },
+    {
+      "task_id": "T-36333e0bd6-feat-schedule-unattended-recurri",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "36333e0bd6bad18819c2d29970f3f2101e61717d",
+      "subject": "feat(schedule): unattended recurring runs via Task Scheduler/cron"
+    },
+    {
+      "task_id": "T-36433a0da6-feat-browser-add-opt-in-browser-",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "36433a0da6e8f9feecdd0f7630823d98b38c000c",
+      "subject": "feat(browser): add opt-in browser_* tools (Playwright)"
     },
     {
       "task_id": "T-41f04dc072-fix-cli-reflections-with-no-subc",
@@ -43,6 +92,13 @@
       "subject": "perf(repomap): background the embedding warm-up instead of blocking startup"
     },
     {
+      "task_id": "T-8632899aeb-feat-personas-custom-subagent-pe",
+      "split": "blind",
+      "status": "verified",
+      "source_commit": "8632899aebbe4f08385789dbe2bc640a9376533e",
+      "subject": "feat(personas): custom subagent personas (.wells/agents/*.md)"
+    },
+    {
       "task_id": "T-9399613aef-feat-self-improvement-reflexion-",
       "split": "train",
       "status": "verified",
@@ -57,6 +113,13 @@
       "subject": "fix(vision): forward pasted images on the auto route; fix dead free-tier slug"
     },
     {
+      "task_id": "T-c037fa3ba5-feat-cross-harness-skills-sandbo",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "c037fa3ba55c3da90c8e84b3217c6ff71beb5cfe",
+      "subject": "feat: cross-harness skills, sandbox auto-upgrade, reflexion->BigBrain mirror"
+    },
+    {
       "task_id": "T-c3c2cd0d33-fix-llm-retry-openrouter-gateway",
       "split": "train",
       "status": "verified",
@@ -69,6 +132,27 @@
       "status": "verified",
       "source_commit": "c5f9a9f591d57346ab367956560ae46693c27c45",
       "subject": "feat: run-completion notifications + cross-run daily spend cap"
+    },
+    {
+      "task_id": "T-c9d4f56d48-feat-observability-bus-bigbrain-",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "c9d4f56d48075a88a8f88594dd6f2d721fbb8c05",
+      "subject": "feat: observability bus, BigBrain memory bridge, Code Mode, ACP server"
+    },
+    {
+      "task_id": "T-ce5da127e1-feat-evolve-phase-2-the-evolutio",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "ce5da127e10015549d3e4c0fc970a938b5d103be",
+      "subject": "feat(evolve): Phase 2 — the evolution engine (AGENT.md mutation, v1)"
+    },
+    {
+      "task_id": "T-d148e42359-feat-memory-cross-project-global",
+      "split": "train",
+      "status": "verified",
+      "source_commit": "d148e4235929f4944724c1632787b08088fabce5",
+      "subject": "feat(memory): cross-project global user memory (~/.wells/memory/)"
     },
     {
       "task_id": "T-f1bcbcb6fd-fix-providers-detect-tunneled-ol",

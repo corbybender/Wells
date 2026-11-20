@@ -1,0 +1,36 @@
+{
+  "task_id": "T-ce5da127e1-feat-evolve-phase-2-the-evolutio",
+  "repo_root": "Q:\\wells",
+  "base_commit": "baaa2285f4448979bfe8d44f06e444d0b04fb0fc",
+  "problem_statement": "feat(evolve): Phase 2 — the evolution engine (AGENT.md mutation, v1)\n\nAdds propose -> gate -> promote/reject for the harness's own operating\nprinciples (AGENT.md): the first thing that acts on Phase 1's bench\nnumbers instead of just producing them.\n\n- src/wells/evolve/mutate.py: MutationManifest (mirrors fleet.py's\n  manifest pattern), propose_mutation (candidate from a file, zero LLM\n  cost, or --auto: one real headless run drafts a candidate seeded with\n  recent bench failures), gate_mutation (baseline vs. candidate bench\n  passes over a split, using $WELLS_PRINCIPLES to isolate the one\n  variable that changes between them, plus a free replay pass over the\n  trace corpus), promote_mutation (writes to <workspace>/AGENT.md,\n  clears the principles cache), reject_mutation.\n- src/wells/evolve/runner.py: threads an optional extra_env through\n  _run_harness/_execute_task/run_bench so gate_mutation can pin\n  WELLS_PRINCIPLES per bench pass without mutating this process's own\n  environment (only passed when set, so existing test stubs with a\n  narrower _run_harness signature keep working unchanged).\n- src/wells/main.py: `wells evolve propose|gate|list|show|promote|reject`\n  CLI, dispatched alongside bench/fleet/schedule.\n- tests/test_evolve_mutate.py: 15 new tests, fully stubbed (no LLM calls).\n\nScope for v1: AGENT.md only, not tools/skills — it already has a clean,\nunused write seam ($WELLS_PRINCIPLES is the top-precedence resolution\nstep in principles.py) and is the highest-leverage surface (governs every\nagent node). Skills already have their own propose/accept/reject flow\n(skill_authoring.py); tool descriptions are hardcoded Python literals\nwith no data-driven override yet — both left for a future extension of\nthis same shape.\n\nKnown, inherited limitation: the corpus has 0 val-split tasks today (10\ntotal tasks, deterministic hash split). `gate` defaults to --split val\nand fails loudly with the exact remediation rather than silently falling\nback to train.\n\nVerified end-to-end with a real gate run (single task, bounded 10-min\ntimeout per pass, zai profile): baseline vs. candidate bench passes both\nresolved, replay ran over the trace corpus, recommendation computed\ncorrectly, no orphaned sandbox containers. Full suite: 1019 passed, 23\nskipped, 0 failed.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01JNTwfPvuEvTt6q79Esixzv",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_evolve_mutate.py::test_manifest_roundtrip",
+      "tests/test_evolve_mutate.py::test_load_manifest_missing_returns_none",
+      "tests/test_evolve_mutate.py::test_list_manifests_sorted_newest_first",
+      "tests/test_evolve_mutate.py::test_propose_mutation_from_file",
+      "tests/test_evolve_mutate.py::test_propose_mutation_requires_file_or_auto",
+      "tests/test_evolve_mutate.py::test_propose_mutation_rejects_both_file_and_auto",
+      "tests/test_evolve_mutate.py::test_propose_mutation_auto_uses_stubbed_harness",
+      "tests/test_evolve_mutate.py::test_gate_mutation_recommends_promote_when_candidate_resolves_more",
+      "tests/test_evolve_mutate.py::test_gate_mutation_missing_manifest_raises",
+      "tests/test_evolve_mutate.py::test_gate_mutation_empty_split_raises_loud",
+      "tests/test_evolve_mutate.py::test_promote_requires_gated_status",
+      "tests/test_evolve_mutate.py::test_promote_writes_agent_md_and_clears_cache",
+      "tests/test_evolve_mutate.py::test_promote_refuses_reject_recommendation_without_force",
+      "tests/test_evolve_mutate.py::test_promote_missing_mutation",
+      "tests/test_evolve_mutate.py::test_reject_mutation"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_evolve_mutate.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "ce5da127e10015549d3e4c0fc970a938b5d103be",
+  "split": "train",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-11-20 12:30:42"
+}
