@@ -35,7 +35,7 @@ fi
 if ! command -v git >/dev/null 2>&1; then
   say "note: git not found (only needed if you install from the repo instead)."
 fi
-say "Installing the wells command (this also fetches Python 3.12 if needed) ..."
+say "Installing the wells command (fetches a managed Python if needed) ..."
 uv tool install --force wells-agent
 
 # --- 3. first-run setup -----------------------------------------------------

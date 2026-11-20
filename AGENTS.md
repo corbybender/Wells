@@ -6,13 +6,21 @@ Edit or prune freely; it is version-controlled with the code.
 ## Lessons Learned
 
 ### 2026-11-20 — Distribution: PyPI + binaries shipped; two real bugs found by shipping
-- PyPI name is **wells-agent** (bare `wells` taken). `bigbrain-memory` also
-  published (trusted publishing, OIDC, env `pypi`, no tokens). One-liners now
-  `uv tool install --python 3.12 "wells-agent[index]"`.
-- **Hard dep on native modules breaks everything**: `wells-index` (PyO3,
-  cp312/cp313 wheels only) as a core dep made `uvx wells-agent` unresolvable on
-  CPython 3.15. Now the optional `[index]` extra (code already falls back to
-  grep/glob via index_tools._try_load_indexer). Keep native deps OUT of core.
+- PyPI name is **wells-agent** (bare `wells` taken). `bigbrain-memory` and
+  `wells-index` also published (trusted publishing, OIDC, env `pypi`, no
+  tokens). Install is ONE command again since 0.4.0:
+  `uv tool install wells-agent`.
+- **Hard dep on native modules breaks everything — UNLESS the wheels are
+  abi3**: `wells-index` (PyO3) as a core dep with cp312/cp313-only wheels made
+  `uvx wells-agent` unresolvable on CPython 3.15 (the 0.3.0 bug). Fixed for
+  good in wells-index 0.2.0 with `pyo3/abi3-py312` — stable-ABI wheels, one
+  per platform, install on every future CPython. Since then it's a core dep
+  again. Lesson: native deps belong in core only with abi3 wheels.
+- **Trusted publishers must be re-registered after a repo rename**: the
+  wells-index publisher still pointed at the pre-rename
+  `corbybender/Wells-Coding-Harness`, so OIDC publish failed with a bare
+  "exchange failure". Project-level publisher page lives at
+  pypi.org/manage/project/<name>/settings/publishing/.
 - Version lived in 3 places and drifted (`--version` said 0.2.0 while the
   package was 0.3.0). Now single source: importlib.metadata in
   `wells/__init__.py`; mcp_server imports `__version__`.
