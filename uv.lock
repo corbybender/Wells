@@ -2158,7 +2158,7 @@ wheels = [
 
 [[package]]
 name = "wells-agent"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -2171,7 +2171,6 @@ dependencies = [
     { name = "textual" },
     { name = "truststore" },
     { name = "watchdog" },
-    { name = "wells-index" },
 ]
 
 [package.optional-dependencies]
@@ -2182,6 +2181,9 @@ embeddings = [
     { name = "fastembed" },
     { name = "sqlite-vec" },
 ]
+index = [
+    { name = "wells-index" },
+]
 memory = [
     { name = "bigbrain-memory" },
 ]
@@ -2189,6 +2191,7 @@ memory = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "wells-index" },
 ]
 
 [package.metadata]
@@ -2207,12 +2210,15 @@ requires-dist = [
     { name = "textual", specifier = ">=1.0.0" },
     { name = "truststore", specifier = ">=0.9.1" },
     { name = "watchdog", specifier = ">=4.0" },
-    { name = "wells-index", specifier = ">=0.1.0" },
+    { name = "wells-index", marker = "extra == 'index'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["embeddings", "browser", "memory"]
+provides-extras = ["index", "embeddings", "browser", "memory"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "wells-index", specifier = ">=0.1.0" },
+]
 
 [[package]]
 name = "wells-index"

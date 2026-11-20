@@ -57,7 +57,7 @@ Re-running the installer updates an existing install.
 **Already have `uv` or `pipx`?** Skip the script:
 
 ```bash
-uv tool install wells-agent && wells config      # from PyPI
+uv tool install 'wells-agent[index]' && wells config   # from PyPI
 # or, tracking the repo:  uv tool install git+https://github.com/corbybender/Wells.git
 ```
 
@@ -80,7 +80,7 @@ self-contained (no Python, no uv, no venv) and start instantly.
 | You want ... | Use |
 |---|---|
 | It to just work (default) | The one-liner above |
-| Versioned installs / `uvx` trials / corporate proxies | `uv tool install wells-agent` ([PyPI](https://pypi.org/project/wells-agent/)) |
+| Versioned installs / `uvx` trials / corporate proxies | `uv tool install 'wells-agent[index]'` ([PyPI](https://pypi.org/project/wells-agent/)) — drop `[index]` if you don't need the native code index |
 | No Python runtime at all, instant cold start | [Standalone binary](#get-started-in-one-command) from Releases |
 | No global install — run Wells against one project from a clone | [Option A](#option-a---cloned-standalone-no-install-needed) |
 | To embed Wells inside another project's folder | [Option B](#option-b---drive-a-different-project-embedding) |
