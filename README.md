@@ -6,7 +6,9 @@
 
 <p align="center">
   <a href="https://github.com/corbybender/Wells/actions/workflows/ci.yml"><img src="https://github.com/corbybender/Wells/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/wells-agent/"><img src="https://img.shields.io/pypi/v/wells-agent?label=wells-agent" alt="wells-agent on PyPI"></a>
   <a href="https://pypi.org/project/wells-index/"><img src="https://img.shields.io/pypi/v/wells-index?label=wells-index" alt="wells-index on PyPI"></a>
+  <a href="https://github.com/corbybender/Wells/releases/latest"><img src="https://img.shields.io/github/v/release/corbybender/Wells?include_prereleases&label=binaries" alt="latest release binaries"></a>
 </p>
 
 **Bring your own API key — Anthropic (Claude), OpenAI, Google (Gemini),
@@ -466,18 +468,29 @@ directory; Wells' own source is never touched.
 
 ### Option C — Global install (available everywhere)
 
-Install once, directly from GitHub (not published to PyPI — only the
-`wells-index` native indexer is; `pip install wells` won't find this
-package), then `wells` is on your PATH from any directory:
+Install once and `wells` is on your PATH from any directory. From PyPI
+(recommended — versioned, and `uvx wells-agent` works with no install at all):
+
+```bash
+uv tool install "wells-agent[index]"          # or: pipx install 'wells-agent[index]'
+```
+
+Or straight from the repo (tracks master, or your own fork):
 
 ```bash
 uv tool install git+https://github.com/corbybender/Wells.git
 # or: pipx install git+https://github.com/corbybender/Wells.git
 # or, from a local clone: uv tool install . / pipx install .
+```
 
+```bash
 wells "your goal"                        # from any directory
 wells --workspace /path/to/project "goal"
 ```
+
+(The `[index]` extra adds the native `wells-index` code index; without it Wells
+falls back to grep/glob search. It's skipped by default because native wheels
+only cover some Python versions.)
 
 **Note:** During installation, `uv` may show a warning about hardlinks across
 filesystems (`WARN: Hardlink or symlink copy required…`). It's harmless;
