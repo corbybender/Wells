@@ -43,6 +43,15 @@ from wells.evolve.schema import TaskSpec
 RESULTS_REL = Path(".wells") / "bench" / "results"
 
 _RUN_TIMEOUT = 1800.0  # 30min wall-clock per harness run
+
+# Whether bench runs forward the child harness's live -p progress lines into
+# the bench log (plus a 60s heartbeat when the child is quiet). This is the
+# bench-side payoff of the observability bus: a 20-minute agent run is
+# visible instead of silent. WELLS_BENCH_PROGRESS=0 restores the old quiet
+# behaviour (e.g. for CI logs).
+_PROGRESS_LINES = os.environ.get("WELLS_BENCH_PROGRESS", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 _ORACLE_TIMEOUT = 600.0
 
 
@@ -125,6 +134,7 @@ def _run_harness(
     profile: str = "",
     timeout: float = _RUN_TIMEOUT,
     extra_env: dict[str, str] | None = None,
+    progress=None,
 ) -> dict:
     """One headless Wells run in a child process; returns the JSON payload.
 
@@ -137,8 +147,13 @@ def _run_harness(
     drain: subprocess.run's own timeout path re-drains with no timeout
     after killing the child, which hangs forever if an orphaned grandchild
     still holds the pipe.
+
+    ``progress(line)`` — optional callback fed every line the child prints
+    (the harness's own -p mode progress output), so a bench log can show
+    what the agent is doing instead of sitting silent for the whole run.
     """
     import os
+    import threading
 
     env = dict(os.environ)
     env["UV_LINK_MODE"] = "copy"
@@ -176,20 +191,58 @@ def _run_harness(
         # on Windows, where _kill_tree uses taskkill /T instead.
         start_new_session=(sys.platform != "win32"),
     )
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc.pid)
-        try:
-            out, err = proc.communicate(timeout=30)  # bounded drain
-        except subprocess.TimeoutExpired:
-            out, err = "", ""
+
+    # Stream the child's output instead of communicate()-ing it away: the
+    # harness prints live progress in -p mode, and a bench that surfaces it
+    # turns a 20-minute silent wait into a visible run. Threads drain the
+    # pipes (readline blocks); the main loop enforces the wall-clock cap
+    # and emits a periodic heartbeat even when the child is quiet.
+    out_lines: list[str] = []
+    err_lines: list[str] = []
+
+    def _drain(pipe, sink: list, forward: bool) -> None:
+        for line in iter(pipe.readline, ""):
+            sink.append(line)
+            if forward and progress and line.strip() and not line.lstrip().startswith("{"):
+                try:
+                    progress(line.rstrip("\n"))
+                except Exception:
+                    pass
+
+    t_out = threading.Thread(target=_drain, args=(proc.stdout, out_lines, True), daemon=True)
+    t_err = threading.Thread(target=_drain, args=(proc.stderr, err_lines, False), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    import time as _t
+
+    t0 = _t.monotonic()
+    last_beat = t0
+    timed_out = False
+    while proc.poll() is None:
+        now = _t.monotonic()
+        if now - t0 > timeout:
+            timed_out = True
+            _kill_tree(proc.pid)
+            break
+        if progress and now - last_beat >= 60.0:
+            last_beat = now
+            try:
+                progress(f"(harness still running · {now - t0:.0f}s)")
+            except Exception:
+                pass
+        _t.sleep(0.25)
+    t_out.join(timeout=30)
+    t_err.join(timeout=30)
+    out = "".join(out_lines)
+    err = "".join(err_lines)
+    if timed_out:
         return {
             "status": "timeout",
             "error": f"harness run exceeded {timeout}s and was tree-killed",
         }
 
-    for line in reversed((out or "").splitlines()):
+    for line in reversed(out.splitlines()):
         line = line.strip()
         if line.startswith("{"):
             try:
@@ -264,6 +317,7 @@ def _execute_task(
     worktree_root: Path,
     timeout: float,
     extra_env: dict[str, str] | None = None,
+    progress=None,
 ) -> TaskResult:
     """Worktree at base → run harness → score oracle → always clean up."""
     wt = str(worktree_root / f"{task.task_id}-s{seed}")
@@ -281,6 +335,22 @@ def _execute_task(
             harness_kwargs = {"profile": profile, "timeout": timeout}
             if extra_env:
                 harness_kwargs["extra_env"] = extra_env
+            if progress:
+                # Same compat rule as extra_env above: test stubs may
+                # monkeypatch _run_harness with a narrower signature
+                # (profile/timeout only) — only pass progress when the
+                # callable accepts it.
+                import inspect as _inspect
+
+                try:
+                    params = _inspect.signature(_run_harness).parameters
+                    if "progress" in params or any(
+                        p.kind == _inspect.Parameter.VAR_KEYWORD
+                        for p in params.values()
+                    ):
+                        harness_kwargs["progress"] = progress
+                except (TypeError, ValueError):
+                    pass
             payload = _run_harness(wt, task.problem_statement, **harness_kwargs)
             result.harness_status = payload.get("status", "error")
             tokens = payload.get("tokens") or {}
@@ -467,6 +537,7 @@ def run_bench(
         for i, task in enumerate(tasks, 1):
             for seed in range(1, seeds + 1):
                 log(f"[bench {bench_id}] ({i}/{len(tasks)} s{seed}) {task.task_id} ...")
+                _progress = (lambda line: log(f"[bench {bench_id}]   | {line}")) if _PROGRESS_LINES else None
                 row = _execute_task(
                     repo_root,
                     task,
@@ -475,6 +546,7 @@ def run_bench(
                     worktree_root=worktree_root,
                     timeout=timeout,
                     extra_env=extra_env,
+                    progress=_progress,
                 )
                 run.tasks.append(row)
                 log(
