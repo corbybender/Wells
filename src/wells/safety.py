@@ -153,13 +153,52 @@ def screen_command(command: str) -> None:
 
 
 def policy(workspace_or_safety: str | None = None) -> str:
-    """Read the effective safety policy."""
+    """Read the effective safety policy.
+
+    ``auto`` upgrades to ``sandbox`` when **all** of the following hold:
+
+      * ``WELLS_SANDBOX_AUTO=1`` is set (the opt-in; flipping the shipped
+        default to on is a release decision gated on the sandbox surviving
+        a real-world soak — it changes where every command runs);
+      * a container runtime is installed and its daemon answers
+        (:func:`wells.sandbox.runtime_available`, probed once per process);
+      * the caller didn't explicitly request another mode.
+
+    Codex sandboxes by default; this is Wells's path to the same posture
+    without surprising existing users mid-release.
+    """
     v = (
         (workspace_or_safety or os.environ.get("HARNESS_SAFETY") or "auto")
         .strip()
         .lower()
     )
-    return v if v in ("auto", "approve", "dryrun", "sandbox") else "auto"
+    if v not in ("auto", "approve", "dryrun", "sandbox"):
+        v = "auto"
+    if v == "auto" and _sandbox_auto_enabled():
+        return "sandbox"
+    return v
+
+
+_sandbox_probe_result: bool | None = None
+
+
+def _sandbox_auto_enabled() -> bool:
+    """True when auto mode should upgrade to sandbox (cached probe)."""
+    global _sandbox_probe_result
+    if os.environ.get("WELLS_SANDBOX_AUTO", "0").strip().lower() not in (
+        "1", "true", "yes", "on",
+    ):
+        return False
+    if _sandbox_probe_result is None:
+        try:
+            from wells import sandbox
+
+            _sandbox_probe_result = bool(
+                sandbox.enabled() and sandbox.runtime_available()
+            )
+        except Exception:
+            _sandbox_probe_result = False
+    return _sandbox_probe_result
 
 
 def gate(

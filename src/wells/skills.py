@@ -125,8 +125,13 @@ def _skill_paths(workspace: str | None = None) -> list[Path]:
       1. ``<workspace>/skills/`` (the conventional location)
       2. ``<workspace>/.wells/skills/`` (where auto-authored skills land once
          promoted — see :mod:`wells.skill_authoring`)
-      3. Any extra dir in ``WELLS_SKILLS_PATHS`` (os.pathsep-separated)
-      4. The package's built-in skills (``WELLS_BUILTIN_SKILLS=0`` to disable)
+      3. Cross-harness compatibility dirs (``WELLS_CROSS_SKILLS=0`` disables):
+         ``<workspace>/.claude/skills``, ``.agents/skills``, ``.codex/skills``
+         plus the user-global ``~/.claude/skills`` / ``~/.agents/skills`` —
+         so a skill pack written for Claude Code / Codex / Kimi Code works in
+         Wells unmodified (same Agent Skills layout other harnesses read).
+      4. Any extra dir in ``WELLS_SKILLS_PATHS`` (os.pathsep-separated)
+      5. The package's built-in skills (``WELLS_BUILTIN_SKILLS=0`` to disable)
 
     Non-existent dirs are silently skipped. Duplicates removed.
     """
@@ -135,6 +140,14 @@ def _skill_paths(workspace: str | None = None) -> list[Path]:
         ws = safety.workspace_root(workspace)
         roots.append(ws / "skills")
         roots.append(ws / ".wells" / "skills")
+        if os.environ.get("WELLS_CROSS_SKILLS", "1").strip().lower() not in (
+            "0", "false", "no", "off",
+        ):
+            roots.append(ws / ".claude" / "skills")
+            roots.append(ws / ".agents" / "skills")
+            roots.append(ws / ".codex" / "skills")
+            roots.append(Path.home() / ".claude" / "skills")
+            roots.append(Path.home() / ".agents" / "skills")
     except Exception:
         pass
     extra = os.environ.get("WELLS_SKILLS_PATHS", "").strip()

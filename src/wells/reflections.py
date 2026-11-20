@@ -272,6 +272,22 @@ def capture_from_state(state: dict, workspace: str | None, *, dry: bool = False)
         path.write_text(_merge_block(prev, block), encoding="utf-8")
     except Exception:
         return None
+
+    # Mirror the critique into the BigBrain transaction log so future
+    # planners can recall it via memory_search (the reflections file is
+    # injected into prompts, but BigBrain makes it keyword-searchable and
+    # versioned alongside the project's other memory). Best-effort.
+    try:
+        from wells import memory_bridge
+
+        if memory_bridge.enabled():
+            memory_bridge.log_reflection(
+                workspace,
+                critique=f"[{failure_type}] {goal}: {critique}",
+                failed=True,
+            )
+    except Exception:
+        pass
     return path
 
 
