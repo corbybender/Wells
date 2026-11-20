@@ -1,0 +1,30 @@
+name: Publish to PyPI
+
+# Trusted publishing (OIDC): no API tokens. Configure once at
+# https://pypi.org/manage/account/publishing/ :
+#   PyPI project name: wells-agent
+#   owner: corbybender   repo: Wells   workflow: pypi.yml   environment: pypi
+# Then pushing a v* tag builds and publishes.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Check metadata
+        run: uvx twine check dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,7 +1,7 @@
 [project]
-name = "wells"
-version = "0.2.0"
-description = "Wells — a model-agnostic agentic coding harness (planner/architect/coder/tester/reviewer) that actually edits files and runs tests."
+name = "wells-agent"
+version = "0.3.0"
+description = "Wells — a model-agnostic, self-improving agentic coding harness (planner/architect/coder/tester/reviewer) with deterministic test-gate verification, Code Mode, SEACS evolution, ACP + MCP."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -36,10 +36,13 @@ browser = [
     "playwright>=1.48.0",
 ]
 # Durable project memory (BigBrain transaction-log -> curated memory files).
-# Install with:  pip install 'wells[memory]'
-memory = [
-    "bigbrain-memory @ git+https://github.com/corbybender/bigbrain-memory",
-]
+# TODO(pypi): once bigbrain-memory is published to PyPI, this becomes:
+#   memory = ["bigbrain-memory>=1.1.1"]
+# Until then the extra is intentionally empty (an unpublishable git-URL dep
+# would break every install). Manual opt-in:
+#   pip install git+https://github.com/corbybender/bigbrain-memory
+# The harness degrades gracefully without it.
+memory = []
 
 [build-system]
 requires = ["hatchling"]
@@ -51,10 +54,9 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wells"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/wells/AGENT.md" = "wells/AGENT.md"
-"src/wells/builtin_skills" = "wells/builtin_skills"
+# (No force-includes needed: AGENT.md and builtin_skills/ live under
+# src/wells/, which `packages` already ships in full. The old force-include
+# duplicated paths and broke the wheel build.)
 
 [dependency-groups]
 dev = [
