@@ -20,6 +20,44 @@ def _git(cwd, *args):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
 
 
+def _spec(task_id: str, split: str = "train", status: str = "verified") -> TaskSpec:
+    return TaskSpec(
+        task_id=task_id,
+        repo_root="/tmp/repo",
+        base_commit="a" * 40,
+        problem_statement=f"problem for {task_id}",
+        test_oracle=Oracle(
+            fail_to_pass=["tests/test_x.py::test_a"],
+            pass_to_pass=[],
+            command="python -m pytest -q",
+            test_files=["tests/test_x.py"],
+        ),
+        environment_setup=[],
+        source_commit="b" * 40,
+        split=split,
+        status=status,
+        mined_at="2026-11-20 00:00:00",
+    )
+
+
+def test_list_tasks_excludes_rejected(tmp_path: Path):
+    """Quarantined (status=rejected) tasks stay on disk but never run."""
+    tdir = corp.tasks_dir(str(tmp_path))
+    tdir.mkdir(parents=True)
+    good = _spec("T-good000000000000000000000000000")
+    bad = _spec("T-bad000000000000000000000000000", status="rejected")
+    good.save(tdir)
+    bad.save(tdir)
+
+    listed = corp.list_tasks(str(tmp_path))
+    assert [t.task_id for t in listed] == [good.task_id]
+
+    # Split filtering still applies on top of the status filter.
+    val = _spec("T-val000000000000000000000000000", split="val", status="rejected")
+    val.save(tdir)
+    assert corp.list_tasks(str(tmp_path), "val") == []
+
+
 def _commit(repo: Path, msg: str) -> str:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", msg)
