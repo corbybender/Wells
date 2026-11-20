@@ -868,6 +868,61 @@ def test_escalation_fires_only_once_then_stops_for_real(
     assert result.stopped_reason == "stuck_loop"
 
 
+def test_alternating_read_loop_is_stopped(ctx: tools.ToolContext):
+    """The loop the consecutive detector cannot see.
+
+    Measured on a real 60-minute bench run: 4,609 tool calls, 856 of them
+    reads of one file, alternating read_file -> list_dir -> read_file. Because
+    no call ever repeated *in a row*, `_last_call_repeat` reset every round and
+    the agent burned the entire hour. The cumulative per-target counter must
+    still stop it.
+    """
+    LEDGER.reset()
+    _read = AIMessage(
+        content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'
+    )
+    _list = AIMessage(
+        content='<tool_call>{"name": "list_dir", "args": {"path": "."}}</tool_call>'
+    )
+    alternating = [_read, _list] * 12  # 24 steps, never two in a row
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(alternating)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "ESCALATION_PROFILE", ""),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=40, step_label="t")
+    assert result.stopped_reason == "stuck_loop"
+    # It must stop well before the step cap — the point is to save the run,
+    # not to burn it.
+    assert len(result.messages) < 40
+
+
+def test_repeat_guard_is_reset_by_a_write(ctx: tools.ToolContext, workspace: Path):
+    """Re-reading a file you just wrote is legitimate, not a loop."""
+    LEDGER.reset()
+    steps = []
+    for _ in range(5):  # exactly at the warn threshold, no stop
+        steps.append(AIMessage(
+            content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'
+        ))
+    steps.append(AIMessage(
+        content='<tool_call>{"name": "write_file", "args": {"path": "maths.py", "content": "x = 1\\n"}}</tool_call>'
+    ))
+    for _ in range(5):
+        steps.append(AIMessage(
+            content='<tool_call>{"name": "read_file", "args": {"path": "maths.py"}}</tool_call>'
+        ))
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(steps)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "ESCALATION_PROFILE", ""),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        result = executor.run_executor(task="x", ctx=ctx, max_steps=40, step_label="t")
+    assert result.stopped_reason != "stuck_loop"
+
+
 def test_no_escalation_when_profile_unset(ctx: tools.ToolContext):
     """Default behavior unchanged: unset ESCALATION_PROFILE = hard stop."""
     LEDGER.reset()
