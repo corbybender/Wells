@@ -1,6 +1,6 @@
 [project]
 name = "wells-agent"
-version = "0.3.2"
+version = "0.4.0"
 description = "Wells — a model-agnostic, self-improving agentic coding harness (planner/architect/coder/tester/reviewer) with deterministic test-gate verification, Code Mode, SEACS evolution, ACP + MCP."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,6 +15,11 @@ dependencies = [
     "rich>=15.0.0",
     "truststore>=0.9.1",
     "watchdog>=4.0",
+    # abi3 (stable-ABI) native wheels since 0.2.0: one wheel per platform
+    # installs on every CPython >= 3.12, so this is safe as a hard dependency
+    # (it was NOT before abi3 — see 0.3.0, where cp312/cp313-only wheels made
+    # the whole package unresolvable on newer interpreters).
+    "wells-index>=0.2.0",
 ]
 
 [project.urls]
@@ -30,17 +35,6 @@ wells-mcp = "wells.mcp_server:main"
 wells-acp = "wells.acp_server:main"
 
 [project.optional-dependencies]
-# Fast structural code index (Rust extension: symbol extraction, call graph,
-# definition/reference lookup at O(1) instead of grep). OPTIONAL BY DESIGN:
-# wells-index is a native module with per-Python-ABI wheels, so making it a
-# hard dependency pinned the whole package to the newest Python that had a
-# matching wheel — `uvx wells-agent` failed outright on Python 3.14/3.15.
-# Without it the harness falls back to grep/glob (see index_tools.py) and the
-# index_* tools simply do not appear in the tool list.
-# Install with:  pip install 'wells-agent[index]'
-index = [
-    "wells-index>=0.1.0",
-]
 # Semantic code retrieval (cosine-similarity search over local BGE embeddings).
 # Install with:  pip install 'wells-agent[embeddings]'
 embeddings = [
@@ -76,7 +70,5 @@ packages = ["src/wells"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    # The dev/CI environment wants the fast indexer even though it is an
-    # optional extra for end users (native wheels cover 3.12/3.13 only).
-    "wells-index>=0.1.0",
+    "wells-index>=0.2.0",
 ]

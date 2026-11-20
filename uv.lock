@@ -2158,7 +2158,7 @@ wheels = [
 
 [[package]]
 name = "wells-agent"
-version = "0.3.2"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -2171,6 +2171,7 @@ dependencies = [
     { name = "textual" },
     { name = "truststore" },
     { name = "watchdog" },
+    { name = "wells-index" },
 ]
 
 [package.optional-dependencies]
@@ -2180,9 +2181,6 @@ browser = [
 embeddings = [
     { name = "fastembed" },
     { name = "sqlite-vec" },
-]
-index = [
-    { name = "wells-index" },
 ]
 memory = [
     { name = "bigbrain-memory" },
@@ -2210,25 +2208,25 @@ requires-dist = [
     { name = "textual", specifier = ">=1.0.0" },
     { name = "truststore", specifier = ">=0.9.1" },
     { name = "watchdog", specifier = ">=4.0" },
-    { name = "wells-index", marker = "extra == 'index'", specifier = ">=0.1.0" },
+    { name = "wells-index", specifier = ">=0.2.0" },
 ]
-provides-extras = ["index", "embeddings", "browser", "memory"]
+provides-extras = ["embeddings", "browser", "memory"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
-    { name = "wells-index", specifier = ">=0.1.0" },
+    { name = "wells-index", specifier = ">=0.2.0" },
 ]
 
 [[package]]
 name = "wells-index"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/34/8b64030b7779d979168d26a89cbfee649b6ef137de01f3ea329591de4f5c/wells_index-0.1.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:a2dc3498db3a3914c0ca983afac412133ac5b34556926ff6a1422746e782e9d5", size = 1193509, upload-time = "2026-06-29T16:01:11.792Z" },
-    { url = "https://files.pythonhosted.org/packages/76/b7/2edd088fcc9f4c1602d4105fcd8e15401b28ec4023bafdcc1b08569d2bfe/wells_index-0.1.0-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:16de28fca10efa0da7be0a49bc8c941bb28b9969d86fbe822cebd8e6d62100b6", size = 1364150, upload-time = "2026-06-29T16:01:13.049Z" },
-    { url = "https://files.pythonhosted.org/packages/83/59/2a9c9229402aa102d703f96be99da4ff0f78bfda41bebd92cb3d16fb97b9/wells_index-0.1.0-cp312-cp312-win_amd64.whl", hash = "sha256:7c67f8561fb95c94dc61a3c8b7262154eb570deb45700490c8af40151ec58962", size = 1129327, upload-time = "2026-06-29T16:01:14.055Z" },
-    { url = "https://files.pythonhosted.org/packages/9f/6c/9f710820e40644a07e76505e9108d0dada2ca81f417c98f9abdb097529ca/wells_index-0.1.0-cp313-cp313-win_amd64.whl", hash = "sha256:b760f88be5f50f7639a40676e4a13e892584a765c792d5a54eb1fdb82c36d304", size = 1126961, upload-time = "2026-06-29T15:55:37.601Z" },
+    { url = "https://files.pythonhosted.org/packages/36/2f/315963c3e175f2490513a570a234c04450787fa212cf3be6d384f3a543e4/wells_index-0.2.0-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f9fc297fd0de3d5f6d1fd573bf3c20c6830b90d1dc202d494010ca75f01fe4a6", size = 1804460, upload-time = "2026-11-20T22:22:14.593Z" },
+    { url = "https://files.pythonhosted.org/packages/69/59/5ba0eba52b0f78ac460ab7bff6ac6bf7d121fdee5134c572173dcd193ece/wells_index-0.2.0-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:dce3bf1cb939bbd9a6b9c4c16e7a2003930a8a575bd6888cbe8ae51c3dcaff29", size = 1697003, upload-time = "2026-11-20T22:22:16.225Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/37/0fe028f36636fdb33d2315dd86156435276669a075da1e62615ddadf49d8/wells_index-0.2.0-cp312-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:f3c0217cdf3305ff7551c82429123c6250274df347bd5bd0c089d784028c9fc3", size = 1896717, upload-time = "2026-11-20T22:22:17.735Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/9f/1becc51bbfd18690358d941d2dc2dc42048cb5935754bb06df56a83c2375/wells_index-0.2.0-cp312-abi3-win_amd64.whl", hash = "sha256:831633828204cbb7d589b146f3918f9a3dca56110e10987c78b979061f8d9668", size = 1690043, upload-time = "2026-11-20T22:22:19.664Z" },
 ]
 
 [[package]]
