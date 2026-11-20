@@ -29,18 +29,46 @@ type, read, screenshot a real JS-rendered session).
 
 ## Get started in one command
 
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/corbybender/Wells/master/install-remote.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/corbybender/Wells/master/install-remote.ps1 | iex
+```
+
+That's the whole install. The script installs `uv` if you don't have it
+(which manages Python for you — no Python pre-installed, no venv juggling),
+puts the `wells` command on your PATH, and drops you into first-run provider
+setup — pick Claude, OpenAI, Gemini, Z.ai, OpenRouter, or a local model,
+paste a key, done. Then:
+
+```bash
+cd your-project
+wells
+```
+
+Re-running the installer updates an existing install.
+
+**Already have `uv` or `pipx`?** Skip the script:
+
 ```bash
 uv tool install git+https://github.com/corbybender/Wells.git && wells config
 ```
 
-That installs `wells` on your PATH from any directory (no clone needed) and
-opens the first-run provider setup — pick Claude, OpenAI, Gemini, Z.ai,
-OpenRouter, or a local model. No `uv`? `pipx install
-git+https://github.com/corbybender/Wells.git` works the same way.
+**Which install path fits you?**
 
-Prefer cloning the repo, running against a specific project without a
-global install, or want the full walkthrough of every option? →
-[Quick start](#quick-start).
+| You want ... | Use |
+|---|---|
+| It to just work (default) | The one-liner above |
+| No global install — run Wells against one project from a clone | [Option A](#option-a---cloned-standalone-no-install-needed) |
+| To embed Wells inside another project's folder | [Option B](#option-b---drive-a-different-project-embedding) |
+| `uv`/`pipx` already installed | `uv tool install git+https://github.com/corbybender/Wells.git` |
+| Every knob and prerequisite explained | [Quick start](#quick-start) |
 
 ## Contents
 
