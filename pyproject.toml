@@ -18,6 +18,13 @@ dependencies = [
     "wells-index>=0.1.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/corbybender/Wells"
+Documentation = "https://github.com/corbybender/Wells#contents"
+Issues = "https://github.com/corbybender/Wells/issues"
+Changelog = "https://github.com/corbybender/Wells/commits/master"
+Repository = "https://github.com/corbybender/Wells"
+
 [project.scripts]
 wells = "wells.main:main"
 wells-mcp = "wells.mcp_server:main"
@@ -25,24 +32,22 @@ wells-acp = "wells.acp_server:main"
 
 [project.optional-dependencies]
 # Semantic code retrieval (cosine-similarity search over local BGE embeddings).
-# Install with:  pip install 'wells[embeddings]'
+# Install with:  pip install 'wells-agent[embeddings]'
 embeddings = [
     "fastembed>=0.3.0",
     "sqlite-vec>=0.1.6",
 ]
 # Browser-driving tools (browser_navigate/click/type/read/screenshot).
-# Install with:  pip install 'wells[browser]'  then:  playwright install chromium
+# Install with:  pip install 'wells-agent[browser]'  then:  playwright install chromium
 browser = [
     "playwright>=1.48.0",
 ]
 # Durable project memory (BigBrain transaction-log -> curated memory files).
-# TODO(pypi): once bigbrain-memory is published to PyPI, this becomes:
-#   memory = ["bigbrain-memory>=1.1.1"]
-# Until then the extra is intentionally empty (an unpublishable git-URL dep
-# would break every install). Manual opt-in:
-#   pip install git+https://github.com/corbybender/bigbrain-memory
-# The harness degrades gracefully without it.
-memory = []
+# Install with:  pip install 'wells-agent[memory]'
+# The harness degrades gracefully when it is absent, so the extra is optional.
+memory = [
+    "bigbrain-memory>=1.1.1",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -2,9 +2,9 @@
 #
 #   irm https://raw.githubusercontent.com/corbybender/Wells/master/install-remote.ps1 | iex
 #
-# What this does (nothing pre-installed except PowerShell + git):
+# What this does (nothing pre-installed except PowerShell):
 #   1. Installs `uv` if missing (uv also manages Python — no Python needed).
-#   2. Installs the `wells` command via `uv tool install` from GitHub.
+#   2. Installs the `wells` command from PyPI (`uv tool install wells-agent`).
 #   3. Launches first-run provider setup (`wells config`).
 #
 # Update an existing install by re-running this script.
@@ -30,12 +30,9 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 # --- 2. wells ----------------------------------------------------------------
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host "[wells] git is required (winget install Git.Git)." -ForegroundColor Red
-    exit 1
-}
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Write-Host "[wells] note: git not found (only needed for repo installs)." -ForegroundColor Yellow }
 Say "Installing the wells command (also fetches Python 3.12 if needed) ..."
-uv tool install --force git+https://github.com/corbybender/Wells.git
+uv tool install --force wells-agent
 
 # --- 3. first-run setup --------------------------------------------------------
 Say "Installed. Starting provider setup - pick a model and paste a key."

@@ -1,0 +1,73 @@
+name: Build standalone binaries
+
+# Produces the "no Python required" release artifacts: a onedir PyInstaller
+# bundle per platform, zipped and attached to the GitHub Release for the tag.
+# These are what the installers fall back to when a user wants an instant
+# cold start instead of a uv-managed toolchain.
+#
+#   push tag v*  ->  PyPI publish (pypi.yml)  +  binaries (this file)
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: ubuntu-latest
+            label: linux-x64
+          - os: macos-14
+            label: macos-arm64
+          - os: macos-13
+            label: macos-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the project + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller
+
+      - name: Build onedir bundle
+        run: pyinstaller packaging/wells.spec --noconfirm --clean
+
+      - name: Smoke test the binary
+        shell: bash
+        run: |
+          ./dist/wells/wells --version || ./dist/wells/wells.exe --version
+
+      - name: Package
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          OUT="wells-${VER}-${{ matrix.label }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            (cd dist && 7z a -tzip "../${OUT}.zip" wells > /dev/null)
+          else
+            (cd dist && tar -czf "../${OUT}.tar.gz" wells)
+          fi
+          ls -la "${OUT}".* || true
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            wells-*.zip
+            wells-*.tar.gz
+          fail_on_unmatched_files: false

@@ -25,7 +25,7 @@ import mcp.server.models
 import mcp.server.stdio
 import mcp.types as types
 
-from wells import config, gitops, memory
+from wells import __version__, config, gitops, memory
 from wells.compress import compress_output
 from wells.config import (
     HARNESS_SAFETY,
@@ -649,7 +649,7 @@ def _get_harness_info(args: dict) -> list[types.TextContent]:
 
     info: dict[str, Any] = {
         "package": "wells",
-        "version": "0.2.0",
+        "version": __version__,
         "active_profile": config.ACTIVE_PROFILE,
         "model": config.model_name_for_task("coding"),
         "available_profiles": config.MODEL_PROFILES,
@@ -812,7 +812,7 @@ async def start_server() -> None:
             write_stream,
             mcp.server.models.InitializationOptions(
                 server_name="wells",
-                server_version="0.2.0",
+                server_version=__version__,
                 capabilities=types.ServerCapabilities(),
             ),
         )

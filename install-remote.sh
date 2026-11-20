@@ -6,10 +6,10 @@
 # What this does (and why it needs nothing pre-installed except curl):
 #   1. Installs `uv` if missing (uv's own official installer; it also
 #      manages Python versions, so no Python needed either).
-#   2. Installs the `wells` command via `uv tool install` from GitHub.
+#   2. Installs the `wells` command from PyPI (`uv tool install wells-agent`).
 #   3. Launches first-run provider setup (`wells config`).
 #
-# Requires: git (for the git+https install) and curl.
+# Requires: curl (git is only needed if you install from the repo instead).
 # Update an existing install by re-running this script.
 
 set -e
@@ -33,11 +33,10 @@ fi
 
 # --- 2. wells --------------------------------------------------------------
 if ! command -v git >/dev/null 2>&1; then
-  echo "[wells] git is required (brew install git / apt install git)." >&2
-  exit 1
+  say "note: git not found (only needed if you install from the repo instead)."
 fi
 say "Installing the wells command (this also fetches Python 3.12 if needed) ..."
-uv tool install --force git+https://github.com/corbybender/Wells.git
+uv tool install --force wells-agent
 
 # --- 3. first-run setup -----------------------------------------------------
 say "Installed. Starting provider setup — pick a model and paste a key."
