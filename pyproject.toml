@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 wells = "wells.main:main"
 wells-mcp = "wells.mcp_server:main"
+wells-acp = "wells.acp_server:main"
 
 [project.optional-dependencies]
 # Semantic code retrieval (cosine-similarity search over local BGE embeddings).
@@ -34,10 +35,19 @@ embeddings = [
 browser = [
     "playwright>=1.48.0",
 ]
+# Durable project memory (BigBrain transaction-log -> curated memory files).
+# Install with:  pip install 'wells[memory]'
+memory = [
+    "bigbrain-memory @ git+https://github.com/corbybender/bigbrain-memory",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# bigbrain-memory is referenced by git URL in [project.optional-dependencies].
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wells"]

@@ -180,6 +180,7 @@ def _run_shell(command: str, cwd: str, timeout: float) -> subprocess.CompletedPr
     )
     CONTROL.track_proc(proc)
     t0 = _time.monotonic()
+    _last_tick = 0.0
     try:
         while True:
             try:
@@ -187,10 +188,22 @@ def _run_shell(command: str, cwd: str, timeout: float) -> subprocess.CompletedPr
                 return subprocess.CompletedProcess(command, proc.returncode, out, err)
             except subprocess.TimeoutExpired:
                 pass  # documented-safe to retry communicate() after a timeout
+            # Liveness: without this, a 120s test run shows a single static
+            # tool_start line and nothing else. The polled status-bar string
+            # gets the elapsed seconds; the F5 channel gets a periodic tick.
+            _elapsed = _time.monotonic() - t0
+            if _elapsed - _last_tick >= 2.0:
+                _last_tick = _elapsed
+                _cmd_head = command[:40] + ("…" if len(command) > 40 else "")
+                CONTROL.set_activity(f"running · {_elapsed:.0f}s · {_cmd_head}")
+                CONTROL.emit_verbose(
+                    "tool_progress", f"still running ({_elapsed:.0f}s)",
+                    elapsed=round(_elapsed, 1), command=command[:200],
+                )
             if CONTROL.cancelled():
                 kill_process_tree(proc)
                 raise ShellCancelled()
-            if _time.monotonic() - t0 >= timeout:
+            if _elapsed >= timeout:
                 kill_process_tree(proc)
                 raise subprocess.TimeoutExpired(command, timeout)
     except BaseException:
@@ -1091,6 +1104,39 @@ def _register_optional_tools() -> None:
             if t.name not in existing_read:
                 READ_TOOLS.append(t)
                 existing_read.add(t.name)
+    except Exception:
+        ok = False
+
+    # BigBrain durable project memory: read-only recall (memory_search) over
+    # decisions/learnings recorded by the finisher. The write side lives in
+    # the finisher (memory_bridge.log_lesson/compile), not in a tool.
+    try:
+        from wells import memory_bridge as _bb_mod
+
+        if _bb_mod.enabled():
+            existing_read = {t.name for t in READ_TOOLS}
+            t = _bb_mod.MEMORY_SEARCH_TOOL
+            if t.name not in existing:
+                ALL_TOOLS.append(t)
+                existing.add(t.name)
+            if t.name not in existing_read:
+                READ_TOOLS.append(t)
+                existing_read.add(t.name)
+    except Exception:
+        ok = False
+
+    # Code Mode: the `program` tool — the model writes one Python program
+    # that calls harness tools as plain functions (tools.read_file(...) etc.),
+    # collapsing N dependent round trips into one turn. Exec-only toolset:
+    # registered in ALL_TOOLS, not READ_TOOLS.
+    try:
+        from wells import codemode as _codemode_mod
+
+        if _codemode_mod.enabled():
+            t = _codemode_mod.PROGRAM_TOOL
+            if t.name not in existing:
+                ALL_TOOLS.append(t)
+                existing.add(t.name)
     except Exception:
         ok = False
 

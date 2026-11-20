@@ -1894,6 +1894,12 @@ def _run_executor_impl(
             # final_answer pseudo-calls become the final text; raw call JSON
             # is not narrative.
             calls, llm_text = _resolve_structured_reply(calls, llm_text)
+        if llm_text:
+            # Same reasoning as the tool_end emit above: the main log only
+            # ever sees a short preview (below) or nothing at all when the
+            # round already streamed live — the verbose panel always gets
+            # the full, untrimmed text either way, subagents included.
+            CONTROL.emit_verbose("llm_full", text=llm_text, source=step_label)
         if llm_text and not streamed_this_round:
             # Trim to ~200 chars; collapse newlines so it reads as one line.
             preview = " ".join(llm_text.split())[:200]
@@ -2382,6 +2388,14 @@ def _run_executor_impl(
                 # command, a test run) would otherwise leave the transcript
                 # blank for however long it takes to come back.
                 _ui("tool_start", _tool_start_line(name, args), name=name)
+                # Always-on, quiet-mode-exempt: parallel research subagents
+                # run with quiet=True so their steps stay off the main log
+                # (see CONTROL.emit_verbose's docstring), but the F5 panel
+                # is a debug view of everything — full args included.
+                CONTROL.emit_verbose(
+                    "tool_start", _tool_start_line(name, args),
+                    name=name, args=args, source=step_label,
+                )
                 _pre_announced = True
                 result = tools.dispatch(name, args, call_ctx)
             if name in _readonly_names:
@@ -2396,6 +2410,10 @@ def _run_executor_impl(
             if CONTROL.cancelled():
                 return _stopped("cancelled", "(cancelled by user)")
             obs_text = result.to_model_text()
+            CONTROL.emit_verbose(
+                "tool_end", name=name, ok=result.ok, output=obs_text,
+                source=step_label,
+            )
 
             # ── PostToolUse hooks ────────────────────────────────────────────
             # Observational only — the call already ran, so a hook can't
@@ -2817,6 +2835,8 @@ def _invoke_cancelable(llm, messages) -> BaseMessage | None:
 
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     fut = ex.submit(config._invoke_with_retry, llm, messages)
+    # _invoke_with_retry keeps set_activity updated per attempt; nothing
+    # further needed here — the poll loop below is only a cancellation wait.
     try:
         while True:
             if CONTROL.cancelled():
@@ -2881,12 +2901,24 @@ def _stream_invoke(
     Without a listener (plain CLI), they fall back to stdout.
     """
     import sys as _sys
+    import time as _time
 
     try:
         full = None
         emitted = False
         aborted = False
+        first_token_secs = None
         _buf = ""
+        _t0 = _time.monotonic()
+        if display:
+            # Announce the call before the first chunk arrives — the gap
+            # between "round N" and the first streamed token was previously
+            # dead air (up to LLM_TIMEOUT with no feedback at all).
+            model_label = getattr(llm, "model_name", None) or getattr(llm, "model", "model")
+            CONTROL.set_activity(f"{model_label} · awaiting first token")
+            CONTROL.emit(
+                "llm_start", f"[dim]⠿ {model_label} · thinking…[/dim]", model=str(model_label)
+            )
         for chunk in llm.stream(messages):
             full = chunk if full is None else full + chunk
             if CONTROL.cancelled():
@@ -2895,6 +2927,12 @@ def _stream_invoke(
             if isinstance(content, list):
                 content = "".join(
                     b.get("text", "") for b in content if isinstance(b, dict)
+                )
+            if first_token_secs is None and content:
+                first_token_secs = _time.monotonic() - _t0
+                CONTROL.emit_verbose(
+                    "first_token", f"first token in {first_token_secs:.1f}s",
+                    secs=round(first_token_secs, 2),
                 )
             if guard and content:
                 _buf = (_buf + content)[-(_REP_MAX_UNIT * _REP_MIN_REPEATS) :]

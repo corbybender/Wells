@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -144,7 +145,10 @@ def run_code(ctx: ToolContext, code: str, *, language: str = "python") -> ToolRe
     # Reuse the harness subprocess env (cert injection etc.) + the workspace cwd.
     from wells.tools import _subprocess_env  # type: ignore
 
-    py = "python3" if _which("python3") else "python"
+    # Prefer the running interpreter: on Windows a bare "python" on PATH can
+    # resolve to the Microsoft Store stub (exit 9009, "Python was not found"),
+    # which made run_code fail on stock machines.
+    py = sys.executable or ("python3" if _which("python3") else "python")
     try:
         proc = subprocess.run(
             [py, str(tmp_path)],
