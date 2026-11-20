@@ -1,0 +1,34 @@
+{
+  "task_id": "T-3a3e0350b6-split-string-values-from-default",
+  "repo_root": "/home/corbybender/Projects/mining/click",
+  "base_commit": "8bd8b4a074c55c03b6eb5666edc44a9c43df38a2",
+  "problem_statement": "Split string values from `default_map` for multi-value parameters\n\nFixes #2745",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_defaults.py::test_basic_defaults",
+      "tests/test_defaults.py::test_multiple_defaults",
+      "tests/test_defaults.py::test_nargs_plus_multiple",
+      "tests/test_defaults.py::test_multiple_flag_default",
+      "tests/test_defaults.py::test_flag_default_map",
+      "tests/test_defaults.py::test_shared_param_prefers_first_default",
+      "tests/test_defaults.py::test_lookup_default_returns_hides_sentinel",
+      "tests/test_defaults.py::test_lookup_default_callable_in_default_map",
+      "tests/test_defaults.py::test_default_map_source",
+      "tests/test_defaults.py::test_lookup_default_override_respected",
+      "tests/test_defaults.py::test_default_map_with_callable_flag_value",
+      "tests/test_defaults.py::test_default_map_nargs",
+      "tests/test_defaults.py::test_unset_in_default_map"
+    ],
+    "pass_to_pass": [],
+    "command": "python -m pytest -q",
+    "test_files": [
+      "tests/test_defaults.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "3a3e0350b6a2ea3e799440d48e779acabcf44de9",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-08-24 11:14:53"
+}
