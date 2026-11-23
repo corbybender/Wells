@@ -1654,9 +1654,9 @@ def _run_executor_impl(
     # resets it every round and can run forever — measured on a live bench run:
     # 4,609 tool calls in one hour, 856 of them reads of the same throwaway
     # file, with the agent alternating read_file → list_dir → read_file.
-    # This counter is cumulative per *target* (path/pattern, not exact args, so
-    # paging through one file still counts) and is cleared for a path only when
-    # a mutation touches it.
+    # This counter is cumulative per *target* (path, or pattern@path for
+    # searches; not exact args, so paging through one file still counts) and
+    # is cleared whenever a mutating call succeeds.
     _repeat_hits: dict[str, int] = {}
     _REPEAT_WARN = int(os.environ.get("WELLS_REPEAT_WARN", "4"))
     _REPEAT_STOP = int(os.environ.get("WELLS_REPEAT_STOP", "8"))
@@ -2415,12 +2415,16 @@ def _run_executor_impl(
                     _readonly_seen[call_key] = (rounds, steps)
             elif result.ok and not result.simulated:
                 _readonly_seen.clear()  # a successful mutation may change any read
-                # ...and it invalidates repetition memory for the path it
-                # touched: re-reading a file you just wrote is legitimate.
-                _touched = str(args.get("path") or args.get("file") or "")
-                if _touched:
-                    for _k in [k for k in _repeat_hits if _touched in k]:
-                        del _repeat_hits[_k]
+                # ...and it invalidates repetition memory, for the same
+                # reason and across the board. Resetting only the edited
+                # path's own counter missed the ordinary edit -> search
+                # again rhythm (a multi-file rename is "grep old_name, fix
+                # the next file, grep again"): the search key holds no file
+                # path, so nothing reset it and the 8th grep ended a
+                # productive run as stuck_loop. Repetition now accumulates
+                # only while the agent is changing nothing at all, which is
+                # also the only loop ever observed live.
+                _repeat_hits.clear()
             # dispatch() can block for a while (a shell command, a subagent);
             # check again right after it returns instead of waiting for the
             # top of the next round — a cancel that landed mid-command should
@@ -2530,12 +2534,14 @@ def _run_executor_impl(
                 "read_file", "list_dir", "grep", "glob", "list_symbols",
                 "find_symbol",
             ):
-                _target = str(
-                    args.get("path")
-                    or args.get("pattern")
-                    or args.get("symbol")
-                    or ""
-                )
+                if name in ("grep", "glob"):
+                    # A search is identified by what is looked for, then
+                    # where. Keying on `path` first folded every "grep
+                    # something in src" into one counter, so nine different
+                    # searches in one directory read as a loop.
+                    _target = f"{args.get('pattern') or ''}@{args.get('path') or ''}"
+                else:
+                    _target = str(args.get("path") or args.get("symbol") or "")
                 _rkey = f"{name}:{_target}"
                 _rhits = _repeat_hits[_rkey] = _repeat_hits.get(_rkey, 0) + 1
 

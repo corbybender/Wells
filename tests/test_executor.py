@@ -923,6 +923,66 @@ def test_repeat_guard_is_reset_by_a_write(ctx: tools.ToolContext, workspace: Pat
     assert result.stopped_reason != "stuck_loop"
 
 
+def _run_scripted_quietly(ctx: tools.ToolContext, steps: list):
+    """Drive run_executor over scripted model turns with escalation off."""
+    LEDGER.reset()
+    with (
+        patch.object(config, "_invoke_with_retry", side_effect=_scripted(steps)),
+        patch.object(config, "STRUCTURED_OUTPUTS", False),
+        patch.object(config, "ESCALATION_PROFILE", ""),
+        patch.object(executor, "_try_bind_tools", return_value=None),
+    ):
+        return executor.run_executor(task="x", ctx=ctx, max_steps=40, step_label="t")
+
+
+def test_edit_then_search_rhythm_is_not_a_loop(
+    ctx: tools.ToolContext, workspace: Path
+) -> None:
+    """Edit -> search again -> edit is steady progress, not a loop.
+
+    A multi-file rename is exactly this rhythm: grep for the old name, fix
+    the next file, grep again. The search key is ``grep:<pattern>``, which
+    never contains the path of the file just edited, so a per-path reset
+    never fires and the 8th grep ended a productive run as ``stuck_loop``.
+    A successful write must clear repetition memory, whatever it touched.
+    """
+    for i in range(12):
+        (workspace / f"mod{i}.py").write_text(f"legacy_{i} = {i}\n", encoding="utf-8")
+    steps = []
+    for i in range(12):  # 12 edit -> grep pairs = 24 steps, every edit succeeds
+        steps.append(AIMessage(
+            content='<tool_call>{"name": "edit_file", "args": {"path": "mod%d.py",'
+                    ' "old_string": "legacy_%d", "new_string": "modern_%d"}}</tool_call>'
+                    % (i, i, i)
+        ))
+        steps.append(AIMessage(
+            content='<tool_call>{"name": "grep", "args": {"pattern": "legacy_"}}</tool_call>'
+        ))
+    result = _run_scripted_quietly(ctx, steps)
+    assert result.stopped_reason != "stuck_loop"
+
+
+def test_distinct_searches_are_not_a_loop(ctx: tools.ToolContext, workspace: Path) -> None:
+    """Nine greps for nine different things are nine different calls.
+
+    ``grep`` takes both ``pattern`` and an optional ``path``. A search is
+    identified by what is looked for, then where: keying on ``path`` alone
+    folds every "grep something in src" into one counter, and stops a run
+    for being thorough.
+    """
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    steps = [
+        AIMessage(
+            content='<tool_call>{"name": "grep", "args": {"pattern": "needle_%d", "path": "src"}}'
+                    "</tool_call>" % i
+        )
+        for i in range(9)
+    ]
+    result = _run_scripted_quietly(ctx, steps)
+    assert result.stopped_reason != "stuck_loop"
+
+
 def test_no_escalation_when_profile_unset(ctx: tools.ToolContext):
     """Default behavior unchanged: unset ESCALATION_PROFILE = hard stop."""
     LEDGER.reset()
