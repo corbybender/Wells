@@ -12,6 +12,9 @@ wheels/
 # Environment files
 .env
 
+# Per-machine editor/agent settings (Claude Code writes its local allow-list here)
+.claude/settings.local.json
+
 # Local model caches
 .fastembed_cache/
 

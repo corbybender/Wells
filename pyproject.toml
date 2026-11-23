@@ -57,10 +57,6 @@ memory = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.metadata]
-# bigbrain-memory is referenced by git URL in [project.optional-dependencies].
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/wells"]
 # (No force-includes needed: AGENT.md and builtin_skills/ live under
