@@ -1,0 +1,28 @@
+{
+  "task_id": "T-583db3ff8f-bigbrain-memory",
+  "repo_root": "Q:\\wells",
+  "base_commit": "4e5a1f7d628580316cfbecdcd1955ae9d9c22f43",
+  "problem_statement": "Add a durable project-memory bridge to BigBrain\n\nWells already writes lessons into project notes such as AGENTS.md. Add a second, structured store: a bridge to BigBrain (the `bigbrain-memory` package), an optional dependency that keeps an append-only transaction log and compiles it deterministically into curated memory files. Everything must degrade gracefully when the package is not installed, and recall must use neither the network nor an embedding model.\n\nDeliverable: a new module `src/wells/memory_bridge.py`, a read-only `memory_search` tool registered from `wells.tools._register_optional_tools`, a hook in the run finisher, and an optional dependency extra `memory = [\"bigbrain-memory>=1.1.1\"]` in pyproject.toml.\n\nwells.memory_bridge\n- `BIGBRAIN_AVAILABLE`: a module-level bool, true when the `bigbrain_memory` package can be imported.\n- `enabled() -> bool`: true when the package is available and the environment variable WELLS_BIGBRAIN is not set to 0/false/no/off.\n- `log_lesson(workspace, *, goal, summary, key_files=None, gotchas=None) -> str | None`: append one lesson to the workspace's BigBrain transaction log under `<workspace>/.bigbrain/` and return the line written. When disabled, write nothing and return None.\n- `log_reflection(workspace, *, critique, failed) -> str | None`: the same, for a failure critique.\n- `compile(workspace, *, reason=\"wells session end\") -> dict`: run BigBrain's compile step, producing curated memory files under `<workspace>/.bigbrain/memory/*.md`. Returns the compile result as a dict; on success it has no \"error\" key. Lesson text (summary and gotchas) must survive into those files.\n- `recall(workspace, query, *, top_n=6) -> str`: keyword recall over the compiled memory files. Returns the matching memory text, or a short message saying there is no project memory yet.\n- `status(workspace) -> dict`: whether the bridge is enabled and what is stored.\n\nThe memory_search tool\n- A `ToolDef` named `memory_search` with one string argument, `query`, whose handler returns the recall text for the workspace. It is read-only and is registered in the read-only toolset only when `memory_bridge.enabled()` is true, so it appears in `tools.registry(include_mutating=False)` and the planner can recall past lessons.\n\nFinisher\n- In `wells.finisher.finisher(state)`, after the existing memory write and only when the bridge is enabled and the run produced a summary (`state[\"implementation_steps\"]`): log a lesson built from the run (the goal from `state[\"goal\"]`, the first line of the summary, the files it mentions, and gotchas extracted from `state[\"review_result\"]`), then compile. A workspace that had no `.bigbrain/` directory ends up with `.bigbrain/memory/*.md`. This is best-effort: any failure is reported and skipped, never propagated.",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_memory_bridge.py::test_log_lesson_and_compile",
+      "tests/test_memory_bridge.py::test_recall_finds_compiled_lesson",
+      "tests/test_memory_bridge.py::test_log_lesson_disabled",
+      "tests/test_memory_bridge.py::test_memory_search_tool_registered_when_available",
+      "tests/test_memory_bridge.py::test_memory_search_tool_dispatch",
+      "tests/test_memory_bridge.py::test_finisher_writes_bigbrain"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_memory_bridge.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-11-23 09:05:20",
+  "repo_url": "https://github.com/corbybender/Wells"
+}

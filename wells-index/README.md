@@ -4,7 +4,8 @@ Fast structural repository indexer for [Wells](https://github.com/corbybender/We
 
 ## Install
 
-Prebuilt wheels (Linux / macOS / Windows, Python 3.12 + 3.13) are on PyPI:
+Prebuilt wheels (Linux / macOS / Windows; since 0.2.0 one abi3 wheel per
+platform, installing on every Python 3.12+) are on PyPI:
 
 ```bash
 pip install wells-index
@@ -202,7 +203,8 @@ maturin build --release
 
 Wheels are built and published by the repo's
 [`release-index.yml`](../.github/workflows/release-index.yml) workflow
-(maturin on Linux/macOS/Windows × Python 3.12/3.13, PyPI trusted publishing):
+(maturin, one abi3 wheel per platform on Linux/macOS/Windows, PyPI trusted
+publishing):
 
 ```bash
 # bump version in Cargo.toml + pyproject.toml + python/wells_index/__init__.py

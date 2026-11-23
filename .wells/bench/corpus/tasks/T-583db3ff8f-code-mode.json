@@ -1,0 +1,33 @@
+{
+  "task_id": "T-583db3ff8f-code-mode",
+  "repo_root": "Q:\\wells",
+  "base_commit": "4e5a1f7d628580316cfbecdcd1955ae9d9c22f43",
+  "problem_statement": "Add Code Mode: a `program` tool that composes many tool calls in one turn\n\nEach round trip to the model costs seconds of generation and parks another tool output in the context. Strong models can write a whole chain of dependent lookups themselves if they have a way to run it. Add that: a single tool, `program`, that executes a short Python program in which every registered harness tool is a plain function.\n\nDeliverable: a new module `src/wells/codemode.py`, registered from the optional-tool registration in `wells.tools` (`_register_optional_tools`).\n\nwells.codemode\n- `enabled() -> bool` is true unless the environment variable WELLS_CODE_MODE is set to 0/false/no/off (case-insensitive). Default on.\n- Module-level budgets, plain attributes that tests can monkeypatch: `_MAX_CALLS = 40` (harness tool calls per program), `_MAX_RESULT_CHARS = 200_000`, `_MAX_OUTPUT_CHARS = 8_000`, `_DEFAULT_TIMEOUT = 120.0`.\n- `PROGRAM_TOOL`: the `ToolDef` for the tool. It is mutating (it can call any tool) and takes one string argument, `code`.\n- `run_program(ctx, code) -> ToolResult` is the handler.\n\nBehaviour of `program`, reached as `tools.dispatch(\"program\", {\"code\": ...}, ctx)`\n- The program runs in-process under a restricted `exec`. `open`, `eval`, `exec` and direct `__import__` use are unavailable, and `import` is intercepted so only an allow-list of pure-computation standard-library modules can be imported (json, re, math, itertools and similar). Any other import, such as os or subprocess, fails the call with \"not allowed\" in the output or the error. Say what this is in the module docstring: guardrails for well-behaved models, not a security boundary.\n- Registered harness tools are plain callables on a `tools` object: `tools.list_dir(path=\".\")`, `tools.read_file(path=...)` and so on, with the same keyword arguments as the tools themselves. Every one of them goes through the ordinary `wells.tools.dispatch` path, so the safety gate, plan and dry-run modes, and the deny-lists apply inside the program exactly as they do outside it.\n- Anything the program prints to stdout is part of the result, and so is the JSON serialisation of the value it assigns to the global `RESULT` (for example `[1, 2, 3]`, or `{\"a\": 1}`). The output begins with a one-line header that includes how many tool calls the program made, of the form `[program · 2 tool calls · 0.1s]`. Long output is truncated.\n- When an inner tool call fails, the whole program fails (ok false) and the message names the tool, for example `read_file`.\n- Exceeding `_MAX_CALLS` fails the call with an error that contains the word \"budget\".\n- In plan mode (`ToolContext(workspace=..., safety=\"auto\", plan_mode=True)`) nothing is executed: the result is ok, has `simulated` true, and its output contains `[plan]`.\n\nRegistration\n- When enabled, `program` is in `tools.registry()` and in the mutating toolset only. It must not be in `tools.registry(include_mutating=False)`.",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_codemode.py::test_program_composes_tool_calls",
+      "tests/test_codemode.py::test_program_stdout_and_result",
+      "tests/test_codemode.py::test_program_chains_dependent_lookups",
+      "tests/test_codemode.py::test_program_denies_subprocess_pattern",
+      "tests/test_codemode.py::test_program_blocks_unsafe_import",
+      "tests/test_codemode.py::test_program_allows_safe_import",
+      "tests/test_codemode.py::test_program_blocks_open",
+      "tests/test_codemode.py::test_program_reports_inner_tool_failure",
+      "tests/test_codemode.py::test_program_budget_exhausted",
+      "tests/test_codemode.py::test_program_plan_mode_simulated",
+      "tests/test_codemode.py::test_program_tool_registered"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_codemode.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-11-23 09:05:20",
+  "repo_url": "https://github.com/corbybender/Wells"
+}

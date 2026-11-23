@@ -45,10 +45,61 @@ Also: bench timeout is **per task**, not per run. And T-c9d4f56d48 is a
 3-feature mega-task (ACP + Code Mode + BigBrain, 35 fail_to_pass tests) —
 arguably too large to be a fair corpus task; consider splitting.
 
+### 2026-11-23 — Corpus is portable; the guard's two false positives; history rewrite
+- **History rewritten** (`git filter-repo --mailmap`) so every author, committer
+  and tagger is the personal identity. Old SHAs are gone from branches/tags but
+  still reachable from GitHub by full SHA (Support purge is the only fix).
+  Commit map kept at `~/.wells/backups/wells-rewrite-commit-map-20261123.txt`;
+  pre-rewrite bundle alongside it. The 22 Wells-derived tasks were remapped, so
+  the corpus still pins live commits. Task ids keep their OLD sha prefix on
+  purpose (the split is a hash of the id); `mine_corpus` therefore also skips on
+  (fix-commit message + test files), not just task id.
+- **`repo_url` makes the corpus portable.** `repo_root` was an absolute path on
+  the mining machine, so 58/70 tasks (11/12 val) were unrunnable on Windows and
+  `run_bench` refused to start — the real reason no gate had ever run here.
+  `resolve_repo_root` falls back to a mirror under `~/.wells/bench/repos/`.
+  `wells bench repos` reports resolution; `wells bench verify` re-runs the
+  admission gate locally. Successes are stored in the bundle; **failures are
+  not** — they go to git-ignored `local-verify.json`, because a task can be
+  perfectly valid where it was first verified, and bench runs here skip it
+  (`--include-unverified` overrides).
+- **Oracle runs scrub `*_PROXY`** from the inherited environment: requests'
+  suite asserts `no_proxy` is unset, so an agent session exporting NO_PROXY made
+  a *correct* fix commit fail validation. An oracle measures the patch, not the
+  shell that launched it.
+- **Repetition guard false positives (fixed, test-first).** It cleared only the
+  edited path's counter, but a search key (`grep:<pattern>`) holds no path, so
+  the ordinary rename rhythm (grep old name → fix next file → grep again) hit
+  the 8-hit hard stop. Any successful mutation now clears `_repeat_hits`. Also
+  `grep`/`glob` keys were path-first, folding every search in one directory into
+  a single counter; they are now `pattern@path`. Live 30-min run on the old
+  mega-task: planner 83 calls, guard silent and correct — under old keys it
+  would have fired.
+- **Bench evidence survives now.** `_execute_task` copies `.wells/traces/*.json`
+  into `<bench_id>/<task>-s<seed>/` before the worktree is deleted, and
+  `TaskResult` records `artifacts` + `tool_calls`. Before this, a 30-minute
+  timeout left only the word "timeout" (and 1.47M spent tokens).
+- **Bench progress forwarding was dead**: in `--output-format json` mode
+  `_run_goal` redirects stdout to stderr, and the runner only forwarded stdout.
+  stderr is forwarded now.
+- ACP gaps closed: token-level streaming, `fs/read_text_file`, `session/load`
+  (transcripts under `~/.wells/acp/sessions/`, follow-ups carry earlier turns).
+- `scripts/wells_resumable_launch.ps1` is the Windows watchdog. No pidfile — it
+  holds the `Start-Process` handle, so a recycled PID cannot fool it (the bash
+  version has to verify PIDs). Test gotcha: probing strays with
+  `CommandLine -like '*fake_job.ps1*'` matches the *probe's own* command line;
+  record PIDs from the child instead.
+- Mega-task `T-c9d4f56d48` split into `T-583db3ff8f-{acp-server,code-mode,bigbrain-memory}`,
+  all val (hand-assigned: the id hash would have put two in train). Its problem
+  statement was a commit message while 36 hidden tests pinned internal APIs, so
+  each child's statement now specifies the contract.
+
 ### 2026-11-20 — SEACS corpus growth
-Facts: corpus lives at <workspace>/.wells/bench/corpus (10 tasks, val split
-empty = small-n statistics, NOT a bug — 20% bucket at n=10 lands empty ~11%
-of the time). `.env` WORKSPACE_ROOT points at q:\\corbytools, so bench CLI
+Facts: corpus lives at <workspace>/.wells/bench/corpus (**72 tasks as of
+2026-11-23: 46 train / 14 val / 12 blind**, 71 verified + 1 quarantined;
+the old "10 tasks, empty val" note is long superseded — an empty val bucket
+at n=10 is ~11% likely by hash, so it was never evidence of a bug).
+`.env` WORKSPACE_ROOT points at q:\\corbytools, so bench CLI
 commands need `$env:WORKSPACE_ROOT='Q:\wells'` override in this repo.
 Growth levers shipped: `wells bench mine --env-setup CMD` (repeatable;
 would have made the `cog` repo minable), `wells bench quarantine ID`

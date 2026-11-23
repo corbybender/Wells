@@ -1,0 +1,41 @@
+{
+  "task_id": "T-583db3ff8f-acp-server",
+  "repo_root": "Q:\\wells",
+  "base_commit": "4e5a1f7d628580316cfbecdcd1955ae9d9c22f43",
+  "problem_statement": "Add an ACP (Agent Client Protocol) stdio server so editors can drive Wells\n\nWells can already run a task headlessly (`wells -p --output-format json`). Editors that speak ACP (Zed, JetBrains, other clients) need a long-lived agent process they talk to over stdio using JSON-RPC 2.0. Add one.\n\nDeliverable: a new module `src/wells/acp_server.py`, standard library only (json, sys, threading, contextlib, uuid). It must export `read_message`, `write_message`, `run_task`, `AcpServer`, `serve` and `main`. Also add a `wells-acp = \"wells.acp_server:main\"` entry under `[project.scripts]` in pyproject.toml.\n\nFraming (LSP-style)\n- `write_message(stream, message)` serialises `message` to UTF-8 JSON and writes `Content-Length: <byte count>\\r\\n\\r\\n` followed by the body.\n- `read_message(stream)` reads one such message from a binary stream and returns the decoded dict. Return `None` at end of stream. Raise `ValueError` for a malformed frame: no `Content-Length` header, an oversized header, or a truncated body. The length counts bytes, not characters, so multi-byte UTF-8 must round-trip exactly.\n\nServer\n- `AcpServer(send=None, task_runner=run_task)`. `send` is called with every outgoing message, responses and notifications alike, including from the worker thread that runs prompts, so writes must be serialised. `task_runner(goal, cwd)` returns the result dict of one task.\n- `handle_message(message)` processes one decoded message. A message that is not a JSON-RPC 2.0 object is answered with error code -32600 and id null. A notification (no `id`) never gets a response. A request for an unknown method is answered with -32601 and the method name in the error message. A handler that raises is answered with -32603 and never crashes the loop.\n\nMethods\n- `initialize` responds `{\"protocolVersion\": 1, \"agentCapabilities\": {\"loadSession\": false}, \"authMethods\": []}`.\n- `session/new` takes `cwd` and responds `{\"sessionId\": <new uuid4 string>, \"mode\": {\"kind\": \"primary\", \"name\": \"default\"}, \"mcpServers\": []}`. The server records `sessions[sessionId] = cwd` (a public attribute named `sessions`).\n- `session/prompt` takes `sessionId` and `prompt`, an ACP prompt object whose `content` is a list of blocks; join the text of its `text` blocks with newlines to get the goal. An unknown session is answered with -32600. Otherwise the work happens on a daemon worker thread and `handle_message` returns at once, so the read loop stays free to process `session/cancel` while the task runs.\n- `session/cancel` takes `sessionId` and responds `{}`. It marks a running turn on that session as cancelled and calls `cancel()` on the control bus (`wells.control.CONTROL`). With nothing running it does nothing.\n- `fs/read_text_file` is not supported: answer -32601.\n\nStreaming a turn\nProgress is reported as notifications of the form `{\"jsonrpc\": \"2.0\", \"method\": \"session/update\", \"params\": {\"sessionId\": <id>, \"update\": {...}}}`. Every update carries a fresh integer `updateId` taken from a counter. A turn emits, in order: `{\"sessionUpdate\": \"turn\", \"state\": \"start\"}`; then, if the task produced message text, `{\"sessionUpdate\": \"agent_message\", \"content\": [{\"type\": \"text\", \"text\": ...}]}`; then `{\"sessionUpdate\": \"turn\", \"state\": \"complete\", \"stopReason\": ...}`. Only then is the `session/prompt` request itself answered, with `{\"stopReason\": ...}`. The stop reason is \"cancelled\" when the turn was cancelled and \"end_turn\" otherwise. If the task runner raises, the turn still completes (so the editor UI does not hang) and the request is answered with -32603 and the exception text.\n\nTask runner\n- `run_task(goal, cwd=None) -> dict` runs one headless task. When `cwd` is given, set `wells.config.WORKSPACE_ROOT` to it for the duration and restore the previous value afterwards. Call `wells.main._run_goal(goal, output_format=\"json\")` with stdout redirected into a buffer; that function signals completion by raising `SystemExit`, which must be caught so the server keeps running. Return the JSON object it printed: scan the captured lines from the end and parse the first line that starts with `{`. If nothing was printed return `{\"status\": \"error\", \"error\": \"no output from task runner\"}`; if no line parses return `{\"status\": \"error\", \"error\": \"unparseable output: <first 400 chars>\"}`.\n- The message text for a turn is built from the result dict: the non-empty string values of `summary`, `review_result` and `git_summary`, joined with a blank line; when `status` is \"error\" and there is an `error`, append \"error: <error>\".\n\nStdio loop\n- `serve(stdin=None, stdout=None)` reads framed messages until end of input and passes each to an `AcpServer` whose `send` writes framed messages to the output stream (defaults: `sys.stdin.buffer` and `sys.stdout.buffer`). A frame that fails to parse is answered with -32700 and the loop continues. A failed write (the client has gone away) is ignored; the loop ends on the next read.\n- `wait_for_prompts(timeout=10.0)` blocks until no prompt worker is in flight.\n- `main()` calls `serve()`.",
+  "test_oracle": {
+    "fail_to_pass": [
+      "tests/test_acp_server.py::test_framing_roundtrip",
+      "tests/test_acp_server.py::test_framing_utf8_multibyte",
+      "tests/test_acp_server.py::test_framing_eof_returns_none",
+      "tests/test_acp_server.py::test_framing_missing_header_raises",
+      "tests/test_acp_server.py::test_initialize",
+      "tests/test_acp_server.py::test_initialize_notification_no_response",
+      "tests/test_acp_server.py::test_session_new",
+      "tests/test_acp_server.py::test_session_prompt_runs_task_and_streams_turn",
+      "tests/test_acp_server.py::test_session_prompt_multiblock_prompt_joined",
+      "tests/test_acp_server.py::test_session_prompt_unknown_session_is_error",
+      "tests/test_acp_server.py::test_session_prompt_runner_exception_returns_error_not_crash",
+      "tests/test_acp_server.py::test_session_cancel_sets_flag_and_stop_reason",
+      "tests/test_acp_server.py::test_session_cancel_without_running_prompt_is_noop",
+      "tests/test_acp_server.py::test_unknown_method_returns_32601",
+      "tests/test_acp_server.py::test_fs_read_text_file_unsupported",
+      "tests/test_acp_server.py::test_non_jsonrpc_message_rejected",
+      "tests/test_acp_server.py::test_run_task_captures_json_payload",
+      "tests/test_acp_server.py::test_run_task_runner_error",
+      "tests/test_acp_server.py::test_serve_loop_end_to_end"
+    ],
+    "pass_to_pass": [],
+    "command": "uv run python -m pytest -q",
+    "test_files": [
+      "tests/test_acp_server.py"
+    ]
+  },
+  "environment_setup": [],
+  "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
+  "split": "val",
+  "status": "verified",
+  "schema_version": 1,
+  "mined_at": "2026-11-23 09:05:20",
+  "repo_url": "https://github.com/corbybender/Wells"
+}

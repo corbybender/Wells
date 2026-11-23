@@ -1,9 +1,9 @@
 {
-  "updated_at": "2026-11-23 08:59:44",
-  "total": 70,
+  "updated_at": "2026-11-23 09:39:27",
+  "total": 72,
   "splits": {
     "train": 46,
-    "val": 12,
+    "val": 14,
     "blind": 12
   },
   "tasks": [
@@ -202,6 +202,27 @@
       "status": "verified",
       "source_commit": "47914226c2968802f2cdee3f6f0f6e06e4472f64",
       "subject": "Fix empty netrc entry usage (#7205)"
+    },
+    {
+      "task_id": "T-583db3ff8f-acp-server",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
+      "subject": "Add an ACP (Agent Client Protocol) stdio server so editors can drive Wells"
+    },
+    {
+      "task_id": "T-583db3ff8f-bigbrain-memory",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
+      "subject": "Add a durable project-memory bridge to BigBrain"
+    },
+    {
+      "task_id": "T-583db3ff8f-code-mode",
+      "split": "val",
+      "status": "verified",
+      "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
+      "subject": "Add Code Mode: a `program` tool that composes many tool calls in one turn"
     },
     {
       "task_id": "T-60389df6d6-trim-excess-leading-path-separat",
@@ -426,13 +447,6 @@
       "status": "verified",
       "source_commit": "1faac29739df8ae837a9072218a8f81ca52afeaf",
       "subject": "feat: run-completion notifications + cross-run daily spend cap"
-    },
-    {
-      "task_id": "T-c9d4f56d48-feat-observability-bus-bigbrain-",
-      "split": "val",
-      "status": "verified",
-      "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
-      "subject": "feat: observability bus, BigBrain memory bridge, Code Mode, ACP server"
     },
     {
       "task_id": "T-ce5da127e1-feat-evolve-phase-2-the-evolutio",

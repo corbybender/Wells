@@ -187,7 +187,7 @@ further:
 |---|---|---|
 | Provider | Anthropic's Claude only | Any of them — Claude, OpenAI, Gemini, Z.ai, OpenRouter, any OpenAI-compatible endpoint, or fully local (Ollama/vLLM), switchable per task, not a one-time choice |
 | Test verification | Model decides whether/when to run tests via its own Bash calls | **Deterministic test-gate** + automatic post-edit self-heal — enforced by the harness, not left to model judgment |
-| Sandboxing | Bash tool runs on the host directly (as far as the CLI itself exposes) | `sandbox` mode: disposable Podman/Docker container per run — opt-in, or auto-upgrade from `auto` with `WELLS_SANDBOX_AUTO=1` |
+| Sandboxing | Built-in sandbox for shell commands (opt-in): OS-enforced on macOS, Linux and WSL2; none on native Windows | `sandbox` mode: disposable Podman/Docker container per run — needs a container runtime; opt-in, or auto-upgrade from `auto` with `WELLS_SANDBOX_AUTO=1` |
 | Editor integration | First-party VS Code/JetBrains extensions | **ACP server** (`wells-acp`) — any ACP-capable editor (Zed, JetBrains, custom clients) drives the full pipeline over stdio |
 | Long-term project memory | Auto-memory notes | **BigBrain transaction log** — locked append + deterministic compile into curated memory; planner recallable via `memory_search`; Reflexion failure critiques mirrored in automatically |
 | Unattended operation | Cloud-hosted scheduled routines (Anthropic's infrastructure, needs an account/plan tier) | `wells schedule` — your own machine's Task Scheduler/cron, no cloud dependency; completion notifications + a cross-run daily spend cap guard against a stuck/runaway recurring goal |
@@ -1409,6 +1409,8 @@ task always lands in the same split).
 ```bash
 wells bench mine --repo <repo> [--max N] [--skip-validation]
 wells bench list [--split train|val|blind|all]
+wells bench repos                     # where each task's source repo lives on this machine
+wells bench verify [ID] [--split S]   # re-run a task's validation here
 wells bench run --split val --profile zai [--task ID] [--seeds N] [--timeout SECONDS]
 wells bench results [ID]
 ```
@@ -1420,6 +1422,19 @@ model's own COMPLETE/INCOMPLETE claim is never trusted, only the test
 exit code. Results are Wilson-bounded (95% lower bound on pass@1), so two
 harness configurations are compared on the conservative estimate, not the
 noisy point estimate.
+
+**The corpus travels with the repo; its repos do not.** Every task records
+both `repo_root` (a path on the machine that mined it) and `repo_url`. On
+any other machine Wells resolves the URL to a checkout: the recorded path
+if it exists there, the workspace itself if it is a clone of the same
+repository, or else a mirror it clones once under `~/.wells/bench/repos/`.
+`wells bench repos` shows where each task's source lives, or why it can't
+be found, and `wells bench verify` re-runs the admission gate on this
+machine. A task that fails here is neither broken nor edited: the bundle
+is left exactly as committed, and the failure is remembered in a
+git-ignored per-machine file so bench runs here leave that task out
+(`--include-unverified` overrides). Scoring a task whose oracle cannot pass
+would measure the machine, not the harness.
 
 **`wells evolve`** is the first thing that *acts* on that number: it
 proposes a candidate replacement for the harness's own constitution
@@ -1451,13 +1466,16 @@ review.
 | Command | What it does |
 |---|---|
 | `wells bench mine` | Mine a repo's history into a dual-validated, oracle-scored task corpus |
+| `wells bench repos` | Report where each task's source repo lives on this machine |
+| `wells bench verify` | Re-run the admission gate for stored tasks, on this machine |
 | `wells bench run` | Execute a split, score it against the oracle, save Wilson-bounded results |
 | `wells evolve propose` | Stage a candidate `AGENT.md` — from a file (free) or `--auto` (one real harness run) |
 | `wells evolve gate` | Baseline-vs-candidate bench passes + replay, produce a promote/reject recommendation |
 | `wells evolve promote` / `reject` | Write the candidate to `AGENT.md`, or mark it rejected |
 
 Everything persists under `~/.wells/bench/` (per-workspace corpus + results
-under `<workspace>/.wells/bench/`) and `~/.wells/evolve/mutations/` — plain
+under `<workspace>/.wells/bench/`, mirrors of other repos under
+`~/.wells/bench/repos/`) and `~/.wells/evolve/mutations/` — plain
 JSON, inspectable and diffable like any other run artifact.
 
 ## MCP — server *and* client
@@ -1511,9 +1529,9 @@ passes the safety gate, so `approve` and `dryrun` apply to MCP tools too.
 
 Wells ships an **Agent Client Protocol** server (`wells-acp`): JSON-RPC over
 stdio, the protocol Zed, JetBrains, and other ACP-capable editors speak
-natively. A editor can open a session, send prompts (each runs the full
-Wells pipeline headlessly and streams turn updates back), and cancel
-mid-run — no terminal required:
+natively. An editor can open a session, send prompts (each runs the full
+Wells pipeline headlessly and streams the model's text and every tool call
+back), and cancel mid-run — no terminal required:
 
 ```jsonc
 // Zed: ~/.config/zed/settings.json
@@ -1527,9 +1545,13 @@ mid-run — no terminal required:
 | Capability | Status |
 |---|---|
 | `initialize` / `session/new` / `session/prompt` / `session/cancel` | ✓ |
-| Turn streaming (`session/update` notifications) | ✓ (turn start/complete + final message; token-level streaming is an easy upgrade via the event bus) |
-| `fs/read_text_file` | Unsupported (editors fall back to their own reads) |
-| Session resume across server restarts | Not yet (`loadSession: false`) |
+| Streaming (`session/update` notifications) | ✓ token-level `agent_message_chunk`; `tool_call` / `tool_call_update` for every tool call, with its result; final `agent_message` at the end of the turn |
+| `fs/read_text_file` | ✓ (optional 1-based `line` and `limit`) |
+| `session/load` — resume across server restarts | ✓ (`loadSession: true`; transcripts under `~/.wells/acp/sessions/`) |
+
+A follow-up prompt in the same session carries the earlier turns to the
+harness as context, so "now add tests for that" builds on the previous turn
+instead of starting cold. `WELLS_ACP_CONTEXT=0` turns that off.
 
 ## Project structure
 
@@ -1690,7 +1712,8 @@ the settings persistence, and SEACS bench/evolve (corpus dual-validation on
 real git repos, oracle scoring, Wilson bounds, mutation propose/gate/promote —
 all stubbed, no LLM calls in CI). GitHub Actions runs it on every
 push/PR (`ci.yml`); `release-index.yml` builds and publishes `wells-index`
-wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
+wheels to PyPI on an `index-v*` tag — since 0.2.0 one abi3 wheel per platform
+(Linux/macOS/Windows), each installing on every CPython 3.12+.
 
 ## Roadmap
 
@@ -1707,14 +1730,24 @@ wheels (Linux/macOS/Windows × Python 3.12/3.13) to PyPI on an `index-v*` tag.
   (`memory_bridge`), `memory_search` recall, Reflexion mirroring.
 - ~~Cross-harness skill compatibility.~~ ✅ Shipped — `.claude`/`.agents`/
   `.codex` skill dirs discovered natively.
-- **SEACS corpus growth** — the self-improvement loop's biggest lever: mine
-  more repos (`wells bench mine --env-setup '...'` now handles repos a bare
-  checkout can't run), quarantine structurally unreliable tasks, grow the
-  val split past zero so `evolve gate` runs end-to-end.
-- **Sandbox-by-default** — flip the `WELLS_SANDBOX_AUTO` shipped default to
-  on once the container path has soaked in real unattended runs.
-- **Rust launcher / single-binary distribution** — a compiled shell around
-  the Python engine for millisecond cold start and one-command install.
+- ~~A portable corpus.~~ ✅ Shipped — every task carries a `repo_url`,
+  resolves to a checkout on any machine, and `wells bench verify` re-checks
+  it there.
+- **SEACS corpus growth** — still the self-improvement loop's biggest lever.
+  72 tasks (14 val) are committed; on a machine with this repo's
+  dependencies, 13 of the 14 val tasks have a working oracle. Next: a
+  per-task oracle environment (one `requests` task needs the `pytest-httpbin`
+  plugin and is left out where that is absent), and more val tasks.
+- **Sandbox-by-default** — open, and not a flip of a switch. The sandbox is
+  container-only (Podman or Docker), so a machine with no container runtime
+  has none at all, and the container path has not yet been soaked in real
+  unattended runs. For reference, Claude Code's sandbox is opt-in today
+  while Codex applies one by default.
+- ~~Single-binary distribution.~~ ✅ Shipped — PyInstaller builds for Linux,
+  macOS (arm64 and x64) and Windows, attached to each release.
+- **Rust launcher** — a compiled shell around the Python engine for
+  millisecond cold start. Open; the one-command-install half of the old
+  entry shipped with the binaries above.
 
 
 ## Semantic code retrieval
