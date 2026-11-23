@@ -1016,6 +1016,31 @@ def test_run_bench_leaves_out_tasks_that_failed_verification_here(
     assert run.summary["resolved"] == 1
 
 
+def test_preserve_artifacts_copies_traces_before_the_worktree_goes(tmp_path: Path):
+    """A finished run's traces must outlive the worktree that holds them."""
+    wt = tmp_path / "wt"
+    traces = wt / ".wells" / "traces"
+    traces.mkdir(parents=True)
+    (traces / "a.json").write_text(
+        json.dumps({"step_label": "planner", "tool_calls": [{"name": "read_file"}] * 3}),
+        encoding="utf-8",
+    )
+    (traces / "b.json").write_text(
+        json.dumps({"step_label": "coder", "tool_calls": [{"name": "edit_file"}] * 2}),
+        encoding="utf-8",
+    )
+
+    dest = tmp_path / "out" / "task-s1"
+    saved, calls = run_mod._preserve_artifacts(str(wt), dest)
+    assert saved == str(dest) and calls == 5
+    assert sorted(p.name for p in dest.glob("*.json")) == ["a.json", "b.json"]
+
+    # No traces is not an error: older runs and non-agent failures have none.
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert run_mod._preserve_artifacts(str(empty), tmp_path / "x") == ("", 0)
+
+
 def test_source_env_drops_the_launching_shells_proxy_settings(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost,::1")
     monkeypatch.setenv("https_proxy", "http://proxy:3128")

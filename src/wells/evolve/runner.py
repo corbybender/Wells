@@ -106,6 +106,11 @@ class TaskResult:
     duration_seconds: float = 0.0
     error: str = ""
     fail_to_pass_results: dict[str, bool] = field(default_factory=dict)
+    # Evidence: where this run's per-step traces were copied before the
+    # worktree was thrown away, and how many tool calls the agent made.
+    # Without this a 30-minute timeout left nothing but the word "timeout".
+    artifacts: str = ""
+    tool_calls: int = 0
 
 
 def _kill_tree(pid: int) -> None:
@@ -228,7 +233,12 @@ def _run_harness(
                     pass
 
     t_out = threading.Thread(target=_drain, args=(proc.stdout, out_lines, True), daemon=True)
-    t_err = threading.Thread(target=_drain, args=(proc.stderr, err_lines, False), daemon=True)
+    # stderr is forwarded too, and it is where the progress actually is: in
+    # JSON mode _run_goal redirects stdout to stderr for the duration of the
+    # run (main.py) so the single JSON payload on stdout stays machine
+    # readable. Forwarding only stdout is why every bench log so far showed
+    # nothing but heartbeats.
+    t_err = threading.Thread(target=_drain, args=(proc.stderr, err_lines, True), daemon=True)
     t_out.start()
     t_err.start()
 
@@ -360,6 +370,37 @@ def _score_oracle(worktree: str, task: TaskSpec) -> tuple[bool, dict[str, bool],
         return False, {}, f"oracle infra failure: {type(e).__name__}: {e}"[:300]
 
 
+def _preserve_artifacts(worktree: str, dest: Path) -> tuple[str, int]:
+    """Copy a finished run's traces out of the worktree before it is deleted.
+
+    The worktree is disposable, and cleanup removes it wholesale — which
+    used to destroy the only record of what the agent actually did. A
+    timeout row is then just the word "timeout", even though 1.47M tokens
+    were spent, and the repetition guard's behaviour cannot be audited
+    after the fact. Best-effort: an artifact failure never fails the row.
+
+    Returns ``(destination, tool_call_count)``; ``("", 0)`` on failure.
+    """
+    traces = Path(worktree) / ".wells" / "traces"
+    if not traces.is_dir():
+        return "", 0
+    files = sorted(traces.glob("*.json"))
+    if not files:
+        return "", 0
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        tool_calls = 0
+        for f in files:
+            shutil.copy2(f, dest / f.name)
+            try:
+                tool_calls += len(json.loads(f.read_text(encoding="utf-8")).get("tool_calls") or [])
+            except (OSError, json.JSONDecodeError, AttributeError):
+                pass
+        return str(dest), tool_calls
+    except OSError:
+        return "", 0
+
+
 def _execute_task(
     task: TaskSpec,
     seed: int,
@@ -371,6 +412,7 @@ def _execute_task(
     progress=None,
     on_tick=None,
     repo_root: str | None = None,
+    artifacts_dir: Path | None = None,
 ) -> TaskResult:
     """Worktree at base → run harness → score oracle → always clean up.
 
@@ -443,6 +485,8 @@ def _execute_task(
             result.error = oracle_err
         return result
     finally:
+        if artifacts_dir is not None:
+            result.artifacts, result.tool_calls = _preserve_artifacts(wt, artifacts_dir)
         git(repo_root, "worktree", "remove", "--force", wt)
 
 
@@ -733,6 +777,9 @@ def run_bench(
             task, seed, profile=profile, worktree_root=worktree_root,
             timeout=timeout, extra_env=extra_env, on_tick=on_tick,
             progress=progress, repo_root=repo_of.get(task.task_id),
+            # Sibling of <bench_id>.json: list_results globs *.json, so a
+            # directory here does not show up as a phantom run.
+            artifacts_dir=results_dir(workspace) / bench_id / f"{task.task_id}-s{seed}",
         )
 
     def _record(row: TaskResult) -> None:
