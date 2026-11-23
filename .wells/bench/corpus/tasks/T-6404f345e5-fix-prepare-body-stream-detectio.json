@@ -252,5 +252,6 @@
   "split": "blind",
   "status": "verified",
   "schema_version": 1,
-  "mined_at": "2026-08-24 10:57:22"
+  "mined_at": "2026-08-24 10:57:22",
+  "repo_url": "https://github.com/psf/requests"
 }

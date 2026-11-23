@@ -36,8 +36,14 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from wells._gitutils import git, is_git_repo
-from wells.evolve.corpus import list_tasks, resolve_command_argv
+from wells._gitutils import git
+from wells.evolve.corpus import (
+    default_bench_home,
+    list_tasks,
+    local_verify_failures,
+    resolve_command_argv,
+    resolve_repo_root,
+)
 from wells.evolve.schema import TaskSpec
 
 RESULTS_REL = Path(".wells") / "bench" / "results"
@@ -364,15 +370,19 @@ def _execute_task(
     extra_env: dict[str, str] | None = None,
     progress=None,
     on_tick=None,
+    repo_root: str | None = None,
 ) -> TaskResult:
     """Worktree at base → run harness → score oracle → always clean up.
 
-    Uses ``task.repo_root`` (not a caller-supplied repo path) — a corpus
-    can span multiple repos (each task carries its own origin), so the
-    worktree must be created against the specific repo this task was
-    mined from, never a shared/assumed one.
+    Uses the task's own repo (not a caller-supplied one) — a corpus can
+    span multiple repos (each task carries its own origin), so the worktree
+    must be created against the specific repo this task was mined from,
+    never a shared/assumed one. ``repo_root`` is the checkout to use on
+    this machine; it defaults to ``task.repo_root``, and :func:`run_bench`
+    passes what :func:`~wells.evolve.corpus.resolve_repo_root` found
+    whenever that recorded path does not exist here.
     """
-    repo_root = task.repo_root
+    repo_root = repo_root or task.repo_root
     wt = str(worktree_root / f"{task.task_id}-s{seed}")
     result = TaskResult(task_id=task.task_id, seed=seed, resolved=False)
     # Defensive: on a resumed run, the task that was in-flight when a prior
@@ -576,9 +586,16 @@ def run_bench(
     resume: bool = False,
     heartbeat_path: str | Path | None = None,
     workers: int = 1,
+    include_unverified: bool = False,
     log=print,
 ) -> BenchRun:
     """Run one bench over a split and persist the results.
+
+    Tasks whose validation failed on this machine (see
+    ``wells bench verify`` / :func:`~wells.evolve.corpus.verify_task`) are
+    left out unless ``include_unverified`` is set: their oracle cannot pass
+    here whatever the agent does, so scoring them would measure the
+    machine, not the harness.
 
     ``task_filter`` restricts the run to tasks whose id starts with the
     given prefix (task ids are long; prefixes are how people type them) —
@@ -632,34 +649,55 @@ def run_bench(
             raise RuntimeError(f"No task matching {task_filter!r} in split {split!r}.")
     if limit > 0:
         tasks = tasks[:limit]
+    if not include_unverified:
+        failed_here = local_verify_failures(workspace)
+        skipped = [t.task_id for t in tasks if t.task_id in failed_here]
+        if skipped:
+            tasks = [t for t in tasks if t.task_id not in failed_here]
+            log(
+                f"[bench {bench_id}] leaving out {len(skipped)} task(s) that failed "
+                f"`wells bench verify` on this machine (--include-unverified "
+                f"runs them anyway): {skipped[:5]}"
+            )
+            if not tasks:
+                raise RuntimeError(
+                    "Every task in this selection failed validation on this "
+                    "machine, so nothing here could produce a valid score. "
+                    "Run `wells bench verify` to see why."
+                )
     if seeds < 1:
         seeds = 1
 
     bench_id = bench_id or new_bench_id()
-    bench_home = bench_home or (Path.home() / ".wells" / "bench")
+    bench_home = bench_home or default_bench_home()
     worktree_root = bench_home / "runs" / bench_id
     worktree_root.mkdir(parents=True, exist_ok=True)
 
     # A corpus can span multiple repos (e.g. mined from several external
-    # projects) — each task carries its own repo_root and is executed
-    # against it directly (see _execute_task). Only requirement: every
-    # task must actually have one, and it must resolve to a real repo on
-    # this machine (mined tasks from repos that were only ever local
-    # clones — like the requests/click mining today — need those clones
-    # present to gate against).
-    missing = [t.task_id for t in tasks if not t.repo_root]
-    if missing:
-        raise RuntimeError(
-            f"{len(missing)} task(s) in split {split!r} have no repo_root: "
-            f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
+    # projects) — each task carries its own origin and is executed against
+    # it directly (see _execute_task). repo_root is a path on the machine
+    # that mined the task, so resolve each task to a checkout that exists
+    # HERE: the recorded path when it is a git repo, otherwise a mirror
+    # cloned from the task's repo_url (see corpus.resolve_repo_root).
+    repo_of: dict[str, str] = {}
+    unresolvable: list[str] = []
+    for t in tasks:
+        if t.task_id in repo_of:
+            continue
+        found = resolve_repo_root(
+            t, workspace=workspace, bench_home=bench_home, log=log
         )
-    repo_roots = sorted({t.repo_root for t in tasks})
-    absent = [r for r in repo_roots if not is_git_repo(r)]
-    if absent:
+        if found is None:
+            unresolvable.append(t.task_id)
+        else:
+            repo_of[t.task_id] = found
+    if unresolvable:
         raise RuntimeError(
-            f"repo_root(s) not found as a git repo on this machine: {absent} "
-            "— clone them (or restore the clone path) before gating this split."
+            f"{len(unresolvable)} task(s) in split {split!r} have no source repo "
+            f"on this machine: {unresolvable[:5]}"
+            f"{'...' if len(unresolvable) > 5 else ''} — see `wells bench repos`."
         )
+    repo_roots = sorted(set(repo_of.values()))
 
     result_path = results_dir(workspace) / f"{bench_id}.json"
     done_pairs: set[tuple[str, int]] = set()
@@ -694,7 +732,7 @@ def run_bench(
         return _execute_task(
             task, seed, profile=profile, worktree_root=worktree_root,
             timeout=timeout, extra_env=extra_env, on_tick=on_tick,
-            progress=progress,
+            progress=progress, repo_root=repo_of.get(task.task_id),
         )
 
     def _record(row: TaskResult) -> None:

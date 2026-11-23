@@ -77,5 +77,6 @@
   "split": "blind",
   "status": "verified",
   "schema_version": 1,
-  "mined_at": "2026-08-24 11:14:26"
+  "mined_at": "2026-08-24 11:14:26",
+  "repo_url": "https://github.com/pallets/click"
 }

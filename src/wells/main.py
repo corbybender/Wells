@@ -935,11 +935,13 @@ def _run_bench_cmd(args: list[str]) -> None:
             "                         validation worktree, e.g. --env-setup 'uv sync')\n"
             "                         [--skip-validation]\n"
             "       wells bench list [--split train|val|blind|all]\n"
+            "       wells bench repos  (where each task's source repo lives on this machine)\n"
+            "       wells bench verify [ID] [--split S]  (re-run a task's validation here)\n"
             "       wells bench quarantine ID  (exclude a structurally unreliable task)\n"
             "       wells bench run [--split val] [--profile NAME] [--task ID]\n"
             "                        [--seeds N] [--timeout SECONDS] [--limit N]\n"
             "                        [--bench-id ID] [--resume] [--heartbeat PATH]\n"
-            "                        [--workers N]\n"
+            "                        [--workers N] [--include-unverified]\n"
             "       wells bench results [ID]"
         )
         sys.exit(2)
@@ -1006,6 +1008,71 @@ def _run_bench_cmd(args: list[str]) -> None:
             print(f"quarantined {t.task_id} (excluded from bench runs and evolve gates)")
         return
 
+    if sub == "repos":
+        # Where each task's source repo lives on this machine, or why it
+        # can't be found. Read-only: reports a missing mirror instead of
+        # cloning one.
+        groups: dict[tuple[str, str], list] = {}
+        for t in corpus.load_corpus(workspace):
+            groups.setdefault((t.repo_root, t.repo_url), []).append(t)
+        unresolved = 0
+        for (root, url), ts in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            found = corpus.resolve_repo_root(ts[0], workspace=workspace, clone=False)
+            if found is None:
+                unresolved += len(ts)
+            print(f"  {len(ts):3d} task(s)  -> {found or 'NOT FOUND on this machine'}")
+            print(f"        repo_root = {root or '(none)'}")
+            print(f"        repo_url  = {url or '(none)'}")
+        total = sum(len(v) for v in groups.values())
+        print(
+            f"\n{total} task(s); {unresolved} cannot be resolved here"
+            + (" (a bench run or `wells bench verify` clones them)" if unresolved else "")
+        )
+        return
+
+    if sub == "verify":
+        # Re-run the admission gate for tasks already in the corpus.
+        # `verified` is a claim about the machine that checked it: a corpus
+        # committed elsewhere has never been tested against this machine's
+        # repos or environment. Failures are remembered per machine and the
+        # shared bundle is left alone (see corpus.local_verify_failures).
+        prefix, rest = _pop_flag_value("--task", rest)
+        split, rest = _pop_flag_value("--split", rest)
+        if rest and not rest[0].startswith("--"):
+            prefix = prefix or rest[0]  # `wells bench verify ID` (positional)
+        tasks = [
+            t
+            for t in corpus.load_corpus(workspace)
+            if (not prefix or t.task_id.startswith(prefix))
+            and (not split or t.split == split)
+            # Quarantined tasks stay quarantined unless named explicitly.
+            and (t.status != "rejected" or bool(prefix))
+        ]
+        if not tasks:
+            print(f"No tasks to verify (task={prefix!r}, split={split!r}).")
+            sys.exit(2)
+        print(
+            f"verifying {len(tasks)} task(s): target tests must fail at the base "
+            "commit and pass at the fix commit, on this machine ..."
+        )
+        results = []
+        for t in tasks:
+            print(f"  {t.task_id} ...", end="", flush=True)
+            ok, why = corpus.verify_task(workspace, t, log=print)
+            results.append(ok)
+            print("ok" if ok else f"FAILED: {why[:200]}")
+        corpus.save_manifest(workspace, corpus.load_corpus(workspace))
+        good = sum(results)
+        print(f"\n  verified here: {good}/{len(results)}")
+        if good != len(results):
+            print(
+                "  The bundle files are unchanged by failures (the tasks may be valid\n"
+                "  where they were first verified); this machine remembers them in\n"
+                "  .wells/bench/corpus/local-verify.json and bench runs here leave them\n"
+                "  out. `wells bench run --include-unverified` overrides that."
+            )
+        sys.exit(0 if good == len(results) else 1)
+
     if sub == "list":
         split, rest = _pop_flag_value("--split", rest)
         split = split or "all"
@@ -1030,9 +1097,12 @@ def _run_bench_cmd(args: list[str]) -> None:
         bench_id, rest = _pop_flag_value("--bench-id", rest)
         heartbeat, rest = _pop_flag_value("--heartbeat", rest)
         workers_s, rest = _pop_flag_value("--workers", rest)
+        include_unverified = "--include-unverified" in rest
+        rest = [a for a in rest if a != "--include-unverified"]
         resume = "--resume" in rest
         rest = [a for a in rest if a != "--resume"]
-        kwargs: dict = {"profile": profile or "", "task_filter": task_filter or ""}
+        kwargs: dict = {"profile": profile or "", "task_filter": task_filter or "",
+                        "include_unverified": include_unverified}
         if seeds_s:
             kwargs["seeds"] = int(seeds_s)
         if timeout_s:

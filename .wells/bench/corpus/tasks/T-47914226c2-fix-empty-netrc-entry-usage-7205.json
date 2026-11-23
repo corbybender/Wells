@@ -80,5 +80,6 @@
   "split": "val",
   "status": "verified",
   "schema_version": 1,
-  "mined_at": "2026-08-24 08:50:01"
+  "mined_at": "2026-08-24 08:50:01",
+  "repo_url": "https://github.com/psf/requests"
 }

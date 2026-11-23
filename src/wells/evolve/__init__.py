@@ -25,6 +25,8 @@ from wells.evolve.corpus import (
     list_tasks,
     load_corpus,
     mine_corpus,
+    resolve_repo_root,
+    verify_task,
 )
 from wells.evolve.mutate import (
     MutationManifest,
@@ -59,7 +61,9 @@ __all__ = [
     "promote_mutation",
     "propose_mutation",
     "reject_mutation",
+    "resolve_repo_root",
     "run_bench",
     "summarize",
+    "verify_task",
     "wilson_lower_bound",
 ]

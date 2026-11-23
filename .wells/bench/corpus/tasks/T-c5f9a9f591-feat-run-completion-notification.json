@@ -67,5 +67,6 @@
   "split": "blind",
   "status": "verified",
   "schema_version": 1,
-  "mined_at": "2026-08-22 09:31:38"
+  "mined_at": "2026-08-22 09:31:38",
+  "repo_url": "https://github.com/corbybender/Wells"
 }

@@ -777,3 +777,251 @@ def test_summarize_aggregates():
     assert s["avg_tokens"] == 200
     assert s["total_cost_usd"] == 2.0
     assert s["harness_statuses"] == {"complete": 2, "incomplete": 1}
+
+
+# ---------------------------------------------------------------------------
+# Portable repos: repo_url, resolution on another machine, re-verification
+# ---------------------------------------------------------------------------
+
+
+def _quiet():
+    return lambda *a, **k: None
+
+
+def test_task_spec_roundtrip_keeps_repo_url(tmp_path: Path):
+    task = _spec("T-url000000000000000000000000000")
+    task.repo_url = "https://github.com/pallets/click"
+    path = task.save(tmp_path)
+    assert TaskSpec.load(path).repo_url == "https://github.com/pallets/click"
+    # Bundles written before the field existed still load.
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["repo_url"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert TaskSpec.load(path).repo_url == ""
+
+
+def test_normalize_repo_url_equates_ssh_and_https():
+    assert corp.normalize_repo_url("https://github.com/o/r.git") == "github.com/o/r"
+    assert corp.normalize_repo_url("git@github.com:o/r") == "github.com/o/r"
+    assert corp.normalize_repo_url("HTTPS://GitHub.com/O/R/") == "github.com/o/r"
+    assert corp.normalize_repo_url("") == ""
+
+
+def test_resolve_prefers_a_repo_root_that_exists(repo_with_fix: Path):
+    t = _spec("T-r00000000000000000000000000000")
+    t.repo_root = str(repo_with_fix)
+    t.repo_url = "https://example.invalid/never-cloned"
+    assert corp.resolve_repo_root(t) == str(repo_with_fix)
+
+
+def test_resolve_uses_workspace_when_it_is_a_clone_of_the_task_repo(
+    repo_with_fix: Path, monkeypatch
+):
+    """No second copy of a repo the user is already sitting in."""
+    _git(repo_with_fix, "remote", "add", "origin", "https://github.com/o/r.git")
+    monkeypatch.setattr(
+        corp, "_clone_mirror", lambda url, dest: pytest.fail("must not clone")
+    )
+    t = _spec("T-ws0000000000000000000000000000")
+    t.repo_root = "/gone/on/this/machine"
+    t.repo_url = "git@github.com:o/r"  # ssh spelling of the same repository
+    assert corp.resolve_repo_root(t, workspace=str(repo_with_fix)) == str(repo_with_fix)
+
+
+def test_resolve_clones_a_mirror_once(tmp_path: Path, monkeypatch):
+    calls: list[str] = []
+
+    def fake_clone(url: str, dest: Path):
+        calls.append(url)
+        dest.mkdir(parents=True)
+        _git(dest, "init", "-q")
+        return True, ""
+
+    monkeypatch.setattr(corp, "_clone_mirror", fake_clone)
+    home = tmp_path / "bench"
+    t = _spec("T-m00000000000000000000000000000")
+    t.repo_root = "/elsewhere/click"
+    t.repo_url = "https://github.com/pallets/click"
+    first = corp.resolve_repo_root(t, bench_home=home)
+    second = corp.resolve_repo_root(t, bench_home=home)
+    assert first == second == str(home / "repos" / "click")
+    assert calls == ["https://github.com/pallets/click"]  # once, then reused
+
+    calls.clear()  # read-only reporting never clones
+    t2 = _spec("T-n00000000000000000000000000000")
+    t2.repo_url = "https://github.com/psf/requests"
+    assert corp.resolve_repo_root(t2, bench_home=home, clone=False) is None
+    assert calls == []
+
+
+def test_resolve_without_path_or_url_is_none():
+    t = _spec("T-z00000000000000000000000000000")
+    t.repo_root = "/not/here"
+    assert corp.resolve_repo_root(t) is None
+
+
+def test_mining_records_repo_url(repo_with_fix: Path, tmp_path: Path):
+    _git(repo_with_fix, "remote", "add", "origin", "https://github.com/o/r.git")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    admitted, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench", log=_quiet(),
+    )
+    assert admitted[0].repo_url == "https://github.com/o/r.git"
+
+
+def test_mining_skips_a_task_whose_commit_sha_changed(
+    repo_with_fix: Path, tmp_path: Path
+):
+    """After a history rewrite every SHA is new, but the task is not."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    admitted, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench", log=_quiet(),
+    )
+    # The rewrite in miniature: same statement and test files, an id the
+    # miner cannot recognise.
+    task = admitted[0]
+    tdir = corp.tasks_dir(str(ws))
+    (tdir / f"{task.task_id}.json").unlink()
+    task.task_id = "T-000000000000-rewritten-copy-of-the-same-fix"
+    task.save(tdir)
+
+    again, stats = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench", log=_quiet(),
+    )
+    assert again == [] and stats["skipped_existing"] == 1
+    assert [t.task_id for t in evolve.load_corpus(str(ws))] == [task.task_id]
+
+
+def test_run_bench_resolves_a_repo_that_is_not_at_its_recorded_path(
+    repo_with_fix: Path, tmp_path: Path, monkeypatch
+):
+    """The corpus was committed on another machine: repo_root is gone, but
+    the repo is reachable by URL (a local file:// stand-in for GitHub)."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    admitted, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench_mine", log=_quiet(),
+    )
+    task = admitted[0]
+    task.split = "val"
+    task.save(corp.tasks_dir(str(ws)))
+
+    moved = tmp_path / "elsewhere" / "r"
+    moved.parent.mkdir()
+    _git(tmp_path, "clone", "-q", str(repo_with_fix), str(moved))
+    task.repo_root = "/no/such/path/on/this/machine"
+    task.repo_url = moved.as_uri()
+    task.save(corp.tasks_dir(str(ws)))
+
+    def fake_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        Path(worktree, "calc.py").write_text(
+            "def add(a, b):\n    return a + b\n", encoding="utf-8"
+        )
+        return {"status": "complete", "tokens": {"total": 1}}
+
+    monkeypatch.setattr(run_mod, "_run_harness", fake_harness)
+    run = evolve.run_bench(
+        str(ws), "val", bench_home=tmp_path / "bench_run", log=_quiet()
+    )
+    assert run.summary["resolved"] == 1
+
+
+def test_verify_task_reports_validity_on_this_machine(
+    repo_with_fix: Path, tmp_path: Path
+):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    admitted, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench_mine", log=_quiet(),
+    )
+    task = admitted[0]
+    task.status = "unverified"
+    task.save(corp.tasks_dir(str(ws)))
+    home = tmp_path / "bench_verify"
+    real_base = task.base_commit
+
+    ok, why = corp.verify_task(str(ws), task, bench_home=home)
+    assert ok and why == "" and task.status == "verified"
+    assert corp.local_verify_failures(str(ws)) == {}
+
+    # Tamper: base == fix, so the target tests pass at "base". Not a fix
+    # here — but that is this machine's finding, not a fact about the task:
+    # the bundle keeps the status it was verified with elsewhere, and the
+    # failure is remembered locally instead.
+    task.base_commit = task.source_commit
+    ok, why = corp.verify_task(str(ws), task, bench_home=home)
+    assert not ok and "already PASS at base" in why
+    assert evolve.load_corpus(str(ws))[0].status == "verified"
+    assert corp.local_verify_failures(str(ws)) == {task.task_id: why}
+
+    # Repair it and a later verification clears the local record.
+    task.base_commit = real_base
+    ok, _ = corp.verify_task(str(ws), task, bench_home=home)
+    assert ok and corp.local_verify_failures(str(ws)) == {}
+
+
+def test_verify_task_explains_an_unobtainable_repo(tmp_path: Path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    t = _spec("T-u00000000000000000000000000000")
+    t.repo_root = "/only/on/the/machine/that/mined/it"
+    t.save(corp.tasks_dir(str(ws)))
+    ok, why = corp.verify_task(str(ws), t, bench_home=tmp_path / "bench")
+    assert not ok
+    assert "not obtainable" in why and "/only/on/the/machine" in why
+    assert evolve.load_corpus(str(ws))[0].status == "verified"  # bundle untouched
+    assert corp.local_verify_failures(str(ws)) == {t.task_id: why}
+
+
+def test_run_bench_leaves_out_tasks_that_failed_verification_here(
+    repo_with_fix: Path, tmp_path: Path, monkeypatch
+):
+    """An oracle that cannot pass on this machine would score the machine,
+    not the harness, so such tasks are dropped from the run by default."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    admitted, _ = evolve.mine_corpus(
+        str(repo_with_fix), str(ws), max_tasks=5,
+        bench_home=tmp_path / "bench_mine", log=_quiet(),
+    )
+    task = admitted[0]
+    task.split = "val"
+    task.save(corp.tasks_dir(str(ws)))
+    corp._record_local_verify(str(ws), task.task_id, False, "needs a plugin")
+
+    def fake_harness(worktree, problem, *, profile="", timeout=0, extra_env=None):
+        Path(worktree, "calc.py").write_text(
+            "def add(a, b):\n    return a + b\n", encoding="utf-8"
+        )
+        return {"status": "complete", "tokens": {"total": 1}}
+
+    monkeypatch.setattr(run_mod, "_run_harness", fake_harness)
+    logs: list[str] = []
+    log = logs.append
+    with pytest.raises(RuntimeError, match="failed validation on this machine"):
+        evolve.run_bench(str(ws), "val", bench_home=tmp_path / "bench_run", log=log)
+    assert any("leaving out 1 task(s)" in line for line in logs)
+
+    run = evolve.run_bench(
+        str(ws), "val", bench_home=tmp_path / "bench_run",
+        include_unverified=True, log=log,
+    )
+    assert run.summary["resolved"] == 1
+
+
+def test_source_env_drops_the_launching_shells_proxy_settings(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost,::1")
+    monkeypatch.setenv("https_proxy", "http://proxy:3128")
+    monkeypatch.setenv("ALL_PROXY", "socks5://proxy:1080")
+    monkeypatch.setenv("SOME_OTHER", "kept")
+    env = corp.source_env(str(tmp_path))
+    assert not {k for k in env if k.lower().endswith("_proxy")}
+    assert env["SOME_OTHER"] == "kept"
+    assert env["PYTHONPATH"].startswith(str(tmp_path))

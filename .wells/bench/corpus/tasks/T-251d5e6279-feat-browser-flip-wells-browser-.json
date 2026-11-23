@@ -33,5 +33,6 @@
   "split": "train",
   "status": "verified",
   "schema_version": 1,
-  "mined_at": "2026-11-20 12:33:43"
+  "mined_at": "2026-11-20 12:33:43",
+  "repo_url": "https://github.com/corbybender/Wells"
 }

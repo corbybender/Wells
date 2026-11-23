@@ -131,5 +131,6 @@
   "split": "val",
   "status": "verified",
   "schema_version": 1,
-  "mined_at": "2026-08-24 11:14:37"
+  "mined_at": "2026-08-24 11:14:37",
+  "repo_url": "https://github.com/pallets/click"
 }

@@ -89,6 +89,12 @@ class TaskSpec:
     status: str = "verified"  # verified | unverified | rejected
     schema_version: int = TASK_SCHEMA_VERSION
     mined_at: str = ""
+    # Canonical clone URL of the repo this task was mined from. ``repo_root``
+    # is a path on whichever machine did the mining, so on its own it makes
+    # a committed corpus unusable anywhere else; the URL is what lets any
+    # machine obtain the same commits (see
+    # :func:`wells.evolve.corpus.resolve_repo_root`).
+    repo_url: str = ""
 
     # ------------------------------------------------------------------ IO
 
@@ -103,6 +109,7 @@ class TaskSpec:
         return cls(
             task_id=str(d["task_id"]),
             repo_root=str(d.get("repo_root") or ""),
+            repo_url=str(d.get("repo_url") or ""),
             base_commit=str(d.get("base_commit") or ""),
             problem_statement=str(d.get("problem_statement") or ""),
             test_oracle=Oracle.from_dict(oracle) if oracle else Oracle(),
