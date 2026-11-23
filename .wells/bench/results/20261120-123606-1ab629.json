@@ -1,0 +1,70 @@
+{
+  "bench_id": "20261120-123606-1ab629",
+  "split": "val",
+  "profile": "(active)",
+  "created_at": "2026-11-20 12:36:06",
+  "tasks": [
+    {
+      "task_id": "T-c9d4f56d48-feat-observability-bus-bigbrain-",
+      "seed": 1,
+      "resolved": false,
+      "harness_status": "timeout",
+      "tokens_total": 0,
+      "cost_usd": null,
+      "duration_seconds": 1800.4,
+      "error": "",
+      "fail_to_pass_results": {
+        "tests/test_acp_server.py::test_framing_roundtrip": false,
+        "tests/test_acp_server.py::test_framing_utf8_multibyte": false,
+        "tests/test_acp_server.py::test_framing_eof_returns_none": false,
+        "tests/test_acp_server.py::test_framing_missing_header_raises": false,
+        "tests/test_acp_server.py::test_initialize": false,
+        "tests/test_acp_server.py::test_initialize_notification_no_response": false,
+        "tests/test_acp_server.py::test_session_new": false,
+        "tests/test_acp_server.py::test_session_prompt_runs_task_and_streams_turn": false,
+        "tests/test_acp_server.py::test_session_prompt_multiblock_prompt_joined": false,
+        "tests/test_acp_server.py::test_session_prompt_unknown_session_is_error": false,
+        "tests/test_acp_server.py::test_session_prompt_runner_exception_returns_error_not_crash": false,
+        "tests/test_acp_server.py::test_session_cancel_sets_flag_and_stop_reason": false,
+        "tests/test_acp_server.py::test_session_cancel_without_running_prompt_is_noop": false,
+        "tests/test_acp_server.py::test_unknown_method_returns_32601": false,
+        "tests/test_acp_server.py::test_fs_read_text_file_unsupported": false,
+        "tests/test_acp_server.py::test_non_jsonrpc_message_rejected": false,
+        "tests/test_acp_server.py::test_run_task_captures_json_payload": false,
+        "tests/test_acp_server.py::test_run_task_runner_error": false,
+        "tests/test_acp_server.py::test_serve_loop_end_to_end": false,
+        "tests/test_codemode.py::test_program_composes_tool_calls": false,
+        "tests/test_codemode.py::test_program_stdout_and_result": false,
+        "tests/test_codemode.py::test_program_chains_dependent_lookups": false,
+        "tests/test_codemode.py::test_program_denies_subprocess_pattern": false,
+        "tests/test_codemode.py::test_program_blocks_unsafe_import": false,
+        "tests/test_codemode.py::test_program_allows_safe_import": false,
+        "tests/test_codemode.py::test_program_blocks_open": false,
+        "tests/test_codemode.py::test_program_reports_inner_tool_failure": false,
+        "tests/test_codemode.py::test_program_budget_exhausted": false,
+        "tests/test_codemode.py::test_program_plan_mode_simulated": false,
+        "tests/test_codemode.py::test_program_tool_registered": false,
+        "tests/test_memory_bridge.py::test_log_lesson_and_compile": false,
+        "tests/test_memory_bridge.py::test_recall_finds_compiled_lesson": false,
+        "tests/test_memory_bridge.py::test_log_lesson_disabled": false,
+        "tests/test_memory_bridge.py::test_memory_search_tool_registered_when_available": false,
+        "tests/test_memory_bridge.py::test_memory_search_tool_dispatch": false,
+        "tests/test_memory_bridge.py::test_finisher_writes_bigbrain": false
+      }
+    }
+  ],
+  "summary": {
+    "total_runs": 1,
+    "tasks": 1,
+    "resolved": 0,
+    "pass_at_1": 0.0,
+    "pass_at_1_wilson_lb": 0.0,
+    "any_seed_resolved": 0,
+    "avg_duration_seconds": 1800.4,
+    "avg_tokens": 0,
+    "total_cost_usd": null,
+    "harness_statuses": {
+      "timeout": 1
+    }
+  }
+}
