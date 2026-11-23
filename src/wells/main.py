@@ -266,6 +266,12 @@ def _run_goal(
     from wells.sessions import new_session_id, save_session, session_from_final_state
     from wells.tokens import LEDGER
 
+    # A quota exhaustion recorded during an earlier goal must not block a
+    # fresh one: the account may have been topped up or the window reset.
+    from wells import config as _config
+
+    _config.reset_llm_availability()
+
     json_mode = output_format == "json"
 
     if not _ensure_model_configured():

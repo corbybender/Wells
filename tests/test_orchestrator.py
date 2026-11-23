@@ -49,6 +49,21 @@ def test_route_after_tests_fail_fast():
     assert _route_after_tests(state) == "loop"
 
 
+def test_route_after_tests_stops_when_the_provider_is_out_of_quota(monkeypatch):
+    """Observed live: a 5-hour quota 429 made the coder loop nine times,
+    re-running the suite against an untouched tree. The graph must not
+    iterate when no model call can succeed."""
+    from wells import config
+
+    monkeypatch.setattr(config, "_quota_until", float("inf"))
+    monkeypatch.setattr(config, "_quota_reason", "RateLimitError: Usage limit reached")
+    state = {"tests_passed": False, "iteration": 1, "max_iterations": 3}
+    assert _route_after_tests(state) == "finalize"
+
+    monkeypatch.setattr(config, "_quota_until", 0.0)
+    assert _route_after_tests(state) == "loop"  # normal routing is unchanged
+
+
 def test_route_after_tests_cap_goes_to_reviewer():
     state = {"tests_passed": False, "iteration": 3, "max_iterations": 3}
     assert _route_after_tests(state) == "review"

@@ -518,6 +518,54 @@ def get_llm_for_task(task_type: str, temperature: float = 0.3):
 
 _TRANSIENT_GATEWAY_CODES = {"429", "500", "502", "503", "504"}
 
+# A provider that reports the account is out of quota will not recover
+# during this run — the reset window is usually hours — so retrying and
+# looping cannot help. This is deliberately separate from a rate limit:
+# a 429 may mean "slow down" (transient) or "you are out of credits"
+# (permanent), and only the message tells them apart.
+_QUOTA_MARKERS = (
+    "usage limit reached",
+    "insufficient_quota",
+    "exceeded your current quota",
+    "quota exceeded",
+    "billing hard limit",
+    "credit balance is too low",
+    "out of credits",
+)
+# How long the whole process remembers an exhausted account before trying
+# again. Long enough to stop a bench run looping for ten minutes, short
+# enough that a long-lived TUI recovers on its own after a reset.
+_QUOTA_COOLDOWN = 1800.0
+_quota_until = 0.0
+_quota_reason = ""
+
+
+def _quota_exhausted(err: Exception) -> bool:
+    """True when the provider says the account is out of quota, not busy."""
+    text = f"{type(err).__name__}: {err}".lower()
+    return any(marker in text for marker in _QUOTA_MARKERS)
+
+
+def _note_quota_exhausted(err: Exception) -> None:
+    global _quota_until, _quota_reason
+    _quota_until = time.monotonic() + _QUOTA_COOLDOWN
+    _quota_reason = f"{type(err).__name__}: {str(err)[:300]}"
+
+
+def llm_unavailable() -> str:
+    """Why no LLM call will succeed right now, or ``""`` when it should."""
+    if _quota_until and time.monotonic() < _quota_until:
+        return _quota_reason
+    return ""
+
+
+def reset_llm_availability() -> None:
+    """Forget an exhausted-quota finding (tests, and a fresh goal)."""
+    global _quota_until, _quota_reason
+    _quota_until = 0.0
+    _quota_reason = ""
+
+
 
 def _is_transient(err: Exception) -> bool:
     """True for errors worth retrying (timeouts, connection issues, 429, 5xx).
@@ -562,6 +610,12 @@ def _invoke_with_retry(llm, messages):
     from wells.logger import log_error, log_path
 
     last_err: Exception | None = None
+    unavailable = llm_unavailable()
+    if unavailable:
+        # Every attempt would fail identically; fail at once instead of
+        # spending the retry budget (30s per call, multiplied by every
+        # component of every iteration).
+        raise RuntimeError(f"LLM unavailable for this run: {unavailable}")
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         # Per-attempt visibility: the status bar (polled) shows which call
         # we're on, and the always-on F5 channel records the start even for
@@ -579,6 +633,16 @@ def _invoke_with_retry(llm, messages):
                 f"LLM invoke attempt {attempt}/{LLM_MAX_RETRIES}: {type(err).__name__}: {err}",
                 err,
             )
+            if _quota_exhausted(err):
+                # Retrying cannot help, and neither can another iteration of
+                # the graph: remember it so the run stops instead of burning
+                # nine iterations of tests against a dead key.
+                _note_quota_exhausted(err)
+                print(
+                    f"[llm] provider quota exhausted, not retryable: "
+                    f"{str(err)[:200]}"
+                )
+                break
             if not _is_transient(err) or attempt == LLM_MAX_RETRIES:
                 break
             backoff = min(LLM_BACKOFF_BASE**attempt, 30.0)

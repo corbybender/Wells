@@ -448,6 +448,52 @@ def test_is_transient_false_for_non_gateway_valueerror():
 
 
 # ---------------------------------------------------------------------------
+# Out-of-quota is permanent, not transient
+# ---------------------------------------------------------------------------
+
+
+def _quota_error() -> Exception:
+    return RuntimeError(
+        "Error code: 429 - {'error': {'code': '1308', "
+        "'message': 'Usage limit reached for 5 hour. Your limit will reset at 2026-11-24 01:12:47'}}"
+    )
+
+
+def test_quota_exhaustion_is_recognised():
+    assert config._quota_exhausted(_quota_error()) is True
+    assert config._quota_exhausted(RuntimeError("insufficient_quota")) is True
+    assert config._quota_exhausted(RuntimeError("Error code: 429 - rate limit")) is False
+
+
+def test_quota_error_is_not_retried_and_blocks_further_calls(monkeypatch):
+    config.reset_llm_availability()
+    calls: list[int] = []
+
+    class DeadLLM:
+        model_name = "zai:glm-5.3"
+
+        def invoke(self, messages):
+            calls.append(1)
+            raise _quota_error()
+
+    with pytest.raises(RuntimeError, match="Usage limit reached"):
+        config._invoke_with_retry(DeadLLM(), [])
+    assert len(calls) == 1  # one attempt, not LLM_MAX_RETRIES with backoff
+
+    reason = config.llm_unavailable()
+    assert "Usage limit" in reason
+
+    # A later component call fails immediately instead of spending 30s of
+    # backoff before the same error.
+    with pytest.raises(RuntimeError, match="LLM unavailable for this run"):
+        config._invoke_with_retry(DeadLLM(), [])
+    assert len(calls) == 1
+
+    config.reset_llm_availability()
+    assert config.llm_unavailable() == ""
+
+
+# ---------------------------------------------------------------------------
 # Settings: vision profile add/switch/clear + profile removal
 # ---------------------------------------------------------------------------
 

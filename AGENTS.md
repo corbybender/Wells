@@ -93,6 +93,13 @@ arguably too large to be a fair corpus task; consider splitting.
   all val (hand-assigned: the id hash would have put two in train). Its problem
   statement was a commit message while 36 hidden tests pinned internal APIs, so
   each child's statement now specifies the contract.
+- **Out-of-quota is not a rate limit.** A 5-hour quota 429 was classed as
+  transient, so every call burned the full retry budget (30s) and the graph then
+  ran all nine iterations against an untouched tree — 10 minutes, zero model
+  calls. `config._quota_exhausted` matches the permanent markers
+  ("Usage limit reached", `insufficient_quota`, …), fails at once, records
+  `llm_unavailable()` for 30 min, and both graph routers finalize instead of
+  looping. `_run_goal` resets the record per goal.
 
 ### 2026-11-20 — SEACS corpus growth
 Facts: corpus lives at <workspace>/.wells/bench/corpus (**72 tasks as of

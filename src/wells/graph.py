@@ -15,7 +15,7 @@ from wells.agents.coder import coder
 from wells.agents.planner import planner
 from wells.agents.reviewer import reviewer
 from wells.agents.tester import tester
-from wells.config import MAX_ITERATIONS, INDEX_AUTO_UPDATE
+from wells.config import MAX_ITERATIONS, INDEX_AUTO_UPDATE, llm_unavailable
 from wells.control import CONTROL, ui
 from wells.finisher import finisher
 from wells.state import AgentState
@@ -93,6 +93,14 @@ def _route_after_tests(state: AgentState) -> str:
         ui("graph", "[dim]auto-approved (simple + green) -> finisher (reviewer skipped).[/dim]")
         return "finalize"
     if state.get("tests_passed") is False:
+        if llm_unavailable():
+            # The tests failed because nothing could be written: the provider
+            # is out of quota. Looping re-runs the suite against the same
+            # untouched tree — observed live as nine iterations over ten
+            # minutes, every model call failing before it started.
+            ui("graph", "[dim]LLM unavailable (provider quota) -> finalizing "
+                         "instead of looping.[/dim]")
+            return "finalize"
         iteration = state.get("iteration", 0)
         cap = state.get("max_iterations", MAX_ITERATIONS)
         if cap == 0 or iteration < cap:  # cap 0 = no limit
@@ -114,6 +122,11 @@ def _route_after_review(state: AgentState) -> str:
         # happened. Stop now instead of pretending this was a real verdict.
         ui("graph", "[dim]reviewer could not run (LLM/tool error) -> "
                      "finalizing instead of looping on a broken review.[/dim]")
+        return "finalize"
+
+    if llm_unavailable():
+        ui("graph", "[dim]LLM unavailable (provider quota) -> finalizing "
+                     "instead of looping.[/dim]")
         return "finalize"
 
     iteration = state.get("iteration", 0)
