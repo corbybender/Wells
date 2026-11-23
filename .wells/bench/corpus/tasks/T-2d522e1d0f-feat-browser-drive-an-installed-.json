@@ -1,7 +1,7 @@
 {
   "task_id": "T-2d522e1d0f-feat-browser-drive-an-installed-",
   "repo_root": "Q:\\wells",
-  "base_commit": "251d5e62790863bbeb25d558089f0a5cca838c10",
+  "base_commit": "4c9308fd7640cea858f51506776e9319506d02ef",
   "problem_statement": "feat(browser): drive an installed Chrome/Edge/Brave instead of downloading Chromium\n\nPlaywright's own bundled Chromium (~150-300MB via `playwright install\nchromium`) was the actual weight in the browser tool, not the library.\n_find_system_browser() now auto-detects an already-installed\nChromium-based browser (Chrome, Edge, Brave -- checked via PATH lookup\non Linux, common install paths on Windows/macOS) and launches that via\nPlaywright's executable_path, falling back to Playwright's bundled\nChromium only when nothing is found (and to a clear actionable error\nif that isn't installed either). WELLS_BROWSER_EXECUTABLE pins an\nexact path if auto-detection picks the wrong browser.\n\nVerified live: detected the system Chrome install, drove it end-to-end\n(navigate/read), confirmed via the actual running process list that\nit was genuinely the system binary (not ms-playwright's cache), and\nconfirmed clean teardown with no orphaned processes -- all without\never touching Playwright's own Chromium download.",
   "test_oracle": {
     "fail_to_pass": [
@@ -34,7 +34,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "2d522e1d0f92e34b30077474d8729d8b5894853f",
+  "source_commit": "cdc0d1ac53416aff2712751ea84f6014730ddd94",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

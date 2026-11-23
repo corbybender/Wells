@@ -1,7 +1,7 @@
 {
   "task_id": "T-b1dd722aba-fix-vision-forward-pasted-images",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "67e44b6ee21ddcac96752b229c81ffbc3049e6a5",
+  "base_commit": "95fc70816e8613113711be0361fce025447d0ac4",
   "problem_statement": "fix(vision): forward pasted images on the auto route; fix dead free-tier slug\n\nTwo bugs surfaced by an actual /paste-image (F4) run:\n\n1. cli._run_auto (the \"auto\"/direct-executor route -- what most single-turn\n   requests hit) never drained _REPL_STATE[\"pending_images\"] or passed\n   images= to run_executor(), so F4/`/image`-staged images were silently\n   dropped. Only the orchestrate path (_run_task) drained them. Fixed by\n   mirroring _run_task's staging in _run_auto.\n2. The suggested/default free OpenRouter vision slug\n   (qwen/qwen2.5-vl-72b-instruct:free) 404s -- deprecated upstream.\n   Replaced with nvidia/nemotron-nano-12b-v2-vl:free, verified live against\n   the OpenRouter API (fetched openrouter.ai/api/v1/models directly and\n   parsed for id.endswith(':free') + 'image' in input_modalities, then\n   round-tripped an actual chat completion through it).\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
   "test_oracle": {
     "fail_to_pass": [
@@ -59,7 +59,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "b1dd722abab6aee432435ccf5f10a362f7ebfff9",
+  "source_commit": "998f4c280929847eb74ca53294c2bfcd8a9e84e2",
   "split": "blind",
   "status": "verified",
   "schema_version": 1,

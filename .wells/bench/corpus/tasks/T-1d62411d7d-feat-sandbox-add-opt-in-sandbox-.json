@@ -1,7 +1,7 @@
 {
   "task_id": "T-1d62411d7d-feat-sandbox-add-opt-in-sandbox-",
   "repo_root": "Q:\\wells",
-  "base_commit": "36433a0da6e8f9feecdd0f7630823d98b38c000c",
+  "base_commit": "4d9c3f0cd4bc0039d411d6739ffadafa1d6df0d3",
   "problem_statement": "feat(sandbox): add opt-in 'sandbox' mode -- disposable container per run\n\nA fifth HARNESS_SAFETY mode alongside auto/approve/dryrun/plan, picked\nexplicitly per run (/mode sandbox or HARNESS_SAFETY=sandbox). Every\nother mode is completely unaffected -- day-to-day use never launches\na container, matching how Claude Code/Codex/OpenCode work directly on\nthe host today.\n\nIn sandbox mode, run_command executes inside a disposable, per-\nworkspace container (one launched lazily on first use, reused for the\nsession, --rm on stop) instead of directly on the machine. File reads/\nwrites/edits are untouched in every mode: the workspace is bind-\nmounted into the container, so both sides see identical bytes, and\nWells' own path confinement already keeps writes inside WORKSPACE_ROOT\nregardless of mode -- only arbitrary shell execution needed isolating.\n\nRuntime-agnostic by design, not Docker-only: every call is a plain OCI\nrun/exec/stop, auto-detecting Podman first (daemonless on Linux,\nlighter VM on Mac/Windows, no Docker Desktop licensing concerns) and\nfalling back to Docker. WELLS_SANDBOX_RUNTIME pins the choice.\n\nVerified live end-to-end against a real Docker daemon: container\nlaunch, bind-mount visibility, OS-level isolation (Linux container vs\nWindows host), container reuse across calls, and clean teardown all\nconfirmed. codeact.py's run_code is not yet routed through the\nsandbox -- noted as a follow-up in sandbox.py's module docstring.\n\nDocs: new Safety model row + WELLS_SANDBOX_IMAGE/WELLS_SANDBOX_RUNTIME\nconfig entries, /mode help text, sandbox.py in the project structure list.",
   "test_oracle": {
     "fail_to_pass": [
@@ -27,7 +27,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "1d62411d7db127f11422cf1fedffe843f502aaba",
+  "source_commit": "ff93c6815ad31c5ef3e3fd577057aa2d2649ed7a",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

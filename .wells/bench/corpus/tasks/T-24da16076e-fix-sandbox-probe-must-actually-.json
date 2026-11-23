@@ -1,7 +1,7 @@
 {
   "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "41f04dc07217f7d01f77b880a467f87f6def7487",
+  "base_commit": "ef9176e2f37912de5cf3f235be52caa3a9e53e3b",
   "problem_statement": "fix(sandbox): probe must actually run a container, not just query info\n\nCI was failing 4 live-container tests with 'crun: unknown version\nspecified' instead of skipping them. Root cause: runtime_available() ran\n'podman info' (which returns 0 even when the OCI runtime is broken) but\nnever tried to run a container, so the test skip-guard passed a false\npositive and the tests errored at run time.\n\nNow the probe runs a throwaway container from the configured image to\ncatch a broken OCI runtime -- but only when that image is already local\n(avoids blocking on a slow pull; falls back to the info check otherwise).\nResult cached for 60s so production sandbox-mode use doesn't pay the\nprobe cost per command. Added regression tests for the broken-runtime and\nimage-absent fallback paths.",
   "test_oracle": {
     "fail_to_pass": [
@@ -30,7 +30,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "24da16076eb3be558bde9050c3cc995872d787b5",
+  "source_commit": "8a3ee02a38032761d6b2a0b356b70da53c275ad6",
   "split": "train",
   "status": "rejected",
   "schema_version": 1,

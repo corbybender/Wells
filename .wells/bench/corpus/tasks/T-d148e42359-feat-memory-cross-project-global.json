@@ -1,7 +1,7 @@
 {
   "task_id": "T-d148e42359-feat-memory-cross-project-global",
   "repo_root": "Q:\\wells",
-  "base_commit": "8632899aebbe4f08385789dbe2bc640a9376533e",
+  "base_commit": "efd2208b431bfa5783b6f5380c956be378c861d3",
   "problem_statement": "feat(memory): cross-project global user memory (~/.wells/memory/)\n\nNew wells.user_memory module: standing preferences that apply to\nevery project, not just the one you're in -- the same category of\nthing Claude Code's own auto-memory keeps across conversations.\nComplements (doesn't replace) AGENTS.md, which stays per-repo and\nfinisher-managed.\n\nEntries are small <name>.md files (front-matter: name/description/\ntype) under ~/.wells/memory/. Unlike skills/personas, bodies are\ninjected directly and in full -- these are meant to be short standing\nfacts, not on-demand procedures -- capped by a total-size budget so an\naccumulated store can't runaway-bloat every prompt. Wired into\nexecutor.py's system prompt unconditionally (even in compact mode,\nalongside principles) since these are exactly the kind of explicit\nreminder a weaker/local model benefits from most.\n\n/memory CLI command (list/show/add/edit/remove) + MemoryScreen/\nMemoryEditScreen TUI modal, mirroring /agents and /skills' existing\nUX. New WELLS_USER_MEMORY /config toggle. No safety-gate on writes --\nthis is a global per-user file outside any workspace, closer to\n/config's un-gated settings writes than a workspace mutation.",
   "test_oracle": {
     "fail_to_pass": [
@@ -51,7 +51,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "d148e4235929f4944724c1632787b08088fabce5",
+  "source_commit": "71d1f0344d2e6305276c1e9d970eef940efb67fe",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

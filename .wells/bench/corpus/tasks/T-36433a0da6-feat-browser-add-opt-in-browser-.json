@@ -1,7 +1,7 @@
 {
   "task_id": "T-36433a0da6-feat-browser-add-opt-in-browser-",
   "repo_root": "Q:\\wells",
-  "base_commit": "1142bcff22a5c05c719f51ee69812fe437ab9dcb",
+  "base_commit": "3e6d78bc913d3e0af35f9103baa257476c5c3ea2",
   "problem_statement": "feat(browser): add opt-in browser_* tools (Playwright)\n\nnavigate/click/type/read/screenshot against a real, JS-rendered\nChromium session -- fetch_url only ever sees static HTML, so SPAs,\ndashboards, and local dev-server frontends need an actual browser.\nOne lazily-launched session per process (cookies/login persist across\ncalls), closed at exit. click/type go through the safety gate like\nevery other mutating tool; navigate/read/screenshot are read-only,\nsame as fetch_url. Screenshots route through the new vision-profile\nrouting (MODEL_PROFILE_VISION) automatically to get a text\ndescription back, even when the active model isn't vision-capable.\n\nOff by default (WELLS_BROWSER=0) since it pulls in Playwright + a\ndownloaded Chromium binary -- new 'browser' optional-dependency group\nin pyproject.toml. Tests cover registration/gating without a real\nbrowser plus a live-Chromium suite that self-skips when Playwright/\nChromium aren't installed (16 tests total, 10 always run).\n\nAlso documents this + MODEL_PROFILE_VISION's /config CRUD in README.",
   "test_oracle": {
     "fail_to_pass": [
@@ -29,7 +29,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "36433a0da6e8f9feecdd0f7630823d98b38c000c",
+  "source_commit": "4d9c3f0cd4bc0039d411d6739ffadafa1d6df0d3",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

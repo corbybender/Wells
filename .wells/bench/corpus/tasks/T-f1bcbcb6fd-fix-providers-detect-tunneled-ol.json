@@ -1,7 +1,7 @@
 {
   "task_id": "T-f1bcbcb6fd-fix-providers-detect-tunneled-ol",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "59c05503d6fe3449754c17baad04e89fec335607",
+  "base_commit": "c2b155425a5a23f1a73455c318c038f5d022a35a",
   "problem_statement": "fix(providers): detect tunneled Ollama profiles; cap local-model steps\n\n_looks_like_local_ollama() only matched kind==\"ollama\" or \":11434\" in\nthe base_url, so Ollama reverse-proxied behind a custom domain\n(Cloudflare Tunnel, ngrok, ...) was invisible to it despite being the\nsame server. That silently disabled structured/grammar-enforced\ntool-call JSON and the final_answer stop signal for those profiles,\nleaving a small model with no reliable way to signal it was done —\nobserved live as 25+ near-duplicate write_file calls oscillating\ncosmetic diffs for 24 minutes until an unrelated gateway timeout\nkilled the run. Added an explicit LOCAL_OLLAMA_<name> opt-in.\n\nAlso added LOCAL_MODEL_MAX_STEPS (default 15), applied when no\nexplicit step cap is set and the profile looks like local Ollama, so\na stuck small model fails fast instead of running unbounded.\n\nAdded tests/conftest.py: config.py loads the real .env at import\ntime, so ACTIVE_PROFILE (and therefore which code paths default-\nprofile tests exercise) depends on whatever MODEL_PROFILE happens to\nbe set locally. Pins it to \"zai\" for the suite so tests stay isolated\nfrom the developer's live provider config.",
   "test_oracle": {
     "fail_to_pass": [
@@ -54,7 +54,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "f1bcbcb6fd5ef25e9607e12c43a65e1fec5fbe5e",
+  "source_commit": "5cdf70553a46b100a607021f9c43786a214171ac",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

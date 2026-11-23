@@ -1,7 +1,7 @@
 {
   "task_id": "T-36333e0bd6-feat-schedule-unattended-recurri",
   "repo_root": "Q:\\wells",
-  "base_commit": "0525a67691ca2fba2a2f7dfd2bb05082500cf789",
+  "base_commit": "d31f5adc31d28417843ae6ac0ffbee9c8e97e7af",
   "problem_statement": "feat(schedule): unattended recurring runs via Task Scheduler/cron\n\nNew `wells schedule add/list/remove` subcommand plus a /schedule REPL\ncommand (list/add/remove, add opens a TUI modal like /rules add) --\ncloses the \"no cron/daemon mode\" gap versus Claude Code's own\nscheduled routines. Wells doesn't need to be running for a scheduled\nrun to fire; the OS scheduler invokes `wells` directly.\n\nInterval spec: every<N>m / every<N>h / daily@HH:MM, or a raw 5-field\ncron expression (Linux/macOS only -- Windows Task Scheduler has no\ncron-expression concept, rejected there rather than mistranslated).\n\nEach schedule gets a small wrapper script instead of trying to embed\nthe goal directly in a Task Scheduler/cron command line: a goal can\ncontain spaces, quotes, newlines, and getting nested command-line\nquoting right (especially on Windows, across CreateProcess/cmd.exe/\nTask Scheduler's own /TR parsing) is fragile. A PowerShell here-string\n/ bash heredoc written directly by Python -- never re-parsed through a\nshell -- sidesteps that whole class of bug; verified with a\ndeliberately adversarial goal containing quotes, $vars, backticks,\nand a semicolon, landing in the script byte-for-byte unescaped.\n\nVerified live end-to-end against the real Windows Task Scheduler\n(both via the Python API directly and via the `wells schedule` CLI):\nregistration, `schtasks /query` confirms the task with correct\nMINUTE/15 recurrence, removal, and confirmed-gone via a second query.\nA skip-gated live test (`test_live_add_and_remove_schedule_windows`)\nkeeps this covered in CI on Windows runners; Linux/macOS cron paths\nare covered by mocking the actual crontab subprocess calls.",
   "test_oracle": {
     "fail_to_pass": [
@@ -52,7 +52,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "36333e0bd6bad18819c2d29970f3f2101e61717d",
+  "source_commit": "e835cbcfc9f2ab948619a7ea4ae36133750907a4",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

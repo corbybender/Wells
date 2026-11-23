@@ -1,7 +1,7 @@
 {
   "task_id": "T-67e44b6ee2-feat-providers-full-add-remove-u",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "58d48e8e905f4419f21fa00d6514fb5354527e55",
+  "base_commit": "94c57f062bbdf1287e9d6422c11f632c6d1e57fd",
   "problem_statement": "feat(providers): full add/remove/update for the vision model profile\n\nVision routing (MODEL_PROFILE_VISION, executor auto-swap on image\nattachments) already worked, but the settings menu only exposed generic\nper-key editing -- no way to remove a profile, and no guided flow to stand\nup a vision profile. README claimed \"full CRUD\" that didn't actually exist.\n\n- providers.py: API_KEY_<name> now falls back to well-known providers' own\n  standard env var (OPENROUTER_API_KEY, ANTHROPIC_API_KEY, ...) so an\n  already-set key works without duplicating it as API_KEY_<name>.\n- settings.py: new `wells config` actions -- `-` removes a profile (clears\n  active/cheap/vision refs that pointed to it), `v` adds/switches/clears\n  MODEL_PROFILE_VISION, suggesting a free OpenRouter vision model on create.\n- .env.example / README: document MODEL_PROFILE_VISION and the legacy-key\n  fallback.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
   "test_oracle": {
     "fail_to_pass": [
@@ -46,7 +46,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "67e44b6ee21ddcac96752b229c81ffbc3049e6a5",
+  "source_commit": "95fc70816e8613113711be0361fce025447d0ac4",
   "split": "blind",
   "status": "verified",
   "schema_version": 1,

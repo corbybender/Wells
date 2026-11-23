@@ -1,7 +1,7 @@
 {
   "task_id": "T-11e9879fdf-feat-opt-in-semantic-self-heal-v",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "c5f9a9f591d57346ab367956560ae46693c27c45",
+  "base_commit": "1faac29739df8ae837a9072218a8f81ca52afeaf",
   "problem_statement": "feat: opt-in semantic self-heal via real type-checkers\n\nquick_check() only catches syntax errors -- a type mismatch or bad\nreference across files sails through until a full tester round-trip.\nWELLS_SEMANTIC_CHECK=1 runs a project-aware type-checker (pyright/mypy\nfor Python, tsc for TypeScript, cargo check for Rust, go vet for Go)\nafter each write/edit and feeds errors back to the model immediately.\nOff by default and skipped when the fast syntax check already failed,\nsince these run whole-project and take seconds rather than milliseconds.\n\nAlso fixes a Windows-specific bug this surfaced: subprocess.run() can't\nlaunch npm-installed .cmd shims (tsc, etc.) by bare name without\nshell=True -- resolve via shutil.which() first.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
   "test_oracle": {
     "fail_to_pass": [
@@ -47,7 +47,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "11e9879fdf5fc85b7e0ed0b8b1170778af8f756e",
+  "source_commit": "0ccdd343a0a4045083327631284c0440cc11f18d",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

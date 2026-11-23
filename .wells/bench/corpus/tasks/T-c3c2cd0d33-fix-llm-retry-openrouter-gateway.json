@@ -1,7 +1,7 @@
 {
   "task_id": "T-c3c2cd0d33-fix-llm-retry-openrouter-gateway",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "b1dd722abab6aee432435ccf5f10a362f7ebfff9",
+  "base_commit": "998f4c280929847eb74ca53294c2bfcd8a9e84e2",
   "problem_statement": "fix(llm): retry OpenRouter gateway 5xx errors instead of giving up in 1 try\n\nHit live: the vision profile's free OpenRouter model returned\n{'message': 'Upstream idle timeout exceeded', 'code': 504} -- an HTTP 200\nwith an embedded error body, which langchain_openai surfaces as a bare\nValueError rather than an openai.*Error subclass. _is_transient() only\nrecognized the openai exception types, so this fell through to \"not\ntransient\" and the run gave up after one attempt despite LLM_MAX_RETRIES=5\nbeing configured. Now ValueError({'code': <5xx or 429>, ...}) is classified\ntransient too, so the existing backoff loop actually runs. Verified the\nretry recovers via a fake LLM that raises this error twice then succeeds.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
   "test_oracle": {
     "fail_to_pass": [
@@ -49,7 +49,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "c3c2cd0d337bafd0b3c8496e32ba5167e3d34a46",
+  "source_commit": "d4904d4cd05f066f545d6b8d716c1fb6d7ff3676",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

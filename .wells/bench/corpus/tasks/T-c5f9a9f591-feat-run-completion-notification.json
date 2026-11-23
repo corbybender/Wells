@@ -1,7 +1,7 @@
 {
   "task_id": "T-c5f9a9f591-feat-run-completion-notification",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "a76979db737a9cdf0e0e1b9c577044b75a5299fc",
+  "base_commit": "ed33f983c1a7355270fb750fcbfaf8633f6160be",
   "problem_statement": "feat: run-completion notifications + cross-run daily spend cap\n\nScheduled runs happen unattended -- no way to know a run finished (or\nwent over budget) short of checking logs by hand. WELLS_NOTIFY fires a\ndesktop popup + Slack-compatible webhook on completion; WELLS_DAILY_BUDGET\ntracks cumulative spend in ~/.wells/spend.json and refuses to start a new\nrun once the day's cap is reached. Both off by default, wired into the\nheadless and TUI run paths, configurable via /config.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
   "test_oracle": {
     "fail_to_pass": [
@@ -63,7 +63,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "c5f9a9f591d57346ab367956560ae46693c27c45",
+  "source_commit": "1faac29739df8ae837a9072218a8f81ca52afeaf",
   "split": "blind",
   "status": "verified",
   "schema_version": 1,

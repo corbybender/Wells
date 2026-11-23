@@ -1,7 +1,7 @@
 {
   "task_id": "T-c037fa3ba5-feat-cross-harness-skills-sandbo",
   "repo_root": "Q:\\wells",
-  "base_commit": "c9d4f56d48075a88a8f88594dd6f2d721fbb8c05",
+  "base_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
   "problem_statement": "feat: cross-harness skills, sandbox auto-upgrade, reflexion->BigBrain mirror\n\nskills: discover .claude/.agents/.codex skills dirs (workspace + user-global), WELLS_CROSS_SKILLS=0 opt-out, first-wins shadowing. safety: auto upgrades to sandbox when WELLS_SANDBOX_AUTO=1 and a container runtime answers (cached probe); explicit modes never upgraded. reflections: critiques mirrored into the BigBrain log for memory_search recall. Suite: 1061 passed.",
   "test_oracle": {
     "fail_to_pass": [
@@ -29,7 +29,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "c037fa3ba55c3da90c8e84b3217c6ff71beb5cfe",
+  "source_commit": "d80e2312bf7cae98d03990bd5113664b95936867",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

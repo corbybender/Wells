@@ -1,7 +1,7 @@
 {
   "task_id": "T-9399613aef-feat-self-improvement-reflexion-",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "7e20655f96807d728212c4ed7bdc34cd700afea5",
+  "base_commit": "f8ad3eda74fddab7c1f3b2e64ff95d2df603c539",
   "problem_statement": "feat: self-improvement — Reflexion + auto-skill authoring\n\nTwo closed loops that make Wells get better at a repo the more it's used.\n\nReflexion (#1): after a run that failed the test gate or was rejected by\nthe reviewer, the finisher writes a structured critique to\n.wells/reflections.md (deduped by signature, size-capped). The planner\nretrieves the top-K reflections relevant to the current goal and injects\nthem, so the same failure mode isn't repeated across runs. Keyword-overlap\nranking by default (deterministic, free); opt-in embedding re-rank.\n\nAuto-skill authoring (#2): after a clean, verified run, the finisher\npackages the proven plan into a SKILL.md proposal staged under\n.wells/skill-proposals/. Proposals cost zero context (not scanned by the\nskills system) until the user accepts them via /skills proposals, which\npromotes them to .wells/skills/<name>/SKILL.md (a new discoverable root).\n\nThree notification surfaces ensure proposed skills are noticed: an\nend-of-run panel (every surface), a clickable right-panel banner (TUI),\nand a ProposalReviewScreen modal (list/view/accept/reject/edit-then-accept).\n\nBoth features default on, degrade to no-ops when disabled, and honour the\nsafety gate. 1003 tests pass.",
   "test_oracle": {
     "fail_to_pass": [
@@ -137,7 +137,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "9399613aef7164a7225a27788ac6f9300b617f08",
+  "source_commit": "8432d76637dad60cf027a866281da3840076a119",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

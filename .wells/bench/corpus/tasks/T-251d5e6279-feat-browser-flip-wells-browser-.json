@@ -1,7 +1,7 @@
 {
   "task_id": "T-251d5e6279-feat-browser-flip-wells-browser-",
   "repo_root": "Q:\\wells",
-  "base_commit": "696c29fe24bc3b2df12cd05e6899452fb2cfa130",
+  "base_commit": "01adf36eea8485d6d198d8e1f5d7c71b02fc2e20",
   "problem_statement": "feat(browser): flip WELLS_BROWSER to on by default\n\nbrowser_* tools are now always registered, matching every other agent\ncapability (skills, CodeAct, background agents). Playwright itself\nstill isn't auto-installed -- a call before `pip install\n'wells[browser]'` + `playwright install chromium` returns a clear,\nactionable error instead of the tool not existing, the same pattern\nanthropic/ollama/google provider profiles already use for their own\noptional packages. WELLS_BROWSER=0 (or the new /config Setting entry,\npicker-driven) opts out entirely for anyone who doesn't want it\noffered at all.\n\nReasoning: the tool was defaulted off to avoid a surprise Chromium\ndownload on every fresh install, but that also buried a capability\nmost users actually want (interactive/JS-rendered pages, not just\nstatic fetch_url) behind an undiscoverable env var. Flipping the\ndefault keeps the install-cost guarantee (still opt-in, just at the\nPlaywright-install step instead of the registration step) while making\nthe capability visible from the start.",
   "test_oracle": {
     "fail_to_pass": [
@@ -29,7 +29,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "251d5e62790863bbeb25d558089f0a5cca838c10",
+  "source_commit": "4c9308fd7640cea858f51506776e9319506d02ef",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

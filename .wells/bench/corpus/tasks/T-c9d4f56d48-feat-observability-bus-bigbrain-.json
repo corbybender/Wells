@@ -1,7 +1,7 @@
 {
   "task_id": "T-c9d4f56d48-feat-observability-bus-bigbrain-",
   "repo_root": "Q:\\wells",
-  "base_commit": "5bba52177dca6974d2cfd6e8cb2d8a633cf4d688",
+  "base_commit": "4e5a1f7d628580316cfbecdcd1955ae9d9c22f43",
   "problem_statement": "feat: observability bus, BigBrain memory bridge, Code Mode, ACP server\n\nObservability: llm_start/llm_retry/first_token/tool_progress events via CONTROL bus; graph stage timings; styled F5 kinds. memory_bridge: BigBrain transaction-log memory, memory_search tool, wells[memory] extra. codemode: program tool composes N tool calls in one turn, safety applies inside. acp_server: wells-acp stdio server for Zed/JetBrains. codeact: sys.executable fixes Windows Store stub. Suite: 1052 passed.",
   "test_oracle": {
     "fail_to_pass": [
@@ -51,7 +51,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "c9d4f56d48075a88a8f88594dd6f2d721fbb8c05",
+  "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
   "split": "val",
   "status": "verified",
   "schema_version": 1,

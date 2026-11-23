@@ -1,7 +1,7 @@
 {
   "task_id": "T-ce5da127e1-feat-evolve-phase-2-the-evolutio",
   "repo_root": "Q:\\wells",
-  "base_commit": "baaa2285f4448979bfe8d44f06e444d0b04fb0fc",
+  "base_commit": "ae9b1cdb9815bfff4e16f152bc5c1b7556c83e9f",
   "problem_statement": "feat(evolve): Phase 2 — the evolution engine (AGENT.md mutation, v1)\n\nAdds propose -> gate -> promote/reject for the harness's own operating\nprinciples (AGENT.md): the first thing that acts on Phase 1's bench\nnumbers instead of just producing them.\n\n- src/wells/evolve/mutate.py: MutationManifest (mirrors fleet.py's\n  manifest pattern), propose_mutation (candidate from a file, zero LLM\n  cost, or --auto: one real headless run drafts a candidate seeded with\n  recent bench failures), gate_mutation (baseline vs. candidate bench\n  passes over a split, using $WELLS_PRINCIPLES to isolate the one\n  variable that changes between them, plus a free replay pass over the\n  trace corpus), promote_mutation (writes to <workspace>/AGENT.md,\n  clears the principles cache), reject_mutation.\n- src/wells/evolve/runner.py: threads an optional extra_env through\n  _run_harness/_execute_task/run_bench so gate_mutation can pin\n  WELLS_PRINCIPLES per bench pass without mutating this process's own\n  environment (only passed when set, so existing test stubs with a\n  narrower _run_harness signature keep working unchanged).\n- src/wells/main.py: `wells evolve propose|gate|list|show|promote|reject`\n  CLI, dispatched alongside bench/fleet/schedule.\n- tests/test_evolve_mutate.py: 15 new tests, fully stubbed (no LLM calls).\n\nScope for v1: AGENT.md only, not tools/skills — it already has a clean,\nunused write seam ($WELLS_PRINCIPLES is the top-precedence resolution\nstep in principles.py) and is the highest-leverage surface (governs every\nagent node). Skills already have their own propose/accept/reject flow\n(skill_authoring.py); tool descriptions are hardcoded Python literals\nwith no data-driven override yet — both left for a future extension of\nthis same shape.\n\nKnown, inherited limitation: the corpus has 0 val-split tasks today (10\ntotal tasks, deterministic hash split). `gate` defaults to --split val\nand fails loudly with the exact remediation rather than silently falling\nback to train.\n\nVerified end-to-end with a real gate run (single task, bounded 10-min\ntimeout per pass, zai profile): baseline vs. candidate bench passes both\nresolved, replay ran over the trace corpus, recommendation computed\ncorrectly, no orphaned sandbox containers. Full suite: 1019 passed, 23\nskipped, 0 failed.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01JNTwfPvuEvTt6q79Esixzv",
   "test_oracle": {
     "fail_to_pass": [
@@ -28,7 +28,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "ce5da127e10015549d3e4c0fc970a938b5d103be",
+  "source_commit": "ccee4ffcbdffc3f74a81e461121840777f798e07",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

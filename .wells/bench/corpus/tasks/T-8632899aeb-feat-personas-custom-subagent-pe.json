@@ -1,7 +1,7 @@
 {
   "task_id": "T-8632899aeb-feat-personas-custom-subagent-pe",
   "repo_root": "Q:\\wells",
-  "base_commit": "2d522e1d0f92e34b30077474d8729d8b5894853f",
+  "base_commit": "cdc0d1ac53416aff2712751ea84f6014730ddd94",
   "problem_statement": "feat(personas): custom subagent personas (.wells/agents/*.md)\n\nNew wells.personas module mirrors skills.py's discovery/caching/CRUD\npattern exactly: agents/<name>/PERSONA.md (name + description + tools\n+ system prompt), discovered from the workspace agents/ dir + optional\nWELLS_AGENTS_PATHS. Even cheaper than skills -- a persona's system\nprompt only ever reaches the SUBAGENT it's assigned to, never the\nparent's context; the parent only sees the name+description index\n(injected via personas.inject_into_prompt, guarded on background\nagents being enabled).\n\nWired into bg_start(persona=<name>, ...): subagents.persona_subagent()\nuses the persona's system_prompt as system_prefix, with role\n(research/fix/worktree) still capping the toolset for safety --\nrole=research always forces readonly regardless of what a persona's\ntools: front-matter requests. Verified live: a test persona's system\nprompt genuinely drove a real subagent's exact output.\n\n/agents CLI command (list/show/add/edit/remove) + AgentsScreen/\nAgentEditScreen TUI modal, both mirroring /skills' existing UX\none-for-one so this is immediately familiar. New WELLS_AGENTS /config\ntoggle alongside the other capability switches.\n\n(Named agents.py originally, but src/wells/agents/ already exists as\nthe planner/architect/coder/tester/reviewer package -- renamed to\npersonas.py to avoid the collision.)",
   "test_oracle": {
     "fail_to_pass": [
@@ -58,7 +58,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "8632899aebbe4f08385789dbe2bc640a9376533e",
+  "source_commit": "efd2208b431bfa5783b6f5380c956be378c861d3",
   "split": "blind",
   "status": "verified",
   "schema_version": 1,

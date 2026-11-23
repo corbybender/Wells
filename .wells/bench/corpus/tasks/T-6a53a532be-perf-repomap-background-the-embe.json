@@ -1,7 +1,7 @@
 {
   "task_id": "T-6a53a532be-perf-repomap-background-the-embe",
   "repo_root": "/home/corbybender/Projects/seacs",
-  "base_commit": "c3c2cd0d337bafd0b3c8496e32ba5167e3d34a46",
+  "base_commit": "d4904d4cd05f066f545d6b8d716c1fb6d7ff3676",
   "problem_statement": "perf(repomap): background the embedding warm-up instead of blocking startup\n\nUser-reported: \"building repo map... 11s...20s\" on the very first message\nof every session. Traced it to repomap._semantic_rerank calling\nembeddings.ensure_embedded() inline -- which lazily loads a local ONNX\nmodel (fastembed's BAAI/bge-small-en-v1.5) on first use and embeds the\nwhole symbol corpus, a cost that's network-dependent (model\ndownload/init) and has nothing to do with the actual repo map build.\n\nembeddings.ensure_embedded_async() now does a cheap SQL check (no model\nload) for whether any symbols are actually un-embedded:\n- nothing pending (already embedded from a prior run, persisted in\n  index.db) -> ready immediately, no thread spawned\n- real work pending -> kicks it off in a background daemon thread and\n  returns not-ready, so THIS call falls back to heuristic-only ranking\n  (fully functional on its own) instead of blocking\n- a periodic refresh (5 min) re-checks for newly-indexed symbols without\n  ever un-readying an already-warm corpus (stale-while-revalidate)\n\nCaught and fixed a real bug via the test run itself: the background\nthread's cleanup assumed its _warm_state entry still existed, raising an\nunhandled KeyError in the thread if it was cleared mid-run; made it\ndefensive (recreate rather than assume).\n\nOnly the passive repomap injection (runs on every message) is affected;\nan explicit semantic_search tool call still embeds synchronously on first\nuse, since the model asked for that result and needs it to proceed.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
   "test_oracle": {
     "fail_to_pass": [
@@ -37,7 +37,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "6a53a532beccc26ffc55813e8e32035754877f56",
+  "source_commit": "a12ec5c9d494f34c9009c31c7a816dbcd399426f",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

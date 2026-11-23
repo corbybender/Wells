@@ -1,7 +1,7 @@
 {
   "task_id": "T-2235fb8e2f-feat-todo-model-driven-task-brea",
   "repo_root": "Q:\\wells",
-  "base_commit": "36333e0bd6bad18819c2d29970f3f2101e61717d",
+  "base_commit": "e835cbcfc9f2ab948619a7ea4ae36133750907a4",
   "problem_statement": "feat(todo): model-driven task breakdown, rendered live in the TUI\n\nNew update_todos tool (mirrors Claude Code's own TodoWrite): the\nmodel declares/updates its own subtask list for the current task,\nrendered as a new section in the info panel -- complements the\nexisting pipeline breadcrumb, which shows structural graph position\n(which fixed node is running) but nothing about what the coder\nactually decided to do inside a long task.\n\nState lives in control.RunControl (set_todos/todos), the same shared\nchannel the TUI already polls for activity/progress/stages -- no new\nplumbing between the executor thread and the UI thread. Cleared on\nevery CONTROL.reset() (a todo list belongs to one task).\n\nExactly one item may be \"in_progress\" at a time (mirrors Claude\nCode's own constraint) so the panel always has an unambiguous single\npoint of progress to highlight (yellow ▶), with completed items shown\nstruck through and pending ones dim. Read-only (no workspace\nmutation, purely in-memory display state) so it's available to\nread-only investigations too, same as web_search/fetch_url.\n\nVerified end-to-end: tool dispatch, CONTROL round-trip, and the\nactual InfoPanel._build() render path via a real mounted Textual app\n(not just the underlying data, the literal Rich markup the panel\nwould show).",
   "test_oracle": {
     "fail_to_pass": [
@@ -28,7 +28,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "2235fb8e2febba1af886375313ad5233380ad4a3",
+  "source_commit": "8274ffc80d75e4d3ff3c86b4a8ea51e329c76377",
   "split": "train",
   "status": "verified",
   "schema_version": 1,

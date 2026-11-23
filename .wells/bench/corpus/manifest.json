@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-20 13:11:10",
+  "updated_at": "2026-11-23 08:36:19",
   "total": 70,
   "splits": {
     "train": 46,
@@ -32,7 +32,7 @@
       "task_id": "T-0525a67691-feat-rules-permission-allowlists",
       "split": "train",
       "status": "verified",
-      "source_commit": "0525a67691ca2fba2a2f7dfd2bb05082500cf789",
+      "source_commit": "d31f5adc31d28417843ae6ac0ffbee9c8e97e7af",
       "subject": "feat(rules): permission allowlists -- severity=allow bypasses approve mode"
     },
     {
@@ -67,7 +67,7 @@
       "task_id": "T-11e9879fdf-feat-opt-in-semantic-self-heal-v",
       "split": "train",
       "status": "verified",
-      "source_commit": "11e9879fdf5fc85b7e0ed0b8b1170778af8f756e",
+      "source_commit": "0ccdd343a0a4045083327631284c0440cc11f18d",
       "subject": "feat: opt-in semantic self-heal via real type-checkers"
     },
     {
@@ -95,7 +95,7 @@
       "task_id": "T-1d62411d7d-feat-sandbox-add-opt-in-sandbox-",
       "split": "train",
       "status": "verified",
-      "source_commit": "1d62411d7db127f11422cf1fedffe843f502aaba",
+      "source_commit": "ff93c6815ad31c5ef3e3fd577057aa2d2649ed7a",
       "subject": "feat(sandbox): add opt-in 'sandbox' mode -- disposable container per run"
     },
     {
@@ -109,7 +109,7 @@
       "task_id": "T-2235fb8e2f-feat-todo-model-driven-task-brea",
       "split": "train",
       "status": "verified",
-      "source_commit": "2235fb8e2febba1af886375313ad5233380ad4a3",
+      "source_commit": "8274ffc80d75e4d3ff3c86b4a8ea51e329c76377",
       "subject": "feat(todo): model-driven task breakdown, rendered live in the TUI"
     },
     {
@@ -123,14 +123,14 @@
       "task_id": "T-24da16076e-fix-sandbox-probe-must-actually-",
       "split": "train",
       "status": "rejected",
-      "source_commit": "24da16076eb3be558bde9050c3cc995872d787b5",
+      "source_commit": "8a3ee02a38032761d6b2a0b356b70da53c275ad6",
       "subject": "fix(sandbox): probe must actually run a container, not just query info"
     },
     {
       "task_id": "T-251d5e6279-feat-browser-flip-wells-browser-",
       "split": "train",
       "status": "verified",
-      "source_commit": "251d5e62790863bbeb25d558089f0a5cca838c10",
+      "source_commit": "4c9308fd7640cea858f51506776e9319506d02ef",
       "subject": "feat(browser): flip WELLS_BROWSER to on by default"
     },
     {
@@ -144,7 +144,7 @@
       "task_id": "T-2d522e1d0f-feat-browser-drive-an-installed-",
       "split": "train",
       "status": "verified",
-      "source_commit": "2d522e1d0f92e34b30077474d8729d8b5894853f",
+      "source_commit": "cdc0d1ac53416aff2712751ea84f6014730ddd94",
       "subject": "feat(browser): drive an installed Chrome/Edge/Brave instead of downloading Chrom"
     },
     {
@@ -165,14 +165,14 @@
       "task_id": "T-36333e0bd6-feat-schedule-unattended-recurri",
       "split": "train",
       "status": "verified",
-      "source_commit": "36333e0bd6bad18819c2d29970f3f2101e61717d",
+      "source_commit": "e835cbcfc9f2ab948619a7ea4ae36133750907a4",
       "subject": "feat(schedule): unattended recurring runs via Task Scheduler/cron"
     },
     {
       "task_id": "T-36433a0da6-feat-browser-add-opt-in-browser-",
       "split": "train",
       "status": "verified",
-      "source_commit": "36433a0da6e8f9feecdd0f7630823d98b38c000c",
+      "source_commit": "4d9c3f0cd4bc0039d411d6739ffadafa1d6df0d3",
       "subject": "feat(browser): add opt-in browser_* tools (Playwright)"
     },
     {
@@ -193,7 +193,7 @@
       "task_id": "T-41f04dc072-fix-cli-reflections-with-no-subc",
       "split": "train",
       "status": "verified",
-      "source_commit": "41f04dc07217f7d01f77b880a467f87f6def7487",
+      "source_commit": "ef9176e2f37912de5cf3f235be52caa3a9e53e3b",
       "subject": "fix(cli): /reflections with no subcommand crashed on an empty workspace"
     },
     {
@@ -235,7 +235,7 @@
       "task_id": "T-67e44b6ee2-feat-providers-full-add-remove-u",
       "split": "blind",
       "status": "verified",
-      "source_commit": "67e44b6ee21ddcac96752b229c81ffbc3049e6a5",
+      "source_commit": "95fc70816e8613113711be0361fce025447d0ac4",
       "subject": "feat(providers): full add/remove/update for the vision model profile"
     },
     {
@@ -249,7 +249,7 @@
       "task_id": "T-6a53a532be-perf-repomap-background-the-embe",
       "split": "train",
       "status": "verified",
-      "source_commit": "6a53a532beccc26ffc55813e8e32035754877f56",
+      "source_commit": "a12ec5c9d494f34c9009c31c7a816dbcd399426f",
       "subject": "perf(repomap): background the embedding warm-up instead of blocking startup"
     },
     {
@@ -312,14 +312,14 @@
       "task_id": "T-8632899aeb-feat-personas-custom-subagent-pe",
       "split": "blind",
       "status": "verified",
-      "source_commit": "8632899aebbe4f08385789dbe2bc640a9376533e",
+      "source_commit": "efd2208b431bfa5783b6f5380c956be378c861d3",
       "subject": "feat(personas): custom subagent personas (.wells/agents/*.md)"
     },
     {
       "task_id": "T-9399613aef-feat-self-improvement-reflexion-",
       "split": "train",
       "status": "verified",
-      "source_commit": "9399613aef7164a7225a27788ac6f9300b617f08",
+      "source_commit": "8432d76637dad60cf027a866281da3840076a119",
       "subject": "feat: self-improvement — Reflexion + auto-skill authoring"
     },
     {
@@ -382,7 +382,7 @@
       "task_id": "T-b1dd722aba-fix-vision-forward-pasted-images",
       "split": "blind",
       "status": "verified",
-      "source_commit": "b1dd722abab6aee432435ccf5f10a362f7ebfff9",
+      "source_commit": "998f4c280929847eb74ca53294c2bfcd8a9e84e2",
       "subject": "fix(vision): forward pasted images on the auto route; fix dead free-tier slug"
     },
     {
@@ -403,7 +403,7 @@
       "task_id": "T-c037fa3ba5-feat-cross-harness-skills-sandbo",
       "split": "train",
       "status": "verified",
-      "source_commit": "c037fa3ba55c3da90c8e84b3217c6ff71beb5cfe",
+      "source_commit": "d80e2312bf7cae98d03990bd5113664b95936867",
       "subject": "feat: cross-harness skills, sandbox auto-upgrade, reflexion->BigBrain mirror"
     },
     {
@@ -417,35 +417,35 @@
       "task_id": "T-c3c2cd0d33-fix-llm-retry-openrouter-gateway",
       "split": "train",
       "status": "verified",
-      "source_commit": "c3c2cd0d337bafd0b3c8496e32ba5167e3d34a46",
+      "source_commit": "d4904d4cd05f066f545d6b8d716c1fb6d7ff3676",
       "subject": "fix(llm): retry OpenRouter gateway 5xx errors instead of giving up in 1 try"
     },
     {
       "task_id": "T-c5f9a9f591-feat-run-completion-notification",
       "split": "blind",
       "status": "verified",
-      "source_commit": "c5f9a9f591d57346ab367956560ae46693c27c45",
+      "source_commit": "1faac29739df8ae837a9072218a8f81ca52afeaf",
       "subject": "feat: run-completion notifications + cross-run daily spend cap"
     },
     {
       "task_id": "T-c9d4f56d48-feat-observability-bus-bigbrain-",
       "split": "val",
       "status": "verified",
-      "source_commit": "c9d4f56d48075a88a8f88594dd6f2d721fbb8c05",
+      "source_commit": "583db3ff8fff7c6f7fac6066014b9805e4ff7ee0",
       "subject": "feat: observability bus, BigBrain memory bridge, Code Mode, ACP server"
     },
     {
       "task_id": "T-ce5da127e1-feat-evolve-phase-2-the-evolutio",
       "split": "train",
       "status": "verified",
-      "source_commit": "ce5da127e10015549d3e4c0fc970a938b5d103be",
+      "source_commit": "ccee4ffcbdffc3f74a81e461121840777f798e07",
       "subject": "feat(evolve): Phase 2 — the evolution engine (AGENT.md mutation, v1)"
     },
     {
       "task_id": "T-d148e42359-feat-memory-cross-project-global",
       "split": "train",
       "status": "verified",
-      "source_commit": "d148e4235929f4944724c1632787b08088fabce5",
+      "source_commit": "71d1f0344d2e6305276c1e9d970eef940efb67fe",
       "subject": "feat(memory): cross-project global user memory (~/.wells/memory/)"
     },
     {
@@ -473,7 +473,7 @@
       "task_id": "T-f1bcbcb6fd-fix-providers-detect-tunneled-ol",
       "split": "train",
       "status": "verified",
-      "source_commit": "f1bcbcb6fd5ef25e9607e12c43a65e1fec5fbe5e",
+      "source_commit": "5cdf70553a46b100a607021f9c43786a214171ac",
       "subject": "fix(providers): detect tunneled Ollama profiles; cap local-model steps"
     },
     {

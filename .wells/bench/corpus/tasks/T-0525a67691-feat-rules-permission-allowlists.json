@@ -1,7 +1,7 @@
 {
   "task_id": "T-0525a67691-feat-rules-permission-allowlists",
   "repo_root": "Q:\\wells",
-  "base_commit": "d148e4235929f4944724c1632787b08088fabce5",
+  "base_commit": "71d1f0344d2e6305276c1e9d970eef940efb67fe",
   "problem_statement": "feat(rules): permission allowlists -- severity=allow bypasses approve mode\n\nNew \"allow\" severity alongside block/confirm/warn/liability: a\nmatching rule pre-clears approve mode's blanket per-action y/N for\nthat specific call (auto/dryrun/plan/sandbox are unaffected -- there's\nno prompt to skip in those modes either way). Wired in at the exact\npoint executor.py hands a call to tools.dispatch(): when an\nallow-rule matched and ctx.safety==\"approve\", that one dispatch gets\na ctx with safety=\"auto\" instead, leaving the global policy and every\nother call untouched.\n\nVerified end-to-end with real dispatch (not the faked one other rule\ntests use): a command matching an allow rule executes in approve mode\neven with a denying approver wired up, and the approver is never even\nconsulted for it; a non-matching command still gets denied normally.\n\nShipped with one default rule (allow-safe-git-reads: git status/diff/\nlog/show/branch never need confirmation) as a concrete demonstration.\n\n/rules add/remove for simple pattern-triggered rules (block/confirm/\nwarn/allow -- liability rules stay hand-edited, they're more involved).\nadd_rule text-appends so an existing hand-written rules.yaml keeps\nevery comment; remove_rule does a full parse+rewrite (comments on\nremoval aren't preserved, documented as a known tradeoff). New\nRuleAddScreen TUI modal for /rules add, matching the /agents and\n/memory pattern for anything that needs more than args-driven input.",
   "test_oracle": {
     "fail_to_pass": [
@@ -57,7 +57,7 @@
     ]
   },
   "environment_setup": [],
-  "source_commit": "0525a67691ca2fba2a2f7dfd2bb05082500cf789",
+  "source_commit": "d31f5adc31d28417843ae6ac0ffbee9c8e97e7af",
   "split": "train",
   "status": "verified",
   "schema_version": 1,
