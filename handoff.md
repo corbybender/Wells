@@ -1,172 +1,116 @@
-# HANDOFF.md — Wells + SEACS, Linux (RTX 5060 Ti box)
+# HANDOFF — Wells (Windows box, `Q:\wells`)
 
-Date: 2026-08-22, end of session. All work below is pushed to
-`origin/master` (github.com/corbybender/Wells) — HEAD is `6b8522d`.
-Verified via `git fetch && git status` (clean, "up to date with
-origin/master", 0 commits ahead/behind) before writing this.
+Date: 2026-11-23. Supersedes the 2026-08-22 Linux handoff, whose facts are
+now all stale (1019 tests, a 10-task corpus with an empty val split, and
+pre-rewrite commit SHAs). Read AGENTS.md for the durable lessons; this file
+is the state of play.
+
+Published history was **rewritten on 2026-11-23** (see §4), so every SHA
+quoted in older notes and in the 22 Wells-derived corpus tasks has changed.
 
 ---
 
-## 1. What happened today, in order
+## 1. What happened this session, in order
 
-1. **Linux migration bring-up** (from the Windows handoff zip) — corpus
-   `repo_root` paths rewritten, `.venv`/`uv.lock` synced, full suite green.
-2. **Found and fixed a real bug**, not a migration artifact:
-   `src/wells/sandbox.py`'s live-container path was SIGKILLing its own
-   caller's entire process group on every sandboxed `run_code` call (bad
-   `Popen`/`communicate()` interaction feeding a `killpg` with no
-   dedicated process group). Also fixed a SELinux Enforcing bind-mount
-   permission issue on this host (`:Z` relabel flag).
-3. **Wired up `wells bench`** — handoff.md (the old version) documented it
-   as done; it wasn't actually connected to `main.py`'s CLI dispatch.
-   Fixed.
-4. **Built SEACS Phase 2 — the evolution engine** (`wells evolve
-   propose|gate|promote|reject`): mutate `AGENT.md`, gate the candidate
-   against a baseline via real bench passes + trace replay, promote or
-   reject. Scoped to `AGENT.md` only for v1 (see `src/wells/evolve/mutate.py`
-   docstring for why, not tools/skills).
-5. **README updated** to document bench + evolve, corrected project
-   structure (it was already missing `traces.py`/`fleet.py` before today),
-   test count bumped to reality.
-6. **Speed investigation** (live-profiled a real dummy task, not guessed):
-   - `wells.config` eagerly imported `langchain_core.messages` at module
-     level — used in exactly one legacy function. Deferred it: 45% faster
-     cold-start (114ms → 62ms) on every CLI/subprocess invocation.
-   - Found + fixed a false-positive in the executor's silent-failure
-     retry guard: "no tests found" wasn't recognized as an acknowledged
-     outcome, forcing an unneeded extra round.
-   - Found + fixed the actual driver of that: the tester's own prompt
-     told the model to explore the repo layout before running tests, when
-     `run_tests` already auto-detects the command. Tightened the prompt.
-     Measured: tester went from up to 8 exploratory rounds down to 2
-     (straight to `run_tests`, correct conclusion, no wasted
-     investigation) across 3 live verification runs.
+1. **Commit identity.** All 232 published commits and all 5 annotated tags
+   were rewritten (`git filter-repo --mailmap`) to the personal identity
+   `Corby Bender <corby.bender1976@gmail.com>`. File content is byte-identical
+   (same tree hash). Old SHAs are no longer on any branch or tag but GitHub
+   still serves them by full SHA; only GitHub Support can purge them.
+2. **Corpus made portable** — the real blocker. `repo_root` was an absolute
+   path on the Linux box, so 58 of 70 tasks (11 of 12 val) could not run here
+   and `run_bench` refused to start; no gate had ever run on Windows. Tasks
+   now carry `repo_url`, `corpus.resolve_repo_root` clones a mirror under
+   `~/.wells/bench/repos/` when needed, and `wells bench verify` re-runs the
+   admission gate locally. All 70 resolve here; 11 of the original 12 val
+   tasks verify (the twelfth needs `pytest-httpbin` and is left out on this
+   machine only — see §3).
+3. **Repetition guard fixed** (test-first). It could stop a productive
+   multi-file rename (search keys hold no file path, so writes never reset
+   them) and it folded every search in one directory into one counter.
+4. **ACP gaps closed**: token-level streaming, tool-call notifications,
+   `fs/read_text_file`, `session/load` with persisted transcripts and
+   follow-up context.
+5. **Mega-task split.** `T-c9d4f56d48` (ACP + Code Mode + BigBrain in one
+   commit-message statement, 36 hidden tests) became three val tasks whose
+   statements specify the contract their tests check. All three verify.
+6. **Two live bench runs**, which is where the remaining fixes came from:
+   - 30 min on the old mega-task: 1.47M tokens, timeout, planner made 83
+     calls with the guard correctly silent.
+   - 10 min on a click task: killed by an exhausted provider quota, which
+     exposed two harness bugs (dead progress forwarding, quota treated as
+     transient). Both fixed; artifacts now survive a run.
+7. **Windows watchdog** (`scripts/wells_resumable_launch.ps1`) so long runs
+   can be restarted from checkpoint without a live shell.
 
-## 2. Commits pushed today (oldest → newest)
+## 2. Commits from this session (unpushed at the time of writing)
 
 ```
-60ac54f  feat(evolve): SEACS phase 1 baseline + fix(sandbox): self-kill on container exec
-baaa228  feat(cli): wire up wells bench mine|list|run|results
-ce5da12  feat(evolve): Phase 2 — the evolution engine (AGENT.md mutation, v1)
-c11db61  docs(readme): document SEACS bench + evolve, update structure/test count
-14070c6  perf(config): defer langchain_core import to first real LLM call
-fbfbd4d  fix(executor): recognize "no tests found" as an acknowledged outcome
-6b8522d  perf(tester): tell the model to call run_tests first, not explore first
+af0a9a4  feat(acp): stream text deltas and tool calls, fs/read_text_file, session/load
+61ae2e2  feat(bench): portable corpus — repo_url, resolve on any machine, bench verify/repos
+2eef35a  fix(executor): repetition guard no longer stops productive runs
+0bca452  fix(bench): keep run evidence and forward the harness's real progress
+c2cbd52  feat(bench): split the 3-feature mega-task into three single-feature tasks
+14a7c90  fix(llm): treat an exhausted quota as permanent, and stop looping on it
 ```
+Plus, already on `origin/master`: `c7bc09b` (corpus SHA remap after the
+rewrite) and the three housekeeping commits it replayed.
 
-## 3. Verified state at handoff
+## 3. Verified state
 
-- **Full suite**: 1019 passed, 23 skipped, 0 failed (`uv run pytest -q`).
-- **Corpus**: 10 tasks total — 7 train / **0 val** / 3 blind. This is a
-  known, unfixed blocker (see §4.1) — `wells evolve gate` defaults to
-  `--split val` and will fail loudly (by design, not a bug) until this
-  grows.
-- **Bench results**: 6 recorded runs in `.wells/bench/results/` (5 from
-  the Windows session, kept as evidence + 1 today: the `T-24da16076e`
-  90-minute retry, which **still timed out** — see §4.2, do not blindly
-  retry this task again).
-- **Mutations**: 1 recorded, `20260822-170503-4177cd`, status=`rejected`
-  (a real end-to-end smoke test of the propose→gate→reject loop — the
-  candidate was a placeholder, not a real AGENT.md improvement; correctly
-  rejected on purpose, not a failure).
-- **No orphaned sandbox containers, no stray git worktrees** — checked
-  clean at end of session (`podman ps -a`, `git worktree list`).
+- **Full suite**: 1112 passed, 26 skipped, 0 failed (`pytest -q`, ~4 min).
+- **Corpus**: 72 tasks — 46 train / 14 val / 12 blind; 71 verified, 1
+  quarantined.
+- **`wells bench verify --split val`**: 13 of 14 pass on this machine;
+  `T-6f66281a1d` (requests) needs the `pytest-httpbin` plugin. That failure
+  is recorded only in the git-ignored `.wells/bench/corpus/local-verify.json`;
+  bench runs here skip the task, `--include-unverified` overrides. The
+  bundle itself is untouched because the task is valid where it was
+  verified.
+- **Model quota**: the `zai` account hit its 5-hour limit mid-session
+  (resets 2026-11-24 01:12). Until then every model call fails, so no bench
+  or evolve gate can produce a meaningful score.
 
-## 4. Known gaps / things NOT to blindly redo tomorrow
+## 4. History rewrite — what is still outstanding
 
-### 4.1 Zero val-split tasks — blocks real `evolve gate` runs
+- GitHub Support purge of the old objects (they remain reachable by full
+  SHA; a request has to come from the account owner). The 232 old SHAs are
+  in `~/.wells/backups/wells-rewrite-commit-map-20261123.txt`.
+- Pre-rewrite backup bundle: `~/.wells/backups/wells-pre-rewrite-*.bundle`.
+- The Linux clone still has the old history: `git fetch origin && git reset
+  --hard origin/master` there.
+- Do not `git gc` in this checkout: it would drop the August stash
+  (`stash@{0}`, "pre-migration local WIP"), which was deliberately kept.
 
-10 total corpus tasks, deterministic 60/20/20 hash split landed 0 in
-val. `wells evolve gate` (default `--split val`) will error immediately
-with the exact remediation message. Options, in order of likely payoff:
-- Mine more repos: `wells bench mine --repo <repo>`. Tried `cog`
-  (`/home/corbybender/Projects/cog`, 62 commits) today — only 1 mineable
-  candidate found, and it failed pytest collection in the throwaway
-  worktree (likely needs the repo installed, not just checked out).
-  Worth revisiting with `pip install -e .` in the mining worktree, or
-  picking a repo with simpler test collection.
-- The HUX val task (`T-be0aa6dc3a`, previously `resolved=True` on
-  Windows) needs its source repo (`cws_HUX_ide_project`) copied over and
-  `repo_root` rewritten — repo was never included in the migration zip.
-  Would restore exactly 1 val task, enough to unblock `evolve gate
-  --split val` with n=1 (still noisy, but functional).
-- `wells bench mine`'s heuristic (`corpus.iter_candidates`) is strict:
-  commit must touch test+source together, tests must AST-parse to pytest
-  node ids, and dual-validate (fail at base, pass at fix) in an isolated
-  worktree. Loosening it is a real option but changes what "verified"
-  means for the whole corpus — think before touching this.
+## 5. Open work, in priority order
 
-### 4.2 T-24da16076e (sandbox-probe fix task) — do not blindly retry
+1. **Run a real gate once the quota resets.** The val split is now able to
+   produce a score for the first time; `wells bench run --split val
+   --profile <profile>` then `wells evolve gate <mutation-id> --split val`.
+   Compare against the 0/1 baseline already recorded in
+   `.wells/bench/results/`.
+2. **Per-task oracle environments.** One requests task needs
+   `pytest-httpbin`; a task-local environment description in the bundle
+   would make the corpus self-sufficient instead of machine-dependent.
+3. **Rust launcher** — a compiled shell around the Python engine for
+   millisecond cold start. Not started; the binaries that exist are
+   PyInstaller bundles.
+4. **Sandbox-by-default** — deliberately not flipped. The sandbox is
+   container-only (Podman/Docker), there is no container runtime on this
+   machine, and `sandbox.py` sets no `--network`, `--user`, `--cap-drop`,
+   `--pids` or `--memory` limits. Two design questions remain: a fixed
+   `/workspace` mount gives the agent two path namespaces with no
+   translation, and a container-less machine gets no sandbox at all.
+5. **Corpus growth** — mine more repos (`wells bench mine --env-setup CMD`),
+   especially to grow val beyond 14.
 
-This specific corpus task has repeatedly timed out across BOTH the
-Windows session and a 90-minute Linux retry today. Root-caused today:
-its `base_commit` (`41f04dc`) predates the sandbox self-kill fix from
-§1.2 — while the agent works on this task, its own verification (running
-`pytest tests/test_sandbox.py`) can trigger the exact bug being fixed,
-crashing its own progress-check silently (SIGKILL, no traceback). 196
-orphaned containers were left behind by the last attempt (cleaned up).
-This task may be structurally unreliable as a benchmark on this specific
-host (SELinux Enforcing + rootless Podman) independent of model quality.
-Don't burn more budget retrying it without a different approach (e.g., a
-much longer timeout is not the fix — the problem isn't speed, it's the
-agent's own verification loop crashing).
+## 6. Environment notes for this machine
 
-### 4.3 Cost/spend reporting is not trustworthy — verify before citing
-
-`spend_guard.today_spend()` / `pricing.py`'s `_RATE_TABLE` assume
-pay-per-token billing for every profile. The `zai` profile here points at
-Z.ai's **Coding Plan** endpoint (`api.z.ai/api/coding/paas/v4/`), a flat-
-rate subscription — actual marginal cost is most likely near $0, subject
-to a request/quota limit, not a dollar figure. `pricing.py` has no
-`MODEL_PRICE_zai` override set, so it's silently printing a fictional
-per-token estimate. **Do not repeat "$X spent" claims from this project
-without checking `pricing.py`'s rate table first** — this bit the agent
-once today (see conversation history); the honest fix (`MODEL_PRICE_zai=0,0`
-in `.env`, or the correct real rate if there is one) was offered but not
-applied — ask the user or apply it before trusting this number again.
-
-## 5. Next steps, priority order
-
-1. **Grow the corpus** (§4.1) — the single biggest lever for making
-   `evolve gate` mean anything. Either fix `cog`'s pytest-collection issue
-   in the mining worktree, or bring over the HUX repo for its 1 known-good
-   val task, or find/mine a third, simpler repo.
-2. Once val tasks exist: run a REAL `wells evolve propose --auto` (an
-   actual harness-drafted AGENT.md candidate, not the placeholder used
-   for today's smoke test) and gate it for real — see if the loop
-   surfaces a genuine improvement.
-3. Continue the speed work if there's appetite: today's fixes targeted
-   round-trip *count* (proven the highest-leverage lever — see the live
-   profiling numbers in commit `6b8522d`'s message). The same "tighten
-   the prompt to stop redundant exploration" pattern likely applies to
-   the coder/reviewer nodes too — profile a real run first before
-   guessing, same as today (`WELLS_STARTUP_PROFILE=1` for cold-start;
-   there's no live per-node profiler in the codebase yet, today's
-   instrumentation was a throwaway script — worth turning into a proper
-   `WELLS_NODE_PROFILE=1` env-gated feature in `graph.py`/`executor.py`
-   if this becomes a recurring need).
-4. Optional, lower priority (from the original Phase-1 handoff, still
-   open): token-loss-on-timeout fix (`_run_harness`'s tree-kill happens
-   before the child's JSON payload flushes, so `tokens_total=0` on
-   timeout rows — a `--tokens-file` incremental-flush flag was the
-   suggested fix, never implemented).
-
-## 6. Quick reference
-
-```bash
-wells bench mine --repo <repo> [--max N] [--skip-validation]
-wells bench list [--split train|val|blind|all]
-wells bench run --split val --profile zai [--task ID] [--seeds N] [--timeout SECONDS]
-wells bench results [ID]
-
-wells evolve propose --file candidate.md "rationale"
-wells evolve propose --auto "rationale"          # opt-in — real tokens
-wells evolve gate <mutation_id> --split val
-wells evolve list / show <id> / promote <id> / reject <id>
-
-uv run pytest -q                                  # 1019 passed, 23 skipped
-```
-
-Architecture docs: `README.md` (Wells — see "SEACS — oracle-scored bench +
-AGENT.md evolution" section), `RULES.md` (operating rules), `src/wells/evolve/`
-module docstrings (design rationale per file).
+- `WORKSPACE_ROOT` in `.env` points at `Q:\corbytools`; bench CLI commands
+  in this repo need `$env:WORKSPACE_ROOT='Q:\wells'`.
+- No Docker, Podman, nerdctl or WSL: the sandbox path cannot be tested here.
+- `gh` is authenticated as `corbybender`; the four tag-triggered workflows
+  must be paused around any tag force-push (done during the rewrite).
+- Bench logs from this session: `logs/bench-guardcheck-20261123.log`,
+  `logs/bench-evidence-20261123.log`; per-step traces now survive under
+  `.wells/bench/results/<bench_id>/`.
